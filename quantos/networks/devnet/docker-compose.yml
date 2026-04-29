@@ -1,0 +1,127 @@
+# ============================================================================
+# Quantos Devnet — Single Validator Local Development Network
+# ============================================================================
+#
+# Usage:
+#   cd networks/devnet
+#   ./bootstrap.sh                          # Generate genesis + key
+#   docker compose up -d                    # Start devnet
+#   docker compose logs -f                  # Follow logs
+#   docker compose down -v                  # Full reset
+#
+# Chain ID: 3
+# Block time: 200ms (production target)
+# Initial shards: 2 (dynamic scaling enabled)
+# No pre-funded accounts — only validator stake at genesis
+# ============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # Devnet Node (single validator)
+  # --------------------------------------------------------------------------
+  node:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    container_name: quantos-devnet
+    restart: unless-stopped
+    ports:
+      - "${DEVNET_RPC_PORT:-8545}:8545"
+      - "${DEVNET_P2P_PORT:-30303}:30303"
+      - "${DEVNET_METRICS_PORT:-9615}:9615"
+    volumes:
+      - devnet-data:/data/quantos
+      - ./genesis:/config/genesis:ro
+      - ./keys:/config/keys:ro
+    environment:
+      - QUANTOS_DB_PATH=/data/quantos
+      - QUANTOS_RPC_PORT=8545
+      - QUANTOS_P2P_PORT=30303
+      - QUANTOS_METRICS_PORT=9615
+      - RUST_LOG=${RUST_LOG:-info,quantos=debug}
+    command: >
+      run
+      --network devnet
+      --genesis /config/genesis/devnet-genesis.json
+      --datadir /data/quantos
+      --rpc-port 8545
+      --p2p-port 30303
+      --metrics-port 9615
+      --validator
+      --validator-key /config/keys/validator-key.json
+    networks:
+      devnet:
+        ipv4_address: 172.21.0.10
+    healthcheck:
+      test: ["CMD", "quantos-cli", "--rpc", "http://127.0.0.1:8545", "node", "health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: "4G"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # RPC-only node (optional, for separating validator from public RPC)
+  # --------------------------------------------------------------------------
+  rpc:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    container_name: quantos-devnet-rpc
+    restart: unless-stopped
+    profiles:
+      - rpc
+    ports:
+      - "${DEVNET_RPC2_PORT:-8546}:8545"
+      - "9616:9615"
+    volumes:
+      - rpc-data:/data/quantos
+      - ./genesis:/config/genesis:ro
+    environment:
+      - QUANTOS_DB_PATH=/data/quantos
+      - RUST_LOG=info
+    command: >
+      run
+      --network devnet
+      --genesis /config/genesis/devnet-genesis.json
+      --datadir /data/quantos
+      --rpc-port 8545
+      --p2p-port 30303
+      --metrics-port 9615
+    networks:
+      devnet:
+        ipv4_address: 172.21.0.11
+    depends_on:
+      node:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+# --------------------------------------------------------------------------
+# Networks
+# --------------------------------------------------------------------------
+networks:
+  devnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+
+# --------------------------------------------------------------------------
+# Volumes
+# --------------------------------------------------------------------------
+volumes:
+  devnet-data:
+  rpc-data:

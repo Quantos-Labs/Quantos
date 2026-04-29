@@ -1,0 +1,36 @@
+{
+  "wallet_server": "http://127.0.0.1:3002",
+  "deployer": "7ea52dadff5f724f4246a19635274915550b9aef912c19c1a7620c1aa46514d7",
+  "stqtest": "QTS:984fd67467e59708189639c872b83d48ba79f092d0d45a123bf030dc0b6a7bb2",
+  "rstqtest": "QTS:936536cffe17e16a88b22460864e5d172c64b72641da36938d22c66d01c0f678",
+  "restaking_vault": "QTS:3cec3f6d58d326f4dae94ad3e681e1b557831e7a3c112be2e2b85b76baba1446",
+  "cooldown_seconds": 432000,
+  "selectors": {
+    "depositStQTEST": "0x12aeae6b",
+    "requestWithdraw": "0x745400c9",
+    "claim": "0x379607f5",
+    "previewDeposit": "0xef8b30f7",
+    "previewWithdraw": "0x0a28a477",
+    "accountWithdrawalCount": "0x23752865",
+    "accountWithdrawalId": "0x0e560520",
+    "getWithdrawal": "0x5cc07076",
+    "totalRestakedStqtest": "0x8a71382b",
+    "cooldownSeconds": "0xb8221bc4",
+    "paused": "0x5c975abb"
+  },
+  "vite_env": {
+    "VITE_RSTQTEST_CONTRACT_ADDRESS": "QTS:936536cffe17e16a88b22460864e5d172c64b72641da36938d22c66d01c0f678",
+    "VITE_RESTAKING_VAULT_CONTRACT_ADDRESS": "QTS:3cec3f6d58d326f4dae94ad3e681e1b557831e7a3c112be2e2b85b76baba1446",
+    "VITE_RESTAKING_SELECTOR_DEPOSIT_STQTEST": "0x12aeae6b",
+    "VITE_RESTAKING_SELECTOR_REQUEST_WITHDRAW": "0x745400c9",
+    "VITE_RESTAKING_SELECTOR_CLAIM": "0x379607f5",
+    "VITE_RESTAKING_SELECTOR_PREVIEW_DEPOSIT": "0xef8b30f7",
+    "VITE_RESTAKING_SELECTOR_PREVIEW_WITHDRAW": "0x0a28a477",
+    "VITE_RESTAKING_SELECTOR_ACCOUNT_WITHDRAWAL_COUNT": "0x23752865",
+    "VITE_RESTAKING_SELECTOR_ACCOUNT_WITHDRAWAL_ID": "0x0e560520",
+    "VITE_RESTAKING_SELECTOR_GET_WITHDRAWAL": "0x5cc07076",
+    "VITE_RESTAKING_SELECTOR_TOTAL_RESTAKED_STQTEST": "0x8a71382b",
+    "VITE_RESTAKING_SELECTOR_COOLDOWN_SECONDS": "0xb8221bc4",
+    "VITE_RESTAKING_SELECTOR_PAUSED": "0x5c975abb"
+  }
+}

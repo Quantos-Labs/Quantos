@@ -1,0 +1,18 @@
+{
+  "name": "0x06fdde03",
+  "symbol": "0x95d89b41",
+  "MAX_SUPPLY": "0x32cb6b0c",
+  "minter": "0x07546172",
+  "setMinter": "0xfca3b5aa",
+  "setBaseURI": "0x55f804b3",
+  "totalSupply": "0x18160ddd",
+  "balanceOf": "0x70a08231",
+  "ownerOf": "0x6352211e",
+  "tokenURI": "0xc87b56dd",
+  "getApproved": "0x081812fc",
+  "isApprovedForAll": "0xe985e9c5",
+  "approve": "0x095ea7b3",
+  "setApprovalForAll": "0xa22cb465",
+  "transferFrom": "0x23b872dd",
+  "mint": "0x40c10f19"
+}

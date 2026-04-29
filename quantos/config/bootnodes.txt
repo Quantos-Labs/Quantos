@@ -1,0 +1,7 @@
+# Quantos Testnet Bootnodes
+# Format: /ip4/<IP>/tcp/<PORT>/p2p/<PEER_ID>
+# 
+# Add official testnet bootnodes here when available
+# Example:
+# /ip4/34.100.50.1/tcp/30303/p2p/12D3KooWExamplePeerId1
+# /ip4/34.100.50.2/tcp/30303/p2p/12D3KooWExamplePeerId2

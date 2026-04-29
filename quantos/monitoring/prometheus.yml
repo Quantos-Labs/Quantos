@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "quantos-node"
+    static_configs:
+      - targets: ["quantos-node:9615"]
+    metrics_path: "/metrics"
+    scrape_interval: 10s
+
+  - job_name: "quantos-validator"
+    static_configs:
+      - targets: ["quantos-validator:9615"]
+    metrics_path: "/metrics"
+    scrape_interval: 10s

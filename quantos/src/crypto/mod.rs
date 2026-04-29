@@ -1,0 +1,112 @@
+//! # Quantos Post-Quantum Cryptography
+//!
+//! This module provides post-quantum cryptographic primitives for the Quantos blockchain.
+//! All algorithms are NIST-standardized and provide 128-bit post-quantum security.
+//!
+//! ## Algorithms
+//!
+//! | Algorithm | Usage | Key Size | Signature Size |
+//! |-----------|-------|----------|----------------|
+//! | **Dilithium-3** | Transaction signatures | 1952 bytes | 3293 bytes |
+//! | **SPHINCS+** | VRF for committee selection | 32 bytes | 17088 bytes |
+//! | **Falcon-512** | Checkpoint finality | 897 bytes | 666 bytes |
+//!
+//! ## Security Considerations
+//!
+//! - All keys are generated using cryptographically secure random number generators
+//! - Private keys should never be logged or exposed
+//! - Signature verification is constant-time to prevent timing attacks
+//!
+//! ## Example
+//!
+//! ```rust,ignore
+//! use quantos::crypto::{DilithiumKeypair, sign_dilithium, verify_dilithium};
+//!
+//! // Generate a keypair
+//! let keypair = DilithiumKeypair::generate()?;
+//!
+//! // Sign a message
+//! let message = b"Hello, Quantos!";
+//! let signature = keypair.sign(message)?;
+//!
+//! // Verify the signature
+//! let valid = keypair.verify(message, &signature)?;
+//! assert!(valid);
+//! ```
+
+mod dilithium;
+mod sphincs;
+mod falcon;
+mod vrf;
+mod qrng;
+mod qr_vrf;
+mod hash;
+mod keypair;
+mod merkle_pq;
+mod batch;
+mod aggregation;
+mod simd;
+mod memory_pool;
+mod zero_copy;
+mod precomputed;
+mod threshold_qrvrf;
+pub mod batch_verify;
+pub mod signature_aggregation;
+pub mod adaptive_pqc;
+
+pub use dilithium::*;
+pub use sphincs::*;
+pub use falcon::*;
+pub use vrf::*;
+pub use qrng::*;
+pub use qr_vrf::*;
+pub use hash::*;
+pub use keypair::*;
+pub use merkle_pq::*;
+pub use threshold_qrvrf::*;
+pub use batch_verify::*;
+pub use signature_aggregation::*;
+pub use adaptive_pqc::*;
+pub use batch::*;
+pub use aggregation::*;
+pub use simd::*;
+pub use memory_pool::*;
+pub use zero_copy::*;
+pub use precomputed::*;
+
+use thiserror::Error;
+
+/// Errors that can occur during cryptographic operations.
+#[derive(Error, Debug)]
+pub enum CryptoError {
+    /// The signature format is invalid or corrupted
+    #[error("Invalid signature")]
+    InvalidSignature,
+    
+    /// The public key format is invalid or corrupted
+    #[error("Invalid public key")]
+    InvalidPublicKey,
+    
+    /// The private key format is invalid or corrupted
+    #[error("Invalid private key")]
+    InvalidPrivateKey,
+    
+    /// Signature verification failed (signature does not match message)
+    #[error("Signature verification failed")]
+    VerificationFailed,
+    
+    /// Key generation failed due to RNG or other issues
+    #[error("Key generation failed: {0}")]
+    KeyGenerationFailed(String),
+    
+    /// VRF proof is invalid
+    #[error("VRF proof invalid")]
+    InvalidVRFProof,
+    
+    /// Hash computation error
+    #[error("Hash error: {0}")]
+    HashError(String),
+}
+
+/// Result type for cryptographic operations.
+pub type CryptoResult<T> = Result<T, CryptoError>;

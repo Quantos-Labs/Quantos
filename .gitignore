@@ -1,0 +1,11 @@
+target/
+node_modules/
+build/
+dist/
+.DS_Store
+.env
+.env.*
+*.log
+*.pid
+.e2e-node-data/
+quantos/data/

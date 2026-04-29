@@ -1,0 +1,22 @@
+{
+  "name": "@quantos/cli",
+  "version": "1.0.0",
+  "description": "Quantos CLI — compile, deploy, and interact with Solidity smart contracts on QuantosVM",
+  "bin": {
+    "quantos": "./bin/quantos.js"
+  },
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node bin/quantos.js",
+    "test": "node test/test-encoding.js"
+  },
+  "keywords": ["quantos", "blockchain", "solidity", "wasm", "solang", "cli"],
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.0.0",
+    "chalk": "^4.1.2",
+    "js-sha3": "^0.9.3",
+    "ora": "^5.4.1",
+    "dotenv": "^16.4.0"
+  }
+}

@@ -1,0 +1,189 @@
+# ============================================================================
+# Quantos — Production Docker Compose
+# ============================================================================
+#
+# Usage:
+#   docker compose up -d                  # Start all services
+#   docker compose up -d quantos-node     # Start node only
+#   docker compose logs -f quantos-node   # Follow node logs
+#   docker compose down                   # Stop all
+#   docker compose down -v                # Stop + delete volumes
+#
+# ============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # Quantos Node
+  # --------------------------------------------------------------------------
+  quantos-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quantos-node
+    restart: unless-stopped
+    ports:
+      - "${QUANTOS_RPC_PORT:-8545}:8545"
+      - "${QUANTOS_P2P_PORT:-30303}:30303"
+      - "${QUANTOS_METRICS_PORT:-9615}:9615"
+    volumes:
+      - quantos-data:/data/quantos
+      - quantos-config:/config
+    environment:
+      - QUANTOS_DB_PATH=/data/quantos
+      - QUANTOS_RPC_PORT=8545
+      - QUANTOS_P2P_PORT=30303
+      - QUANTOS_METRICS_PORT=9615
+      - RUST_LOG=${RUST_LOG:-info}
+    networks:
+      - quantos-net
+    deploy:
+      resources:
+        limits:
+          cpus: "${NODE_CPU_LIMIT:-4}"
+          memory: "${NODE_MEM_LIMIT:-8G}"
+        reservations:
+          cpus: "1"
+          memory: "2G"
+    healthcheck:
+      test: ["CMD", "quantos-cli", "--rpc", "http://127.0.0.1:8545", "node", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # --------------------------------------------------------------------------
+  # Quantos Validator Node (optional, --profile validator)
+  # --------------------------------------------------------------------------
+  quantos-validator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quantos-validator
+    restart: unless-stopped
+    profiles:
+      - validator
+    ports:
+      - "${VALIDATOR_RPC_PORT:-8546}:8545"
+      - "${VALIDATOR_P2P_PORT:-30304}:30303"
+      - "${VALIDATOR_METRICS_PORT:-9616}:9615"
+    volumes:
+      - validator-data:/data/quantos
+      - validator-keys:/config
+    environment:
+      - QUANTOS_DB_PATH=/data/quantos
+      - QUANTOS_RPC_PORT=8545
+      - QUANTOS_P2P_PORT=30303
+      - QUANTOS_METRICS_PORT=9615
+      - RUST_LOG=${RUST_LOG:-info}
+    command: >
+      run
+      --network ${QUANTOS_NETWORK:-testnet}
+      --datadir /data/quantos
+      --rpc-port 8545
+      --p2p-port 30303
+      --validator
+      --validator-key /config/validator-key.json
+      --bootnodes ${QUANTOS_BOOTNODES:-}
+    networks:
+      - quantos-net
+    depends_on:
+      quantos-node:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "${VALIDATOR_CPU_LIMIT:-8}"
+          memory: "${VALIDATOR_MEM_LIMIT:-16G}"
+        reservations:
+          cpus: "2"
+          memory: "4G"
+    healthcheck:
+      test: ["CMD", "quantos-cli", "--rpc", "http://127.0.0.1:8545", "node", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # --------------------------------------------------------------------------
+  # Prometheus — Metrics Collection
+  # --------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.50.1
+    container_name: quantos-prometheus
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    networks:
+      - quantos-net
+    depends_on:
+      - quantos-node
+
+  # --------------------------------------------------------------------------
+  # Grafana — Dashboards
+  # --------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.3.3
+    container_name: quantos-grafana
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-quantos}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - quantos-net
+    depends_on:
+      - prometheus
+
+# --------------------------------------------------------------------------
+# Networks
+# --------------------------------------------------------------------------
+networks:
+  quantos-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+
+# --------------------------------------------------------------------------
+# Volumes
+# --------------------------------------------------------------------------
+volumes:
+  quantos-data:
+    driver: local
+  quantos-config:
+    driver: local
+  validator-data:
+    driver: local
+  validator-keys:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local

@@ -1,0 +1,23 @@
+{
+  "wallet_server": "http://127.0.0.1:3002",
+  "deployer": "d8bf1e571df29b3ff2f47cd8835d6e2f954de8dfb3ee14ff5d4585653a47758b",
+  "qtest": "QTS:c49ffa02bdb365b7e5bf1655dd296b7358eebdfdbe2abb3a1998db8daddc3a68",
+  "staking_contract": "QTS:ea877501c27e6e7284b3b8d803ba725a52abea4a4ea9b50df3e9b7ab984c19cf",
+  "unbonding_seconds": 0,
+  "selectors": {
+    "qtest": "762c38b1",
+    "owner": "8da5cb5b",
+    "paused": "5c975abb",
+    "unbondingSeconds": "d3b2fa1b",
+    "totalStaked": "817b1cd2",
+    "stakedOf": "af500ba3",
+    "pendingOf": "f44136a1",
+    "setParams": "615b2159",
+    "transferOwnership": "f2fde38b",
+    "recoverToken": "a7229fd9",
+    "stake": "a694fc3a",
+    "unstake": "2e17de78",
+    "withdrawPending": "7edbceb1",
+    "getInfo": "ffdd5cf1"
+  }
+}

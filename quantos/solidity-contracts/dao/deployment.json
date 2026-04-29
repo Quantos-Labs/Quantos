@@ -1,0 +1,9 @@
+{
+  "vybss_env_key": "VITE_DAO_HUB_ADDRESS",
+  "dao_hub": "QTS:bfa25a1e046de72558f93ef9e82e1bf1c924199ac51fa81bc41c0ec7c788b89f",
+  "qtest": "QTS:c49ffa02bdb365b7e5bf1655dd296b7358eebdfdbe2abb3a1998db8daddc3a68",
+  "fee_recipient": "7d1f807aac266680de8cd00067a4c090b616fbf0818d7a147240c46b359bf832",
+  "creation_fee_wei": 0,
+  "max_stakers": 200,
+  "deployer": "7d1f807aac266680de8cd00067a4c090b616fbf0818d7a147240c46b359bf832"
+}

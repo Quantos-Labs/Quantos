@@ -1,0 +1,322 @@
+# ============================================================================
+# Quantos Testnet — 4 Validators + 1 Seed Node
+# ============================================================================
+#
+# Usage:
+#   cd networks/testnet
+#   ./bootstrap.sh                          # Generate genesis + validator keys
+#   docker compose up -d                    # Start testnet
+#   docker compose logs -f                  # Follow logs
+#   docker compose --profile monitoring up -d  # With Grafana/Prometheus
+#   docker compose down -v                  # Full reset
+#
+# Chain ID: 2
+# Block time: 400ms
+# Initial shards: 4
+# ============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # Seed Node (non-validator, provides bootnode for others)
+  # --------------------------------------------------------------------------
+  seed:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    container_name: quantos-testnet-seed
+    restart: unless-stopped
+    ports:
+      - "30303:30303"
+      - "8545:8545"
+      - "9615:9615"
+    volumes:
+      - seed-data:/data/quantos
+      - ./genesis:/config/genesis:ro
+    environment:
+      - QUANTOS_DB_PATH=/data/quantos
+      - QUANTOS_RPC_PORT=8545
+      - QUANTOS_P2P_PORT=30303
+      - QUANTOS_METRICS_PORT=9615
+      - RUST_LOG=info
+    command: >
+      run
+      --network testnet
+      --genesis /config/genesis/testnet-genesis.json
+      --datadir /data/quantos
+      --rpc-port 8545
+      --p2p-port 30303
+      --metrics-port 9615
+    networks:
+      testnet:
+        ipv4_address: 172.20.0.10
+    healthcheck:
+      test: ["CMD", "quantos-cli", "--rpc", "http://127.0.0.1:8545", "node", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  # --------------------------------------------------------------------------
+  # Validator 1
+  # --------------------------------------------------------------------------
+  validator-1:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    container_name: quantos-testnet-val1
+    restart: unless-stopped
+    ports:
+      - "30310:30303"
+      - "8550:8545"
+      - "9620:9615"
+    volumes:
+      - val1-data:/data/quantos
+      - ./genesis:/config/genesis:ro
+      - ./keys/validator-1:/config/keys:ro
+    environment:
+      - QUANTOS_DB_PATH=/data/quantos
+      - RUST_LOG=info
+    command: >
+      run
+      --network testnet
+      --genesis /config/genesis/testnet-genesis.json
+      --datadir /data/quantos
+      --rpc-port 8545
+      --p2p-port 30303
+      --metrics-port 9615
+      --validator
+      --validator-key /config/keys/validator-key.json
+    networks:
+      testnet:
+        ipv4_address: 172.20.0.11
+    depends_on:
+      seed:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "quantos-cli", "--rpc", "http://127.0.0.1:8545", "node", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  # --------------------------------------------------------------------------
+  # Validator 2
+  # --------------------------------------------------------------------------
+  validator-2:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    container_name: quantos-testnet-val2
+    restart: unless-stopped
+    ports:
+      - "30311:30303"
+      - "8551:8545"
+      - "9621:9615"
+    volumes:
+      - val2-data:/data/quantos
+      - ./genesis:/config/genesis:ro
+      - ./keys/validator-2:/config/keys:ro
+    environment:
+      - QUANTOS_DB_PATH=/data/quantos
+      - RUST_LOG=info
+    command: >
+      run
+      --network testnet
+      --genesis /config/genesis/testnet-genesis.json
+      --datadir /data/quantos
+      --rpc-port 8545
+      --p2p-port 30303
+      --metrics-port 9615
+      --validator
+      --validator-key /config/keys/validator-key.json
+    networks:
+      testnet:
+        ipv4_address: 172.20.0.12
+    depends_on:
+      seed:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "quantos-cli", "--rpc", "http://127.0.0.1:8545", "node", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  # --------------------------------------------------------------------------
+  # Validator 3
+  # --------------------------------------------------------------------------
+  validator-3:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    container_name: quantos-testnet-val3
+    restart: unless-stopped
+    ports:
+      - "30312:30303"
+      - "8552:8545"
+      - "9622:9615"
+    volumes:
+      - val3-data:/data/quantos
+      - ./genesis:/config/genesis:ro
+      - ./keys/validator-3:/config/keys:ro
+    environment:
+      - QUANTOS_DB_PATH=/data/quantos
+      - RUST_LOG=info
+    command: >
+      run
+      --network testnet
+      --genesis /config/genesis/testnet-genesis.json
+      --datadir /data/quantos
+      --rpc-port 8545
+      --p2p-port 30303
+      --metrics-port 9615
+      --validator
+      --validator-key /config/keys/validator-key.json
+    networks:
+      testnet:
+        ipv4_address: 172.20.0.13
+    depends_on:
+      seed:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "quantos-cli", "--rpc", "http://127.0.0.1:8545", "node", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  # --------------------------------------------------------------------------
+  # Validator 4
+  # --------------------------------------------------------------------------
+  validator-4:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    container_name: quantos-testnet-val4
+    restart: unless-stopped
+    ports:
+      - "30313:30303"
+      - "8553:8545"
+      - "9623:9615"
+    volumes:
+      - val4-data:/data/quantos
+      - ./genesis:/config/genesis:ro
+      - ./keys/validator-4:/config/keys:ro
+    environment:
+      - QUANTOS_DB_PATH=/data/quantos
+      - RUST_LOG=info
+    command: >
+      run
+      --network testnet
+      --genesis /config/genesis/testnet-genesis.json
+      --datadir /data/quantos
+      --rpc-port 8545
+      --p2p-port 30303
+      --metrics-port 9615
+      --validator
+      --validator-key /config/keys/validator-key.json
+    networks:
+      testnet:
+        ipv4_address: 172.20.0.14
+    depends_on:
+      seed:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "quantos-cli", "--rpc", "http://127.0.0.1:8545", "node", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  # --------------------------------------------------------------------------
+  # Prometheus (monitoring profile)
+  # --------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.50.1
+    container_name: quantos-testnet-prometheus
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+    networks:
+      testnet:
+    depends_on:
+      - seed
+
+  # --------------------------------------------------------------------------
+  # Grafana (monitoring profile)
+  # --------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.3.3
+    container_name: quantos-testnet-grafana
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=quantos-testnet
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      testnet:
+    depends_on:
+      - prometheus
+
+# --------------------------------------------------------------------------
+# Networks
+# --------------------------------------------------------------------------
+networks:
+  testnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# --------------------------------------------------------------------------
+# Volumes
+# --------------------------------------------------------------------------
+volumes:
+  seed-data:
+  val1-data:
+  val2-data:
+  val3-data:
+  val4-data:
+  prometheus-data:
+  grafana-data:

@@ -1,0 +1,35 @@
+{
+  "wallet_server": "http://127.0.0.1:3002",
+  "deployer": "e8a96ea8546d40a480c23f15ca1a330fd6bc2ce84e1113f78c304bd10be40eef",
+  "qtest": "QTS:c49ffa02bdb365b7e5bf1655dd296b7358eebdfdbe2abb3a1998db8daddc3a68",
+  "stqtest": "QTS:984fd67467e59708189639c872b83d48ba79f092d0d45a123bf030dc0b6a7bb2",
+  "liquid_staking": "QTS:04f164f845a77660cdc0426abda70da0285f9852b7d74d6ad64704499cb3a6b5",
+  "unbonding_seconds": 432000,
+  "fee_recipient": "QTS:e8a96ea8546d40a480c23f15ca1a330fd6bc2ce84e1113f78c304bd10be40eef",
+  "selectors": {
+    "stake": "0xa694fc3a",
+    "requestUnstake": "0x23095721",
+    "claim": "0x379607f5",
+    "previewStake": "0x727a5d57",
+    "previewUnstake": "0x91767552",
+    "getProtocolInfo": "0x0dca69f9",
+    "getAccountInfo": "0x7b510fe8",
+    "accountWithdrawalCount": "0x23752865",
+    "accountWithdrawalId": "0x0e560520",
+    "getWithdrawal": "0x8a4fb16a"
+  },
+  "vite_env": {
+    "VITE_STQTEST_CONTRACT_ADDRESS": "QTS:984fd67467e59708189639c872b83d48ba79f092d0d45a123bf030dc0b6a7bb2",
+    "VITE_LIQUID_STAKING_CONTRACT_ADDRESS": "QTS:04f164f845a77660cdc0426abda70da0285f9852b7d74d6ad64704499cb3a6b5",
+    "VITE_LIQUID_STAKING_SELECTOR_STAKE": "0xa694fc3a",
+    "VITE_LIQUID_STAKING_SELECTOR_REQUEST_UNSTAKE": "0x23095721",
+    "VITE_LIQUID_STAKING_SELECTOR_CLAIM": "0x379607f5",
+    "VITE_LIQUID_STAKING_SELECTOR_PREVIEW_STAKE": "0x727a5d57",
+    "VITE_LIQUID_STAKING_SELECTOR_PREVIEW_UNSTAKE": "0x91767552",
+    "VITE_LIQUID_STAKING_SELECTOR_GET_PROTOCOL_INFO": "0x0dca69f9",
+    "VITE_LIQUID_STAKING_SELECTOR_GET_ACCOUNT_INFO": "0x7b510fe8",
+    "VITE_LIQUID_STAKING_SELECTOR_ACCOUNT_WITHDRAWAL_COUNT": "0x23752865",
+    "VITE_LIQUID_STAKING_SELECTOR_ACCOUNT_WITHDRAWAL_ID": "0x0e560520",
+    "VITE_LIQUID_STAKING_SELECTOR_GET_WITHDRAWAL": "0x8a4fb16a"
+  }
+}

@@ -1,0 +1,35 @@
+[package]
+name = "quantos-wallet-core"
+version = "0.1.0"
+edition = "2021"
+description = "Quantos wallet WASM — exact same types/crypto/bincode as the Quantos node"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# WASM bindings
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+
+# Exact same versions as quantos/Cargo.toml
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+sha3 = "0.10"
+hex = "0.4"
+data-encoding = "2.5"
+chrono = { version = "0.4", features = ["serde", "wasmbind"] }
+
+# Pure Rust Dilithium-3 with WASM support
+# Note: quantos node uses pqcrypto-dilithium (C/PQClean).
+# pqc_dilithium 0.2 implements Dilithium-3 (NIST Round 3).
+# Interop with pqcrypto-dilithium should be tested.
+pqc_dilithium = { version = "0.2", features = ["wasm"] }
+
+# WASM-compatible random
+getrandom = { version = "0.2", features = ["js"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
