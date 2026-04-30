@@ -54,6 +54,14 @@ pub const DOMAIN_VRF_OUTPUT: &[u8] = b"QUANTOS_VRF_OUTPUT_V1";
 /// Prefixes the message signed as the VRF proof: (seed ‖ beta).
 pub const DOMAIN_VRF_PROVE: &[u8] = b"QUANTOS_VRF_PROVE_V1";
 
+// ── Cross-shard atomic protocol domains ──────────────────────────────────────
+
+/// Dilithium signatures over CSAP lock-vote messages.
+pub const DOMAIN_CSAP_VOTE: &[u8] = b"QUANTOS_CSAP_VOTE_V1";
+
+/// Dilithium signatures over CSAP lock-acknowledgment messages.
+pub const DOMAIN_CSAP_ACK: &[u8] = b"QUANTOS_CSAP_ACK_V1";
+
 // ── Slashing evidence domains ─────────────────────────────────────────────────
 
 /// Message prefix for double-signing evidence signatures.
@@ -92,6 +100,8 @@ mod tests {
             DOMAIN_VRF_PRF,
             DOMAIN_VRF_OUTPUT,
             DOMAIN_VRF_PROVE,
+            DOMAIN_CSAP_VOTE,
+            DOMAIN_CSAP_ACK,
             DOMAIN_SLASH_DOUBLE_SIGN,
             DOMAIN_SLASH_EQUIVOC,
             DOMAIN_SLASH_INVALID_BLOCK,

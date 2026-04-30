@@ -31,7 +31,7 @@ use crate::types::{Address, Hash, ShardId, SignedTransaction};
 use crate::state::StateManager;
 use crate::dag::DAGGraph;
 use crate::zk::{StarkProver, CrossShardInputs};
-use crate::crypto::{sha3_256, DilithiumKeypair};
+use crate::crypto::{sha3_256, verify_dilithium, with_domain, DilithiumKeypair, DOMAIN_CSAP_VOTE, DOMAIN_CSAP_ACK};
 use crate::consensus::CommitteeManager;
 
 /// Maximum shards involved in single atomic operation
@@ -230,33 +230,34 @@ impl CrossShardAtomicProtocol {
         Ok(())
     }
     
+    fn vote_signing_payload(atomic_id: &Hash, shard_id: ShardId, approved: bool) -> Vec<u8> {
+        let mut raw = Vec::with_capacity(32 + 2 + 1);
+        raw.extend_from_slice(atomic_id);
+        raw.extend_from_slice(&shard_id.to_le_bytes());
+        raw.push(if approved { 1 } else { 0 });
+        with_domain(DOMAIN_CSAP_VOTE, &raw)
+    }
+
+    fn ack_signing_payload(atomic_id: &Hash, shard_id: ShardId) -> Vec<u8> {
+        let mut raw = Vec::with_capacity(32 + 2);
+        raw.extend_from_slice(atomic_id);
+        raw.extend_from_slice(&shard_id.to_le_bytes());
+        with_domain(DOMAIN_CSAP_ACK, &raw)
+    }
+
     fn sign_vote(&self, atomic_id: &Hash, shard_id: ShardId, approved: bool) -> Result<Vec<u8>, AtomicError> {
-        let mut data = Vec::new();
-        data.extend_from_slice(atomic_id);
-        data.extend_from_slice(&shard_id.to_le_bytes());
-        data.push(if approved { 1 } else { 0 });
-        
-        self.node_keypair.sign(&data)
+        let payload = Self::vote_signing_payload(atomic_id, shard_id, approved);
+        self.node_keypair.sign(&payload)
             .map_err(|e| AtomicError::SigningFailed(e.to_string()))
     }
     
     fn sign_ack(&self, atomic_id: &Hash, shard_id: ShardId) -> Result<Vec<u8>, AtomicError> {
-        let mut data = Vec::new();
-        data.extend_from_slice(atomic_id);
-        data.extend_from_slice(&shard_id.to_le_bytes());
-        data.extend_from_slice(b"ACK");
-        
-        self.node_keypair.sign(&data)
+        let payload = Self::ack_signing_payload(atomic_id, shard_id);
+        self.node_keypair.sign(&payload)
             .map_err(|e| AtomicError::SigningFailed(e.to_string()))
     }
     
     fn verify_vote_signature(&self, vote: &LockVote) -> Result<(), AtomicError> {
-        let mut data = Vec::new();
-        data.extend_from_slice(&vote.atomic_id);
-        data.extend_from_slice(&vote.shard_id.to_le_bytes());
-        data.push(if vote.approved { 1 } else { 0 });
-        
-        // Get validator's public key from committee
         let epoch = *self.current_epoch.read();
         let committee = self.committee_manager.get_committee_for_shard(epoch, vote.shard_id)
             .ok_or(AtomicError::CommitteeNotFound(vote.shard_id))?;
@@ -265,8 +266,19 @@ impl CrossShardAtomicProtocol {
             return Err(AtomicError::NotCommitteeMember);
         }
         
-        // Signature is verified using validator's public key (stored in vote for now)
-        // In full production, fetch from validator registry
+        // Fetch the validator's Dilithium public key from the validator registry.
+        let validator_set = self.committee_manager.get_validator_set();
+        let pubkey = validator_set
+            .get_validator(&vote.validator)
+            .map(|v| v.public_key.clone())
+            .ok_or(AtomicError::UnauthorizedSender)?;
+        
+        let payload = Self::vote_signing_payload(&vote.atomic_id, vote.shard_id, vote.approved);
+        let valid = verify_dilithium(&pubkey, &payload, &vote.signature)
+            .map_err(|e| AtomicError::SigningFailed(format!("vote sig verify error: {}", e)))?;
+        if !valid {
+            return Err(AtomicError::UnauthorizedSender);
+        }
         Ok(())
     }
     
@@ -279,6 +291,19 @@ impl CrossShardAtomicProtocol {
             return Err(AtomicError::NotCommitteeMember);
         }
         
+        // Fetch the validator's Dilithium public key from the validator registry.
+        let validator_set = self.committee_manager.get_validator_set();
+        let pubkey = validator_set
+            .get_validator(&ack.validator)
+            .map(|v| v.public_key.clone())
+            .ok_or(AtomicError::UnauthorizedSender)?;
+        
+        let payload = Self::ack_signing_payload(&ack.atomic_id, ack.shard_id);
+        let valid = verify_dilithium(&pubkey, &payload, &ack.signature)
+            .map_err(|e| AtomicError::SigningFailed(format!("ack sig verify error: {}", e)))?;
+        if !valid {
+            return Err(AtomicError::UnauthorizedSender);
+        }
         Ok(())
     }
 

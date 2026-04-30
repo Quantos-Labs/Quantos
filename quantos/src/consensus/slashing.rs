@@ -36,7 +36,10 @@ use thiserror::Error;
 use tracing::{info, warn};
 
 use crate::types::{Address, Hash, Slot};
-use crate::crypto::{verify_dilithium, with_domain, DOMAIN_SLASH_INVALID_BLOCK};
+use crate::crypto::{
+    verify_dilithium, with_domain,
+    DOMAIN_SLASH_DOUBLE_SIGN, DOMAIN_SLASH_EQUIVOC, DOMAIN_SLASH_INVALID_BLOCK,
+};
 
 /// Slashing errors.
 #[derive(Debug, Error)]
@@ -538,10 +541,13 @@ impl SlashingManager {
                 format!("Validator public key not registered: {}", hex::encode(&evidence.validator[..8]))
             ))?;
         
-        // Verify first message signature using Dilithium
+        // Verify both message signatures. The signing payload is domain-separated
+        // with DOMAIN_SLASH_DOUBLE_SIGN so that an evidence submitter cannot reuse
+        // signatures produced in other contexts (e.g. committee votes).
+        let payload1 = with_domain(DOMAIN_SLASH_DOUBLE_SIGN, &msg1.message_hash);
         let valid1 = verify_dilithium(
             &validator_pubkey,
-            &msg1.message_hash,
+            &payload1,
             &msg1.signature,
         ).map_err(|e| SlashingError::InvalidEvidence(
             format!("Failed to verify signature 1: {}", e)
@@ -551,10 +557,10 @@ impl SlashingManager {
             return Err(SlashingError::SignatureVerificationFailed);
         }
         
-        // Verify second message signature using Dilithium
+        let payload2 = with_domain(DOMAIN_SLASH_DOUBLE_SIGN, &msg2.message_hash);
         let valid2 = verify_dilithium(
             &validator_pubkey,
-            &msg2.message_hash,
+            &payload2,
             &msg2.signature,
         ).map_err(|e| SlashingError::InvalidEvidence(
             format!("Failed to verify signature 2: {}", e)
@@ -590,10 +596,12 @@ impl SlashingManager {
                 format!("Validator public key not registered: {}", hex::encode(&evidence.validator[..8]))
             ))?;
         
-        // Verify first vote signature using Dilithium
+        // Apply DOMAIN_SLASH_EQUIVOC so surround-vote evidence cannot be confused
+        // with signatures from other protocol messages.
+        let payload1 = with_domain(DOMAIN_SLASH_EQUIVOC, &vote1.vote_hash);
         let valid1 = verify_dilithium(
             &validator_pubkey,
-            &vote1.vote_hash,
+            &payload1,
             &vote1.signature,
         ).map_err(|e| SlashingError::InvalidEvidence(
             format!("Failed to verify vote signature 1: {}", e)
@@ -603,10 +611,10 @@ impl SlashingManager {
             return Err(SlashingError::SignatureVerificationFailed);
         }
         
-        // Verify second vote signature using Dilithium
+        let payload2 = with_domain(DOMAIN_SLASH_EQUIVOC, &vote2.vote_hash);
         let valid2 = verify_dilithium(
             &validator_pubkey,
-            &vote2.vote_hash,
+            &payload2,
             &vote2.signature,
         ).map_err(|e| SlashingError::InvalidEvidence(
             format!("Failed to verify vote signature 2: {}", e)
@@ -881,10 +889,11 @@ impl SlashingManager {
                 format!("Validator public key not registered: {}", hex::encode(&evidence.validator[..8]))
             ))?;
         
-        // Verify first vote signature
+        // Apply DOMAIN_SLASH_EQUIVOC consistently with the surround-vote path.
+        let payload1 = with_domain(DOMAIN_SLASH_EQUIVOC, &vote1.vote_hash);
         let valid1 = verify_dilithium(
             &validator_pubkey,
-            &vote1.vote_hash,
+            &payload1,
             &vote1.signature,
         ).map_err(|e| SlashingError::InvalidEvidence(
             format!("Failed to verify equivocation vote signature 1: {}", e)
@@ -894,10 +903,10 @@ impl SlashingManager {
             return Err(SlashingError::SignatureVerificationFailed);
         }
         
-        // Verify second vote signature
+        let payload2 = with_domain(DOMAIN_SLASH_EQUIVOC, &vote2.vote_hash);
         let valid2 = verify_dilithium(
             &validator_pubkey,
-            &vote2.vote_hash,
+            &payload2,
             &vote2.signature,
         ).map_err(|e| SlashingError::InvalidEvidence(
             format!("Failed to verify equivocation vote signature 2: {}", e)

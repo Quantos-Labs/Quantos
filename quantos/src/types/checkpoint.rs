@@ -121,8 +121,9 @@ impl FinalityProof {
         }
         
         // CRITICAL (z3): Verify the finality signature cryptographically.
-        let checkpoint_hash = self.checkpoint.hash();
-        match verify_falcon(validator_pubkey, &checkpoint_hash, &sig.signature) {
+        // Must use signing_data() (domain-prefixed) to match what validators sign in finality.rs.
+        let signing_data = self.checkpoint.signing_data();
+        match verify_falcon(validator_pubkey, &signing_data, &sig.signature) {
             Ok(true) => {},
             Ok(false) => return Err("Invalid finality signature: verification failed".to_string()),
             Err(e) => return Err(format!("Signature verification error: {:?}", e)),
