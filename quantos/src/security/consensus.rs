@@ -97,7 +97,8 @@ impl Default for ConsensusSecurityConfig {
             median_time_window: 11,
             min_block_interval_ms: 100,
             fork_monitoring: true,
-            stake_concentration_alert: 0.33, // Alert if single entity has 33%+ stake
+            // Strictly above a three-way equal split (~33.3%); avoids float edge at 1/3.
+            stake_concentration_alert: 0.34,
         }
     }
 }
@@ -182,11 +183,15 @@ impl MajorityAttackDetector {
         if total == 0 {
             return;
         }
+        // Concentration only meaningful once multiple independent entities are tracked.
+        if self.entity_stakes.len() < 2 {
+            return;
+        }
 
         if let Some(entity_stake) = self.entity_stakes.get(entity) {
             let ratio = *entity_stake as f64 / total as f64;
             
-            if ratio >= self.config.stake_concentration_alert {
+            if ratio > self.config.stake_concentration_alert {
                 self.add_alert(MajorityAlert {
                     timestamp: Instant::now(),
                     alert_type: MajorityAlertType::StakeConcentration,
@@ -282,18 +287,59 @@ impl MajorityAttackDetector {
         );
     }
 
+    /// Live stake-concentration severity from current entity totals (not stale alerts).
+    fn current_stake_concentration_severity(&self) -> Option<Severity> {
+        let total = *self.total_stake.read();
+        if self.entity_stakes.len() < 2 || total == 0 {
+            return None;
+        }
+        let max_ratio = self
+            .entity_stakes
+            .iter()
+            .map(|e| *e.value() as f64 / total as f64)
+            .fold(0.0_f64, f64::max);
+        if max_ratio <= self.config.stake_concentration_alert {
+            return None;
+        }
+        Some(if max_ratio >= 0.5 {
+            Severity::Critical
+        } else if max_ratio >= 0.4 {
+            Severity::High
+        } else {
+            Severity::Medium
+        })
+    }
+
     /// Gets current risk level.
     pub fn get_risk_level(&self) -> MajorityRiskLevel {
+        let live = self.current_stake_concentration_severity();
         let alerts = self.alerts.read();
         let recent_cutoff = Instant::now() - Duration::from_secs(300);
-        
-        let critical_count = alerts.iter()
-            .filter(|a| a.timestamp > recent_cutoff && a.severity == Severity::Critical)
-            .count();
-        
-        let high_count = alerts.iter()
-            .filter(|a| a.timestamp > recent_cutoff && a.severity >= Severity::High)
-            .count();
+
+        let mut critical_count = 0usize;
+        let mut high_count = 0usize;
+
+        if let Some(s) = live {
+            if s == Severity::Critical {
+                critical_count += 1;
+            }
+            if s >= Severity::High {
+                high_count += 1;
+            }
+        }
+
+        for a in alerts.iter().filter(|a| a.timestamp > recent_cutoff) {
+            // Stake concentration is evaluated from live totals; queued alerts may be stale.
+            if a.alert_type == MajorityAlertType::StakeConcentration {
+                continue;
+            }
+            if a.severity == Severity::Critical {
+                critical_count += 1;
+            }
+            if a.severity >= Severity::High {
+                high_count += 1;
+            }
+        }
 
         if critical_count > 0 {
             MajorityRiskLevel::Critical
@@ -383,8 +429,8 @@ impl LongRangeProtector {
         }
     }
     
-    /// Gets the authorization token (should be called once at startup).
-    pub fn get_auth_token(&self) -> Option<[u8; 32]> {
+    /// Returns the local bootstrap token for trusted in-crate operations.
+    pub(crate) fn bootstrap_auth_token(&self) -> Option<[u8; 32]> {
         self.auth_token.lock().ok().and_then(|g| *g)
     }
 
@@ -865,7 +911,7 @@ mod tests {
     fn test_long_range_protection() {
         let config = ConsensusSecurityConfig::default();
         let protector = LongRangeProtector::new(config);
-        let auth_token = protector.get_auth_token().unwrap();
+        let auth_token = protector.bootstrap_auth_token().unwrap();
 
         // Set WS checkpoint at slot 1000 (requires auth token)
         protector.set_ws_checkpoint(WeakSubjectivityCheckpoint {

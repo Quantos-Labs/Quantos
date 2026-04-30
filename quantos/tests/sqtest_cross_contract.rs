@@ -1,3 +1,13 @@
+//! SQTEST cross-contract integration tests.
+//!
+//! These tests are **ignored by default** because they require pre-compiled WASM
+//! artefacts (`QTEST.wasm`, `SQTEST.wasm`, `SQTESTEngine.wasm`) that are produced
+//! by the Solang compiler and are not checked into the repository.
+//!
+//! To run them:
+//! 1. Compile the Solidity contracts in `solidity-contracts/` with Solang.
+//! 2. `cargo test -p quantos --test sqtest_cross_contract -- --ignored`
+
 use quantos::storage::Storage;
 use quantos::vm::{BytecodeProtectionConfig, BytecodeProtector, ContractManager, QuantosVmConfig};
 use std::fs;
@@ -27,6 +37,7 @@ fn decode_u256_le_u128(data: &[u8]) -> u128 {
 }
 
 #[test]
+#[ignore = "requires Solang-compiled WASM artefacts (see file header)"]
 fn sqtest_open_vault_measures_nested_cu() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage = Storage::new(temp_dir.path()).unwrap();
@@ -143,6 +154,7 @@ fn sqtest_open_vault_measures_nested_cu() {
 }
 
 #[test]
+#[ignore = "requires Solang-compiled WASM artefacts (see file header)"]
 fn sqtest_get_accrued_debt_tolerates_non_monotonic_timestamp() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage = Storage::new(temp_dir.path()).unwrap();

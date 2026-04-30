@@ -20,6 +20,7 @@ use tokio::sync::mpsc;
 use crate::types::{Hash, Address};
 use crate::consensus::{ConsensusError, ConsensusResult};
 use crate::consensus::pipelining::{ViewNumber, QuorumCertificate};
+use crate::crypto::{with_domain, DOMAIN_VIEW_CHANGE};
 
 /// View change status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,15 +93,15 @@ impl ViewChangeMessage {
     
     /// Data to sign
     pub fn signing_data(&self) -> Vec<u8> {
-        let mut data = Vec::new();
-        data.extend_from_slice(&self.new_view.to_le_bytes());
-        data.extend_from_slice(&self.sender);
-        data.extend_from_slice(&self.timestamp.to_le_bytes());
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&self.new_view.to_le_bytes());
+        msg.extend_from_slice(&self.sender);
+        msg.extend_from_slice(&self.timestamp.to_le_bytes());
         if let Some(ref qc) = self.high_qc {
-            data.extend_from_slice(&qc.block_hash);
-            data.extend_from_slice(&qc.view.to_le_bytes());
+            msg.extend_from_slice(&qc.block_hash);
+            msg.extend_from_slice(&qc.view.to_le_bytes());
         }
-        data
+        with_domain(DOMAIN_VIEW_CHANGE, &msg)
     }
 }
 

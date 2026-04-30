@@ -1,12 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use dashmap::DashMap;
-use parking_lot::{Mutex, RwLock};
-use rand::rngs::OsRng;
-use rand::RngCore;
+use parking_lot::RwLock;
 
 use crate::consensus::{ConsensusError, ConsensusResult};
-use crate::crypto::{VRFProof, CommitteeRandomnessGenerator, PartialVRFProof};
+use crate::crypto::{VRFProof, CommitteeRandomnessGenerator, PartialVRFProof, verify_dilithium};
 use crate::types::{
     Address, CommitteeVote, Hash, 
     ShardId, Validator, ValidatorSet,
@@ -20,14 +18,10 @@ pub struct CommitteeManager {
     validator_set: Arc<RwLock<ValidatorSet>>,
     num_committees: u16,
     validators_per_committee: usize,
-    /// Authorized addresses that can trigger committee rotation
-    authorized_rotators: Arc<RwLock<HashSet<Address>>>,
     /// PRODUCTION: Threshold QR-VRF for committee rotation randomness
     threshold_vrf: Arc<RwLock<Option<CommitteeRandomnessGenerator>>>,
     /// Collected partial VRF proofs for current epoch
     partial_proofs: Arc<DashMap<u64, Vec<PartialVRFProof>>>,
-    /// CRITICAL (z1): Authorization token for privileged operations
-    auth_token: Arc<Mutex<[u8; 32]>>,
 }
 
 #[derive(Clone)]
@@ -83,10 +77,6 @@ impl CommitteeManager {
         num_committees: u16,
         validators_per_committee: usize,
     ) -> Self {
-        // CRITICAL (z1): Generate auth token with cryptographically secure RNG
-        let mut token = [0u8; 32];
-        OsRng.fill_bytes(&mut token);
-        
         Self {
             storage,
             current_epoch: Arc::new(RwLock::new(0)),
@@ -94,10 +84,8 @@ impl CommitteeManager {
             validator_set: Arc::new(RwLock::new(ValidatorSet::new())),
             num_committees,
             validators_per_committee,
-            authorized_rotators: Arc::new(RwLock::new(HashSet::new())),
             threshold_vrf: Arc::new(RwLock::new(None)),
             partial_proofs: Arc::new(DashMap::new()),
-            auth_token: Arc::new(Mutex::new(token)),
         }
     }
     
@@ -155,37 +143,17 @@ impl CommitteeManager {
         Ok(randomness)
     }
 
-    /// Adds an authorized address that can trigger committee rotation.
-    pub fn add_authorized_rotator(&self, address: Address) {
-        self.authorized_rotators.write().insert(address);
-    }
-
-    /// Removes an authorized rotator.
-    pub fn remove_authorized_rotator(&self, address: &Address) {
-        self.authorized_rotators.write().remove(address);
-    }
-
-    /// Checks if an address is authorized to rotate committees.
-    pub fn is_authorized_rotator(&self, address: &Address) -> bool {
-        self.authorized_rotators.read().contains(address)
-    }
-
     /// Rotates committees for a new epoch.
-    /// 
-    /// CRITICAL: Requires caller authorization to prevent manipulation.
+    ///
+    /// Rotation is protocol-deterministic. There is intentionally no privileged
+    /// rotator address because any mutable caller-controlled rotation authority
+    /// can bias committee assignment.
     pub fn rotate_committees(
         &self,
         epoch: u64,
         slot: u64,
         randomness: &Hash,
-        caller: &Address,
     ) -> ConsensusResult<()> {
-        // Access control: only authorized addresses can rotate committees
-        if !self.is_authorized_rotator(caller) {
-            return Err(ConsensusError::Unauthorized(
-                format!("Address {:?} not authorized to rotate committees", caller)
-            ));
-        }
         let validator_set = self.validator_set.read();
         let active_validators = validator_set.active_validators();
         
@@ -314,11 +282,26 @@ impl CommitteeManager {
             return Err(ConsensusError::NotCommitteeMember);
         }
 
-        Ok(true)
+        let validator_set = self.validator_set.read();
+        let validator = validator_set.get_validator(&vote.validator)
+            .ok_or_else(|| ConsensusError::InvalidValidator(
+                format!("Validator {:?} not found", vote.validator)
+            ))?;
+
+        if !validator.active || validator.jailed {
+            return Ok(false);
+        }
+
+        let valid = verify_dilithium(
+            &validator.public_key,
+            &vote.signing_data(),
+            &vote.signature,
+        ).map_err(|e| ConsensusError::CryptoError(e.to_string()))?;
+
+        Ok(valid)
     }
 
-    /// CRITICAL (z1): Validates auth_token before adding validator
-    pub fn add_validator(&self, validator: Validator, auth_token: &[u8; 32]) -> Result<(), String> {
+    pub fn add_validator(&self, validator: Validator) -> Result<(), String> {
         // Validate stake bounds before adding
         if validator.stake.0 == 0 {
             return Err("Validator stake must be non-zero".to_string());
@@ -326,13 +309,7 @@ impl CommitteeManager {
         if validator.stake.0 > u128::MAX / 2 {
             return Err(format!("Validator stake {} exceeds safe maximum", validator.stake.0));
         }
-        let expected = self.auth_token.lock();
-        self.validator_set.write().add_validator(validator, auth_token, &*expected)
-    }
-    
-    /// CRITICAL (z1): Returns the stored auth token for callers that need it
-    pub fn get_auth_token(&self) -> [u8; 32] {
-        *self.auth_token.lock()
+        self.validator_set.write().add_validator(validator)
     }
 
     pub fn remove_validator(&self, address: &Address) {

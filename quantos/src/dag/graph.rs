@@ -427,8 +427,61 @@ impl DAGGraph {
             vertex.status = status;
             self.storage.put_vertex(&vertex)
                 .map_err(|e| DAGError::StorageError(e.to_string()))?;
+        } else if let Some(mut vertex) = self.storage.get_vertex(hash)
+            .map_err(|e| DAGError::StorageError(e.to_string()))?
+        {
+            vertex.status = status;
+            self.storage.put_vertex(&vertex)
+                .map_err(|e| DAGError::StorageError(e.to_string()))?;
         }
         Ok(())
+    }
+
+    /// Marks all reachable ancestors from the supplied tips as finalized up to
+    /// the checkpoint's captured DAG frontier. Returns
+    /// `(vertices_finalized, transactions_finalized)`.
+    pub(crate) fn finalize_reachable_from_tips(
+        &self,
+        tips: &[Hash],
+    ) -> DAGResult<(u64, u64)> {
+        let mut finalized_vertices = 0u64;
+        let mut finalized_transactions = 0u64;
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+
+        for tip in tips {
+            if visited.insert(*tip) {
+                queue.push_back(*tip);
+            }
+        }
+
+        while let Some(hash) = queue.pop_front() {
+            if visited.len() >= MAX_TRAVERSAL_VERTICES {
+                return Err(DAGError::TraversalLimitExceeded(MAX_TRAVERSAL_VERTICES));
+            }
+
+            let Some(mut vertex) = self.get_vertex(&hash)? else {
+                continue;
+            };
+
+            for parent in &vertex.parents {
+                if visited.insert(*parent) {
+                    queue.push_back(*parent);
+                }
+            }
+
+            if vertex.status != VertexStatus::Finalized {
+                vertex.status = VertexStatus::Finalized;
+                finalized_vertices = finalized_vertices.saturating_add(1);
+                finalized_transactions = finalized_transactions
+                    .saturating_add(vertex.transactions.len() as u64);
+                self.storage.put_vertex(&vertex)
+                    .map_err(|e| DAGError::StorageError(e.to_string()))?;
+                self.vertices.insert(hash, vertex);
+            }
+        }
+
+        Ok((finalized_vertices, finalized_transactions))
     }
 
     pub fn vertex_count(&self) -> usize {

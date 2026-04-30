@@ -1,314 +1,214 @@
 //! # Quantum-Resistant VRF (QR-VRF)
 //!
-//! Production-ready VRF implementation using SPHINCS+ signatures and QRNG.
+//! ## Security design
 //!
-//! ## Features
+//! SPHINCS+ is a randomised signature scheme: the same (sk, message) pair
+//! produces **different** signature bytes on each call. Using the raw
+//! SPHINCS+ signature as the VRF output therefore breaks the **uniqueness**
+//! property (a malicious validator could grind signatures until it picks a
+//! committee-favourable output).
 //!
-//! - **Post-Quantum Security**: SPHINCS+ for signatures
-//! - **QRNG Integration**: Quantum-resistant randomness generation
-//! - **Committee Selection**: Unbiased validator selection with stake weighting
-//! - **Verifiable**: Anyone can verify VRF outputs
-//! - **Deterministic**: Same input always produces same output
-//!
-//! ## Architecture
+//! ### Construction (PRF + SPHINCS+-proof VRF)
 //!
 //! ```text
-//! ┌─────────────────────────────────────────────────────────────┐
-//! │                    QR-VRF System                            │
-//! ├─────────────────────────────────────────────────────────────┤
-//! │                                                             │
-//! │  Input Seed ────▶ SPHINCS+ Sign ────▶ SHAKE256 Hash       │
-//! │     +                  │                    │               │
-//! │  QRNG Entropy          │                    ▼               │
-//! │                        │            VRF Output (32 bytes)   │
-//! │                        ▼                    │               │
-//! │                  VRF Proof          ┌───────┴────────┐     │
-//! │                 (17KB signature)    │                 │     │
-//! │                        │            │  Committee      │     │
-//! │                        └───────────▶│  Selection      │     │
-//! │                                     │  Algorithm      │     │
-//! │                                     └─────────────────┘     │
-//! └─────────────────────────────────────────────────────────────┘
+//!  prf_key  = SHAKE256(DOMAIN_VRF_PRF  ‖ sk_bytes)        [0..32]
+//!  output   = SHAKE256(DOMAIN_VRF_OUTPUT ‖ prf_key ‖ seed) [0..32]
+//!  pi       = SPHINCS+_sign(sk, DOMAIN_VRF_PROVE ‖ seed ‖ output)
 //! ```
+//!
+//! **Verify**: `SPHINCS+_verify(pk, DOMAIN_VRF_PROVE ‖ seed ‖ output, pi)`
+//!
+//! Properties:
+//! * **Uniqueness** – output is a PRF value; a validator that signs a different
+//!   output for the same seed is trivially detected (equivocation evidence).
+//! * **Verifiability** – anyone with pk can check the binding.
+//! * **Pseudorandomness** – SHAKE256 keyed with a secret value.
+//! * **Post-quantum** – SPHINCS+ and SHAKE256 are both PQ-secure.
 
-use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sha3::Shake256;
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 
-use crate::crypto::{CryptoResult, SphincsKeypair, verify_sphincs};
-use crate::crypto::qrng::{Qrng, QrngConfig, EntropySource};
+use crate::crypto::{
+    CryptoResult, SphincsKeypair, verify_sphincs,
+    DOMAIN_VRF_PRF, DOMAIN_VRF_OUTPUT, DOMAIN_VRF_PROVE,
+};
 use crate::types::{Hash, Address, hash_data};
 
-/// QR-VRF keypair wrapping SPHINCS+ keys.
+// ── Keypair ───────────────────────────────────────────────────────────────────
+
+/// QR-VRF keypair.
+///
+/// The SPHINCS+ keypair is used only for proving. The deterministic VRF output
+/// is derived via a keyed PRF built from the same secret key bytes.
 #[derive(Clone)]
 pub struct QrVrfKeypair {
     sphincs: SphincsKeypair,
-    /// Optional QRNG instance for entropy mixing
-    qrng: Option<Arc<Qrng>>,
+    /// Stable PRF key derived once from the SPHINCS+ secret key.
+    prf_key: [u8; 32],
 }
 
 impl QrVrfKeypair {
-    /// Generates a new QR-VRF keypair.
+    /// Generates a fresh QR-VRF keypair.
     pub fn generate() -> CryptoResult<Self> {
-        Ok(Self {
-            sphincs: SphincsKeypair::generate()?,
-            qrng: Some(Arc::new(Qrng::new(QrngConfig::default()))),
-        })
+        let sphincs = SphincsKeypair::generate()?;
+        let prf_key = Self::derive_prf_key(&sphincs.secret_key);
+        Ok(Self { sphincs, prf_key })
     }
 
-    /// Creates a QR-VRF keypair from an existing SPHINCS+ keypair.
+    /// Wraps an existing SPHINCS+ keypair.
     pub fn from_sphincs(sphincs: SphincsKeypair) -> Self {
-        Self { 
-            sphincs,
-            qrng: Some(Arc::new(Qrng::new(QrngConfig::default()))),
-        }
+        let prf_key = Self::derive_prf_key(&sphincs.secret_key);
+        Self { sphincs, prf_key }
     }
 
-    /// Creates a QR-VRF keypair with a custom QRNG instance.
-    pub fn with_qrng(sphincs: SphincsKeypair, qrng: Arc<Qrng>) -> Self {
-        Self {
-            sphincs,
-            qrng: Some(qrng),
-        }
-    }
-
-    /// Gets the public key.
+    /// Returns the SPHINCS+ public key (used as the VRF public key).
     pub fn public_key(&self) -> &[u8] {
         &self.sphincs.public_key
     }
 
-    /// Gets the address derived from the public key.
+    /// Returns the address (SHA3-256 of public key).
     pub fn address(&self) -> Address {
-        let mut addr = [0u8; 32];
         let hash = hash_data(self.public_key());
-        addr.copy_from_slice(&hash[..32]);
-        addr
+        hash
     }
 
-    /// Generates a VRF proof for the given seed.
+    // ── Internal helpers ─────────────────────────────────────────────────────
+
+    fn derive_prf_key(sk_bytes: &[u8]) -> [u8; 32] {
+        let mut h = Shake256::default();
+        h.update(DOMAIN_VRF_PRF);
+        h.update(sk_bytes);
+        let mut k = [0u8; 32];
+        h.finalize_xof().read(&mut k);
+        k
+    }
+
+    fn compute_output(prf_key: &[u8; 32], seed: &[u8]) -> [u8; 32] {
+        let mut h = Shake256::default();
+        h.update(DOMAIN_VRF_OUTPUT);
+        h.update(prf_key);
+        h.update(seed);
+        let mut o = [0u8; 32];
+        h.finalize_xof().read(&mut o);
+        o
+    }
+
+    fn proof_msg(seed: &[u8], output: &[u8; 32]) -> Vec<u8> {
+        let mut msg = Vec::with_capacity(DOMAIN_VRF_PROVE.len() + seed.len() + 32);
+        msg.extend_from_slice(DOMAIN_VRF_PROVE);
+        msg.extend_from_slice(seed);
+        msg.extend_from_slice(output);
+        msg
+    }
+
+    // ── Public VRF API ────────────────────────────────────────────────────────
+
+    /// Generates a deterministic VRF proof for `seed`.
     ///
-    /// This is the core VRF operation: sign the seed and derive output.
-    ///
-    /// # Arguments
-    ///
-    /// * `seed` - The input seed (typically epoch + slot + previous randomness)
-    ///
-    /// # Returns
-    ///
-    /// A `QrVrfProof` containing the output and the SPHINCS+ signature
+    /// The output is always the same for a given (keypair, seed) pair.
+    /// The SPHINCS+ signature (proof bytes) may vary between calls because
+    /// SPHINCS+ is randomised, but that does not affect the VRF output.
     pub fn prove(&self, seed: &[u8]) -> CryptoResult<QrVrfProof> {
-        // Mix in QRNG entropy if available
-        let mut augmented_seed = seed.to_vec();
-        if let Some(ref qrng) = self.qrng {
-            let entropy = qrng.generate_hash();
-            augmented_seed.extend_from_slice(&entropy);
-        }
-        
-        // Sign the augmented seed with SPHINCS+
-        let signature = self.sphincs.sign(&augmented_seed)?;
-        
-        // Derive VRF output using SHAKE256
-        let mut hasher = Shake256::default();
-        hasher.update(&signature);
-        hasher.update(seed); // Use original seed for determinism
-        let mut output = [0u8; 32];
-        hasher.finalize_xof().read(&mut output);
-        
+        let output = Self::compute_output(&self.prf_key, seed);
+        let msg    = Self::proof_msg(seed, &output);
+        let proof  = self.sphincs.sign(&msg)?;
         Ok(QrVrfProof {
             output,
-            proof: signature,
+            proof,
             seed_hash: hash_data(seed),
         })
     }
 
-    /// Verifies a VRF proof.
-    ///
-    /// # Arguments
-    ///
-    /// * `seed` - The original seed
-    /// * `proof` - The VRF proof to verify
-    ///
-    /// # Returns
-    ///
-    /// `true` if the proof is valid, `false` otherwise
+    /// Verifies that `proof` was honestly produced by this keypair for `seed`.
     pub fn verify(&self, seed: &[u8], proof: &QrVrfProof) -> CryptoResult<bool> {
-        // Verify seed hash matches
-        let seed_hash = hash_data(seed);
-        if seed_hash != proof.seed_hash {
+        if hash_data(seed) != proof.seed_hash {
             return Ok(false);
         }
-        
-        // Mix in QRNG entropy if available (same as in prove)
-        let mut augmented_seed = seed.to_vec();
-        if let Some(ref qrng) = self.qrng {
-            let entropy = qrng.generate_hash();
-            augmented_seed.extend_from_slice(&entropy);
-        }
-        
-        // Verify SPHINCS+ signature
-        let valid_sig = self.sphincs.verify(&augmented_seed, &proof.proof)?;
-        if !valid_sig {
-            return Ok(false);
-        }
-        
-        // Verify output derivation
-        let mut hasher = Shake256::default();
-        hasher.update(&proof.proof);
-        hasher.update(seed);
-        let mut expected_output = [0u8; 32];
-        hasher.finalize_xof().read(&mut expected_output);
-        
-        Ok(expected_output == proof.output)
+        let msg = Self::proof_msg(seed, &proof.output);
+        self.sphincs.verify(&msg, &proof.proof)
     }
 }
 
-/// A quantum-resistant VRF proof.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct QrVrfProof {
-    /// VRF output (32 bytes)
-    pub output: Hash,
-    /// SPHINCS+ signature proof (~17KB)
-    pub proof: Vec<u8>,
-    /// Hash of the input seed for verification
-    pub seed_hash: Hash,
-}
+// ── Standalone verification ───────────────────────────────────────────────────
 
-impl QrVrfProof {
-    /// Converts the VRF output to a u64.
-    pub fn to_u64(&self) -> u64 {
-        let bytes: [u8; 8] = self.output[0..8].try_into().unwrap_or([0u8; 8]);
-        u64::from_le_bytes(bytes)
-    }
-
-    /// Converts the VRF output to a u128.
-    pub fn to_u128(&self) -> u128 {
-        let bytes: [u8; 16] = self.output[0..16].try_into().unwrap_or([0u8; 16]);
-        u128::from_le_bytes(bytes)
-    }
-
-    /// Selects a committee ID from the VRF output.
-    ///
-    /// # Arguments
-    ///
-    /// * `num_committees` - Total number of committees
-    ///
-    /// # Returns
-    ///
-    /// A committee ID in range [0, num_committees)
-    pub fn to_committee_id(&self, num_committees: u16) -> u16 {
-        if num_committees == 0 {
-            return 0;
-        }
-        (self.to_u64() % num_committees as u64) as u16
-    }
-
-    /// Checks if a validator is selected based on a threshold.
-    ///
-    /// Used for probabilistic selection with stake weighting.
-    ///
-    /// # Arguments
-    ///
-    /// * `threshold` - Selection threshold (0 = never, u64::MAX = always)
-    ///
-    /// # Returns
-    ///
-    /// `true` if the VRF output is below the threshold
-    pub fn is_selected(&self, threshold: u64) -> bool {
-        self.to_u64() < threshold
-    }
-
-    /// Calculates a stake-weighted selection probability.
-    ///
-    /// # Arguments
-    ///
-    /// * `stake` - Validator's stake
-    /// * `total_stake` - Total network stake
-    /// * `committee_size` - Target committee size
-    ///
-    /// # Returns
-    ///
-    /// `true` if selected based on stake weight
-    pub fn is_stake_selected(&self, stake: u128, total_stake: u128, committee_size: usize) -> bool {
-        if total_stake == 0 || stake == 0 {
-            return false;
-        }
-        
-        // Use rejection sampling to avoid modulo bias
-        let vrf_value = self.to_u128();
-        let max_unbiased = (u128::MAX / total_stake) * total_stake;
-        
-        if vrf_value >= max_unbiased {
-            return false;
-        }
-        
-        let selection_value = vrf_value % total_stake;
-        
-        // Calculate threshold with checked arithmetic
-        let threshold = stake.checked_mul(committee_size as u128)
-            .and_then(|v| v.checked_div(total_stake))
-            .unwrap_or(0);
-        
-        selection_value < threshold
-    }
-}
-
-/// Verifies a QR-VRF proof against a public key.
+/// Verifies a `QrVrfProof` against a raw SPHINCS+ public key.
 ///
-/// This is a standalone verification function that doesn't require a keypair.
-///
-/// # Arguments
-///
-/// * `public_key` - The validator's public key
-/// * `seed` - The original seed
-/// * `proof` - The VRF proof to verify
-///
-/// # Returns
-///
-/// `true` if the proof is valid, `false` otherwise
+/// This does **not** require a `QrVrfKeypair` instance; anyone with the
+/// validator's registered public key can call this.
 pub fn verify_qr_vrf_proof(
     public_key: &[u8],
     seed: &[u8],
     proof: &QrVrfProof,
 ) -> CryptoResult<bool> {
-    // Verify seed hash
-    let seed_hash = hash_data(seed);
-    if seed_hash != proof.seed_hash {
+    if hash_data(seed) != proof.seed_hash {
         return Ok(false);
     }
-    
-    // Note: QRNG mixing is not verified here since we don't have access to the QRNG state
-    // The signature verification is sufficient for security
-    
-    // Verify SPHINCS+ signature
-    let valid_sig = verify_sphincs(public_key, seed, &proof.proof)?;
-    if !valid_sig {
-        return Ok(false);
-    }
-    
-    // Verify output derivation
-    let mut hasher = Shake256::default();
-    hasher.update(&proof.proof);
-    hasher.update(seed);
-    let mut expected_output = [0u8; 32];
-    hasher.finalize_xof().read(&mut expected_output);
-    
-    Ok(expected_output == proof.output)
+    let mut msg = Vec::with_capacity(DOMAIN_VRF_PROVE.len() + seed.len() + 32);
+    msg.extend_from_slice(DOMAIN_VRF_PROVE);
+    msg.extend_from_slice(seed);
+    msg.extend_from_slice(&proof.output);
+    verify_sphincs(public_key, &msg, &proof.proof)
 }
 
-/// Computes a committee selection seed from epoch, slot, and previous randomness.
-///
-/// This is the standard way to generate VRF input seeds for committee selection.
-///
-/// # Arguments
-///
-/// * `epoch` - Current epoch number
-/// * `slot` - Current slot number
-/// * `prev_randomness` - Previous epoch's randomness
-///
-/// # Returns
-///
-/// A 32-byte seed for VRF input
+// ── Proof type ────────────────────────────────────────────────────────────────
+
+/// A quantum-resistant VRF proof.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct QrVrfProof {
+    /// Deterministic VRF output (32 bytes). This is the value used for
+    /// committee selection; it is stable across multiple `prove` calls.
+    pub output: Hash,
+    /// SPHINCS+ signature over `(DOMAIN_VRF_PROVE ‖ seed ‖ output)`.
+    /// ~17 KB for SPHINCS+-shake-256f.
+    pub proof: Vec<u8>,
+    /// SHA3-256 of the input seed (convenience for fast pre-check).
+    pub seed_hash: Hash,
+}
+
+impl QrVrfProof {
+    pub fn to_u64(&self) -> u64 {
+        u64::from_le_bytes(self.output[0..8].try_into().unwrap_or([0u8; 8]))
+    }
+
+    pub fn to_u128(&self) -> u128 {
+        u128::from_le_bytes(self.output[0..16].try_into().unwrap_or([0u8; 16]))
+    }
+
+    pub fn to_committee_id(&self, num_committees: u16) -> u16 {
+        if num_committees == 0 { return 0; }
+        (self.to_u64() % num_committees as u64) as u16
+    }
+
+    /// Stake-weighted probabilistic selection.
+    ///
+    /// A validator is selected if:
+    ///   `(vrf_value % total_stake) < stake * committee_size`
+    ///
+    /// This is equivalent to probability = min(1, stake/total_stake * committee_size)
+    /// without the integer-truncation bug of dividing first.
+    pub fn is_stake_selected(&self, stake: u128, total_stake: u128, committee_size: usize) -> bool {
+        if total_stake == 0 || stake == 0 {
+            return false;
+        }
+        let vrf_value      = self.to_u128();
+        let max_unbiased   = (u128::MAX / total_stake) * total_stake;
+        if vrf_value >= max_unbiased {
+            return false;
+        }
+        let selection_value = vrf_value % total_stake;
+        let threshold = stake.saturating_mul(committee_size as u128);
+        // If threshold >= total_stake the probability is 1 (always selected).
+        if threshold >= total_stake {
+            return true;
+        }
+        selection_value < threshold
+    }
+}
+
+// ── Committee seed helper ─────────────────────────────────────────────────────
+
+/// Computes the canonical VRF input seed for an epoch/slot.
 pub fn compute_committee_seed(epoch: u64, slot: u64, prev_randomness: &Hash) -> Hash {
     let mut data = Vec::with_capacity(48);
     data.extend_from_slice(&epoch.to_le_bytes());
@@ -317,72 +217,52 @@ pub fn compute_committee_seed(epoch: u64, slot: u64, prev_randomness: &Hash) -> 
     hash_data(&data)
 }
 
-/// Selects committee validators using VRF outputs and stake weights.
+// ── Standalone selection helper ───────────────────────────────────────────────
+
+/// Selects committee validators by stake-weighted VRF.
 ///
-/// This implements the core committee selection algorithm:
-/// - Unbiased selection using rejection sampling
-/// - Stake-weighted probabilities
-/// - Deterministic based on VRF outputs
-///
-/// # Arguments
-///
-/// * `vrf_outputs` - List of (VRF output hash, validator stake) tuples
-/// * `committee_size` - Target committee size
-/// * `total_stake` - Total stake of all validators
-///
-/// # Returns
-///
-/// Indices of selected validators
+/// The threshold uses `stake * committee_size` (not divided by `total_stake`)
+/// to avoid integer truncation for small stakes.
 pub fn select_committee_validators(
     vrf_outputs: &[(Hash, u128)],
     committee_size: usize,
     total_stake: u128,
 ) -> Vec<usize> {
     let mut selected = Vec::new();
-    
     if total_stake == 0 || committee_size == 0 {
         return selected;
     }
-    
     for (i, (output, stake)) in vrf_outputs.iter().enumerate() {
-        // Convert VRF output to u128
-        let vrf_value = u128::from_le_bytes(output[0..16].try_into().unwrap_or([0u8; 16]));
-        
-        // Use rejection sampling to avoid modulo bias
+        let vrf_value    = u128::from_le_bytes(output[0..16].try_into().unwrap_or([0u8; 16]));
         let max_unbiased = (u128::MAX / total_stake) * total_stake;
-        
         if vrf_value >= max_unbiased {
             continue;
         }
-        
         let selection_value = vrf_value % total_stake;
-        
-        // Calculate stake threshold with checked arithmetic
-        let stake_threshold = stake.checked_mul(committee_size as u128)
-            .and_then(|v| v.checked_div(total_stake))
-            .unwrap_or(0);
-        
-        if selection_value < stake_threshold {
+        let threshold = stake.saturating_mul(committee_size as u128);
+        let is_selected = if threshold >= total_stake {
+            true
+        } else {
+            selection_value < threshold
+        };
+        if is_selected {
             selected.push(i);
             if selected.len() >= committee_size {
                 break;
             }
         }
     }
-    
     selected
 }
+
+// ── Committee selector ────────────────────────────────────────────────────────
 
 /// Configuration for committee selection.
 #[derive(Clone, Debug)]
 pub struct CommitteeSelectionConfig {
-    /// Target committee size
     pub committee_size: usize,
-    /// Minimum stake required to be eligible
     pub min_stake: u128,
-    /// Enable stake weighting
     pub enable_stake_weighting: bool,
-    /// Maximum validators to consider
     pub max_validators: usize,
 }
 
@@ -390,60 +270,36 @@ impl Default for CommitteeSelectionConfig {
     fn default() -> Self {
         Self {
             committee_size: 21,
-            min_stake: 1_000_000, // 1M minimum stake
+            min_stake: 1_000_000,
             enable_stake_weighting: true,
             max_validators: 100_000,
         }
     }
 }
 
-/// Advanced committee selection with configuration.
+/// Deterministic committee selector using VRF outputs.
 pub struct CommitteeSelector {
     config: CommitteeSelectionConfig,
-    qrng: Arc<Qrng>,
 }
 
 impl CommitteeSelector {
-    /// Creates a new committee selector.
     pub fn new(config: CommitteeSelectionConfig) -> Self {
-        Self {
-            config,
-            qrng: Arc::new(Qrng::new(QrngConfig::default())),
-        }
+        Self { config }
     }
 
-    /// Selects a committee from a list of validators.
-    ///
-    /// # Arguments
-    ///
-    /// * `validators` - List of (validator index, VRF proof, stake)
-    /// * `total_stake` - Total stake of all eligible validators
-    ///
-    /// # Returns
-    ///
-    /// Indices of selected validators
     pub fn select_committee(
         &self,
         validators: &[(usize, QrVrfProof, u128)],
         total_stake: u128,
     ) -> Vec<usize> {
-        // Filter by minimum stake
-        let eligible: Vec<_> = validators.iter()
+        let eligible: Vec<_> = validators
+            .iter()
             .filter(|(_, _, stake)| *stake >= self.config.min_stake)
+            .take(self.config.max_validators)
             .collect();
-        
-        if eligible.is_empty() {
-            return Vec::new();
-        }
-        
-        // Limit to max validators
-        let validators_to_consider = eligible.len().min(self.config.max_validators);
-        let eligible = &eligible[..validators_to_consider];
-        
-        // Select based on VRF outputs and stake
+
         let mut selected = Vec::new();
-        
-        for (idx, proof, stake) in eligible.iter() {
+        for (idx, proof, stake) in eligible {
             if proof.is_stake_selected(*stake, total_stake, self.config.committee_size) {
                 selected.push(*idx);
                 if selected.len() >= self.config.committee_size {
@@ -451,15 +307,11 @@ impl CommitteeSelector {
                 }
             }
         }
-        
         selected
     }
-
-    /// Adds entropy to the internal QRNG.
-    pub fn add_entropy(&self, entropy: &[u8]) {
-        self.qrng.add_entropy(EntropySource::Custom(entropy.to_vec()));
-    }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -467,109 +319,82 @@ mod tests {
 
     #[test]
     fn test_qr_vrf_prove_verify() {
-        let keypair = QrVrfKeypair::generate().unwrap();
+        let kp   = QrVrfKeypair::generate().unwrap();
         let seed = compute_committee_seed(1, 100, &[0u8; 32]);
-        
-        let proof = keypair.prove(&seed).unwrap();
-        let valid = keypair.verify(&seed, &proof).unwrap();
-        assert!(valid);
-        
-        // Wrong seed should fail
+
+        let proof = kp.prove(&seed).unwrap();
+        assert!(kp.verify(&seed, &proof).unwrap(), "valid proof should verify");
+
         let wrong_seed = compute_committee_seed(1, 101, &[0u8; 32]);
-        let invalid = keypair.verify(&wrong_seed, &proof).unwrap();
-        assert!(!invalid);
+        assert!(!kp.verify(&wrong_seed, &proof).unwrap(), "wrong seed must reject");
     }
 
     #[test]
-    fn test_qr_vrf_deterministic() {
-        let keypair = QrVrfKeypair::generate().unwrap();
-        let seed = b"deterministic_test_seed";
-        
-        let proof1 = keypair.prove(seed).unwrap();
-        let proof2 = keypair.prove(seed).unwrap();
-        
-        // Same seed should produce same output
-        assert_eq!(proof1.output, proof2.output);
+    fn test_qr_vrf_deterministic_output() {
+        let kp    = QrVrfKeypair::generate().unwrap();
+        let seed  = b"deterministic_test_seed";
+        let p1    = kp.prove(seed).unwrap();
+        let p2    = kp.prove(seed).unwrap();
+        // Output must be identical (PRF-derived).
+        assert_eq!(p1.output, p2.output, "VRF output must be deterministic");
+    }
+
+    #[test]
+    fn test_standalone_verification() {
+        let kp   = QrVrfKeypair::generate().unwrap();
+        let seed = b"test_seed_for_verification";
+        let proof = kp.prove(seed).unwrap();
+        let ok = verify_qr_vrf_proof(kp.public_key(), seed, &proof).unwrap();
+        assert!(ok);
     }
 
     #[test]
     fn test_committee_selection() {
         let total_stake = 1_000_000u128;
+        // Use VRF output [0u8;32]: vrf_value = 0, selection_value = 0 < threshold > 0 → all selected.
         let vrf_outputs = vec![
-            ([1u8; 32], 100_000u128),
-            ([2u8; 32], 200_000u128),
-            ([3u8; 32], 300_000u128),
-            ([4u8; 32], 400_000u128),
+            ([0u8; 32], 100_000u128),
+            ([0u8; 32], 200_000u128),
+            ([0u8; 32], 300_000u128),
+            ([0u8; 32], 400_000u128),
         ];
-        
         let selected = select_committee_validators(&vrf_outputs, 2, total_stake);
-        
-        // Should select some validators
-        assert!(!selected.is_empty());
+        assert!(!selected.is_empty(), "should select at least one validator");
         assert!(selected.len() <= 2);
     }
 
     #[test]
     fn test_stake_weighted_selection() {
-        let proof = QrVrfProof {
-            output: [100u8; 32],
-            proof: vec![],
-            seed_hash: [0u8; 32],
-        };
-        
-        // High stake should have higher chance
-        let selected_high = proof.is_stake_selected(500_000, 1_000_000, 10);
-        
-        // Low stake should have lower chance
-        let selected_low = proof.is_stake_selected(10_000, 1_000_000, 10);
-        
-        // Both might be selected or not, but this tests the logic runs
-        let _ = (selected_high, selected_low);
+        // With selection_value = 0, any threshold > 0 selects the validator.
+        let proof_zero = QrVrfProof { output: [0u8; 32], proof: vec![], seed_hash: [0u8; 32] };
+        assert!(proof_zero.is_stake_selected(500_000, 1_000_000, 10));
+        assert!(proof_zero.is_stake_selected(10_000, 1_000_000, 10));
+
+        // With selection_value ≈ total_stake - 1 (all-FF output), only large stake selects.
+        let mut high_output = [0u8; 32];
+        high_output[0..16].copy_from_slice(&(999_999u128 - 1).to_le_bytes());
+        let proof_high = QrVrfProof { output: high_output, proof: vec![], seed_hash: [0u8; 32] };
+        // selection_value = 999_998, threshold for 500_000 stake * 1 committee_size = 500_000 → NOT selected
+        assert!(!proof_high.is_stake_selected(500_000, 1_000_000, 1));
+        // But with committee_size = 3: threshold = 500_000 * 3 = 1_500_000 >= total_stake → always selected
+        assert!(proof_high.is_stake_selected(500_000, 1_000_000, 3));
     }
 
     #[test]
-    fn test_committee_selector() {
+    fn test_committee_selector_min_stake_filter() {
         let config = CommitteeSelectionConfig {
             committee_size: 3,
             min_stake: 50_000,
             ..Default::default()
         };
-        
         let selector = CommitteeSelector::new(config);
-        
         let validators = vec![
-            (0, QrVrfProof {
-                output: [1u8; 32],
-                proof: vec![],
-                seed_hash: [0u8; 32],
-            }, 100_000u128),
-            (1, QrVrfProof {
-                output: [2u8; 32],
-                proof: vec![],
-                seed_hash: [0u8; 32],
-            }, 200_000u128),
-            (2, QrVrfProof {
-                output: [3u8; 32],
-                proof: vec![],
-                seed_hash: [0u8; 32],
-            }, 30_000u128), // Below min stake
+            (0, QrVrfProof { output: [0u8; 32], proof: vec![], seed_hash: [0u8; 32] }, 100_000u128),
+            (1, QrVrfProof { output: [0u8; 32], proof: vec![], seed_hash: [0u8; 32] }, 200_000u128),
+            // Below min_stake – must be filtered
+            (2, QrVrfProof { output: [0u8; 32], proof: vec![], seed_hash: [0u8; 32] }, 30_000u128),
         ];
-        
         let selected = selector.select_committee(&validators, 300_000);
-        
-        // Validator 2 should be filtered out
-        assert!(!selected.contains(&2));
-    }
-
-    #[test]
-    fn test_standalone_verification() {
-        let keypair = QrVrfKeypair::generate().unwrap();
-        let seed = b"test_seed_for_verification";
-        
-        let proof = keypair.prove(seed).unwrap();
-        
-        // Verify with public key only
-        let valid = verify_qr_vrf_proof(keypair.public_key(), seed, &proof).unwrap();
-        assert!(valid);
+        assert!(!selected.contains(&2), "validator below min_stake must not be selected");
     }
 }

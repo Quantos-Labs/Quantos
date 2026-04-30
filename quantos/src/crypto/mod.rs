@@ -40,6 +40,7 @@ mod falcon;
 mod vrf;
 mod qrng;
 mod qr_vrf;
+pub mod domains;
 mod hash;
 mod keypair;
 mod merkle_pq;
@@ -54,6 +55,10 @@ pub mod batch_verify;
 pub mod signature_aggregation;
 pub mod adaptive_pqc;
 
+pub use domains::{with_domain, DOMAIN_TX, DOMAIN_VERTEX, DOMAIN_COMMITTEE_VOTE,
+    DOMAIN_CHECKPOINT, DOMAIN_VIEW_CHANGE, DOMAIN_PIPELINE_VOTE,
+    DOMAIN_VRF_PRF, DOMAIN_VRF_OUTPUT, DOMAIN_VRF_PROVE,
+    DOMAIN_SLASH_DOUBLE_SIGN, DOMAIN_SLASH_EQUIVOC, DOMAIN_SLASH_INVALID_BLOCK};
 pub use dilithium::*;
 pub use sphincs::*;
 pub use falcon::*;

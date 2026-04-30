@@ -18,6 +18,7 @@ use tokio::sync::mpsc;
 
 use crate::types::{Hash, Address};
 use crate::consensus::{ConsensusError, ConsensusResult};
+use crate::crypto::{with_domain, DOMAIN_PIPELINE_VOTE};
 
 /// View number for consensus rounds
 pub type ViewNumber = u64;
@@ -93,13 +94,13 @@ impl PipelinedBlock {
     
     /// Data to sign for votes
     pub fn signing_data(&self) -> Vec<u8> {
-        let mut data = Vec::new();
-        data.extend_from_slice(&self.hash);
-        data.extend_from_slice(&self.parent_hash);
-        data.extend_from_slice(&self.view.to_le_bytes());
-        data.extend_from_slice(&self.height.to_le_bytes());
-        data.extend_from_slice(&self.state_root);
-        data
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&self.hash);
+        msg.extend_from_slice(&self.parent_hash);
+        msg.extend_from_slice(&self.view.to_le_bytes());
+        msg.extend_from_slice(&self.height.to_le_bytes());
+        msg.extend_from_slice(&self.state_root);
+        with_domain(DOMAIN_PIPELINE_VOTE, &msg)
     }
 }
 

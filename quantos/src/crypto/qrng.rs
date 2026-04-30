@@ -35,6 +35,7 @@
 //! ```
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use parking_lot::{RwLock, Mutex};
 use sha3::Shake256;
@@ -123,6 +124,9 @@ pub struct Qrng {
     
     /// Bytes generated since last reseed
     bytes_since_reseed: Arc<RwLock<usize>>,
+
+    /// Monotonic per-instance counter mixed into every extraction.
+    output_counter: Arc<AtomicU64>,
     
     /// Statistics
     stats: Arc<RwLock<QrngStats>>,
@@ -160,6 +164,7 @@ impl Qrng {
             entropy_pool: Arc::new(RwLock::new(entropy_pool)),
             shake_state: Arc::new(Mutex::new(shake)),
             bytes_since_reseed: Arc::new(RwLock::new(0)),
+            output_counter: Arc::new(AtomicU64::new(0)),
             stats: Arc::new(RwLock::new(QrngStats::default())),
             previous_output: Arc::new(RwLock::new(None)),
         }
@@ -174,10 +179,17 @@ impl Qrng {
     /// * `output` - Buffer to fill with random bytes
     pub fn generate_bytes(&self, output: &mut [u8]) {
         let output_len = output.len();
-        
-        // Use SHAKE256 XOF for all requests
-        let shake = self.shake_state.lock();
-        let mut reader = shake.clone().finalize_xof();
+
+        // SHAKE XOF readers always start at byte 0 when finalized. Mix a
+        // monotonic counter into each request so successive calls advance the
+        // stream instead of replaying the same prefix.
+        let counter = self.output_counter.fetch_add(1, Ordering::SeqCst);
+        let pool = self.entropy_pool.read().clone();
+        let mut shake = Shake256::default();
+        shake.update(&pool);
+        shake.update(&counter.to_le_bytes());
+        shake.update(&(output_len as u64).to_le_bytes());
+        let mut reader = shake.finalize_xof();
         reader.read(output);
         
         // Update bytes counter
@@ -188,7 +200,6 @@ impl Qrng {
             // Check if reseed is needed
             if *bytes_count >= self.config.reseed_interval {
                 drop(bytes_count);
-                drop(shake);
                 drop(reader);
                 self.reseed();
             }
@@ -278,6 +289,7 @@ impl Qrng {
         if pool.len() >= 32 {
             entropy.extend_from_slice(&pool[..32]);
         }
+        drop(pool);
         sources_used += 1;
         
         // Enforce minimum entropy sources to prevent reseeding with predictable values
@@ -307,6 +319,7 @@ impl Qrng {
         
         // Reset counter
         *self.bytes_since_reseed.write() = 0;
+        self.output_counter.store(0, Ordering::SeqCst);
         
         // Update stats
         let mut stats = self.stats.write();
@@ -361,6 +374,7 @@ impl Qrng {
             let mut shake = self.shake_state.lock();
             *shake = Shake256::default();
             shake.update(&pool);
+            self.output_counter.store(0, Ordering::SeqCst);
         }
     }
 

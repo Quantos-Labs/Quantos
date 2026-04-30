@@ -1,12 +1,12 @@
-use quantos::vm::{ContractManager, QuantosVmConfig, BytecodeProtector};
+use quantos::vm::{ContractManager, QuantosVmConfig, BytecodeProtector, BytecodeProtectionConfig};
 use quantos::storage::Storage;
 use std::sync::Arc;
 
 #[test]
 fn test_cross_contract_call_basic() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let storage = Storage::new(temp_dir.path(), Default::default(), [0u8; 32]).unwrap();
-    let protector = Arc::new(BytecodeProtector::new([0u8; 32]));
+    let storage = Storage::new(temp_dir.path()).unwrap();
+    let protector = Arc::new(BytecodeProtector::new(BytecodeProtectionConfig::default()));
     let vm_config = QuantosVmConfig::default();
     let manager = ContractManager::new(storage, protector.clone(), vm_config);
 

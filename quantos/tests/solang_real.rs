@@ -1,7 +1,11 @@
-//! Real-world Solang E2E test: load actual Solang-compiled WASM and execute on QuantosVM.
+//! Real-world Solang E2E tests — require pre-compiled WASM artefacts.
 //!
-//! This test uses the QuantosToken.wasm compiled by Solang from QuantosToken.sol.
-//! It reveals any missing seal_* imports or runtime gaps.
+//! These tests are **ignored by default** because they depend on external WASM
+//! files produced by the Solang compiler. To run them:
+//!
+//! 1. Install Solang: <https://github.com/hyperledger/solang>
+//! 2. Compile: `solang compile test-contracts/QuantosToken.sol --target polkadot --output test-contracts/build/`
+//! 3. Run: `cargo test -p quantos --test solang_real -- --ignored`
 
 use quantos::vm::*;
 use std::collections::HashMap;
@@ -67,6 +71,7 @@ fn load_wasm(name: &str) -> Vec<u8> {
 
 /// Step 1: Just list what the WASM module imports — discover missing seal functions
 #[test]
+#[ignore = "requires Solang-compiled WASM artefact (see file header)"]
 fn step1_list_real_solang_imports() {
     let wasm = load_wasm("QuantosToken");
 
@@ -90,6 +95,7 @@ fn step1_list_real_solang_imports() {
 
 /// Step 2: Deploy the constructor (is_constructor = true)
 #[test]
+#[ignore = "requires Solang-compiled WASM artefact (see file header)"]
 fn step2_deploy_real_solang_contract() {
     let wasm = load_wasm("QuantosToken");
 
@@ -155,6 +161,7 @@ fn step2_deploy_real_solang_contract() {
 
 /// Deploy SimpleStorage(42) and verify storage writes + event
 #[test]
+#[ignore = "requires Solang-compiled WASM artefact (see file header)"]
 fn simple_deploy() {
     let wasm = load_wasm("SimpleStorage");
 
@@ -211,6 +218,7 @@ fn simple_deploy() {
 
 /// Deploy then call get() to read the stored value
 #[test]
+#[ignore = "requires Solang-compiled WASM artefact (see file header)"]
 fn simple_deploy_then_get() {
     let wasm = load_wasm("SimpleStorage");
 
@@ -282,6 +290,7 @@ fn simple_deploy_then_get() {
 
 /// Full ERC-20 E2E: deploy(1M) → totalSupply → balanceOf → transfer → verify
 #[test]
+#[ignore = "requires Solang-compiled WASM artefact (see file header)"]
 fn erc20_full_e2e() {
     let wasm = load_wasm("QuantosToken");
     let config = QuantosVmConfig {

@@ -36,7 +36,7 @@ use thiserror::Error;
 use tracing::{info, warn};
 
 use crate::types::{Address, Hash, Slot};
-use crate::crypto::verify_dilithium;
+use crate::crypto::{verify_dilithium, with_domain, DOMAIN_SLASH_INVALID_BLOCK};
 
 /// Slashing errors.
 #[derive(Debug, Error)]
@@ -211,6 +211,8 @@ pub enum EvidenceData {
         block_hash: Hash,
         block_slot: Slot,
         validation_error: String,
+        /// Signature by the accused validator over the invalid block binding.
+        proposer_signature: Vec<u8>,
     },
     /// Equivocation evidence
     Equivocation {
@@ -497,8 +499,8 @@ impl SlashingManager {
             EvidenceData::Downtime { missed_duties, .. } => {
                 self.validate_downtime(evidence, missed_duties)?;
             }
-            EvidenceData::InvalidBlock { block_hash, .. } => {
-                self.validate_invalid_block(evidence, block_hash)?;
+            EvidenceData::InvalidBlock { block_hash, proposer_signature, .. } => {
+                self.validate_invalid_block(evidence, block_hash, proposer_signature)?;
             }
             EvidenceData::Equivocation { vote1, vote2, .. } => {
                 self.validate_equivocation(evidence, vote1, vote2)?;
@@ -762,6 +764,7 @@ impl SlashingManager {
         &self,
         evidence: &SlashingEvidence,
         block_hash: &Hash,
+        proposer_signature: &[u8],
     ) -> SlashingResult<()> {
         // 1. Block hash must be non-empty
         if block_hash == &[0u8; 32] {
@@ -819,23 +822,38 @@ impl SlashingManager {
                         hex::encode(&evidence.validator[..8]))
                 ))?;
             
-            // Verify the block hash was actually signed by the accused validator
-            // by checking if the evidence_hash (which covers block_hash) can be verified
-            let mut block_binding = Vec::with_capacity(72);
-            block_binding.extend_from_slice(&evidence.validator);
-            block_binding.extend_from_slice(&block_slot.to_le_bytes());
-            block_binding.extend_from_slice(block_hash);
-            let expected_evidence_hash = crate::types::hash_data(&block_binding);
-            
-            // The evidence hash must incorporate the block hash and validator identity
-            if evidence.evidence_hash != expected_evidence_hash {
-                return Err(SlashingError::InvalidEvidence(
-                    "Evidence hash does not match block binding (possible fabrication)".into()
-                ));
+            let block_binding = Self::invalid_block_signing_data(
+                &evidence.validator,
+                *block_slot,
+                block_hash,
+            );
+
+            let valid = verify_dilithium(
+                &validator_pubkey,
+                &block_binding,
+                proposer_signature,
+            ).map_err(|e| SlashingError::InvalidEvidence(
+                format!("Failed to verify invalid block proposer signature: {}", e)
+            ))?;
+
+            if !valid {
+                return Err(SlashingError::SignatureVerificationFailed);
             }
         }
 
         Ok(())
+    }
+
+    fn invalid_block_signing_data(
+        validator: &[u8; 32],
+        block_slot: Slot,
+        block_hash: &Hash,
+    ) -> Vec<u8> {
+        let mut msg = Vec::with_capacity(32 + 8 + 32);
+        msg.extend_from_slice(validator);
+        msg.extend_from_slice(&block_slot.to_le_bytes());
+        msg.extend_from_slice(block_hash);
+        with_domain(DOMAIN_SLASH_INVALID_BLOCK, &msg)
     }
 
     /// Validates equivocation evidence.
@@ -858,12 +876,14 @@ impl SlashingManager {
             ));
         }
 
-        // Verify vote signatures
-        let validator_pubkey = &evidence.validator;
+        let validator_pubkey = self.get_validator_pubkey(&evidence.validator)
+            .ok_or_else(|| SlashingError::InvalidEvidence(
+                format!("Validator public key not registered: {}", hex::encode(&evidence.validator[..8]))
+            ))?;
         
         // Verify first vote signature
         let valid1 = verify_dilithium(
-            validator_pubkey,
+            &validator_pubkey,
             &vote1.vote_hash,
             &vote1.signature,
         ).map_err(|e| SlashingError::InvalidEvidence(
@@ -876,7 +896,7 @@ impl SlashingManager {
         
         // Verify second vote signature
         let valid2 = verify_dilithium(
-            validator_pubkey,
+            &validator_pubkey,
             &vote2.vote_hash,
             &vote2.signature,
         ).map_err(|e| SlashingError::InvalidEvidence(
@@ -1133,6 +1153,7 @@ impl SlashingManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::DilithiumKeypair;
 
     fn create_test_manager() -> SlashingManager {
         let config = SlashingConfig::default();
@@ -1188,8 +1209,15 @@ mod tests {
     #[test]
     fn test_submit_evidence_duplicate() {
         let manager = create_test_manager();
-        let validator = [1u8; 32];
-        manager.register_validator(validator, 1000000).unwrap();
+        let keypair = DilithiumKeypair::generate().unwrap();
+        let validator = keypair.address();
+        let message1_hash = [1u8; 32];
+        let message2_hash = [3u8; 32];
+        let signature1 = keypair.sign(&message1_hash).unwrap();
+        let signature2 = keypair.sign(&message2_hash).unwrap();
+        manager
+            .register_validator_with_pubkey(validator, 1000000, keypair.public_key)
+            .unwrap();
 
         let evidence = SlashingEvidence {
             id: [42u8; 32],
@@ -1200,15 +1228,15 @@ mod tests {
             reporter: Address::default(),
             evidence_data: EvidenceData::DoubleSigning {
                 message1: SignedMessage {
-                    message_hash: [1u8; 32],
+                    message_hash: message1_hash,
                     slot: 900,
-                    signature: vec![],
+                    signature: signature1,
                     block_hash: Some([2u8; 32]),
                 },
                 message2: SignedMessage {
-                    message_hash: [3u8; 32],
+                    message_hash: message2_hash,
                     slot: 900,
-                    signature: vec![],
+                    signature: signature2,
                     block_hash: Some([4u8; 32]),
                 },
             },

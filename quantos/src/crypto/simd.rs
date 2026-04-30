@@ -28,6 +28,14 @@ pub fn simd_hash_batch_4(inputs: &[&[u8]; 4]) -> [[u8; 32]; 4] {
 }
 
 /// SIMD-accelerated XOR operation for signature compression.
+///
+/// # Safety
+///
+/// The caller must ensure AVX2 is available on the current CPU before calling
+/// this function (use the `is_x86_feature_detected!("avx2")` guard).
+/// All slice accesses are bounds-checked via `safe_len = min(a, b, out)`.
+/// `_mm256_loadu_si256` / `_mm256_storeu_si256` are used (unaligned variants),
+/// so no alignment requirement is imposed on the callers.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 pub unsafe fn simd_xor_256(a: &[u8], b: &[u8], out: &mut [u8]) {
@@ -81,6 +89,13 @@ pub fn xor_bytes(a: &[u8], b: &[u8]) -> Vec<u8> {
 }
 
 /// SIMD-accelerated memory copy with prefetch.
+///
+/// # Safety
+///
+/// AVX2 must be available (guarded by `is_x86_feature_detected!` at call site).
+/// `copy_len = min(src, dst)` guarantees both slices are long enough before
+/// any load/store. `_mm256_loadu_si256` / `_mm256_storeu_si256` do not require
+/// alignment. Remaining bytes are handled by `copy_from_slice`, which is safe.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 pub unsafe fn simd_memcpy_256(src: &[u8], dst: &mut [u8]) {
@@ -125,6 +140,16 @@ pub fn fast_copy(src: &[u8], dst: &mut [u8]) {
 }
 
 /// SIMD-accelerated comparison of byte arrays.
+///
+/// # Safety
+///
+/// AVX2 must be available at call site (guarded by `is_x86_feature_detected!`).
+/// `a.len() == b.len()` is checked before any SIMD access.
+/// All 256-bit loads are within `[0, chunks * 32)` which is ≤ `len`.
+/// The tail slice comparison `a[remaining_start..]` is fully safe Rust.
+///
+/// Note: this comparison is **not** constant-time. Do not use it for
+/// secret data (e.g. MAC verification). Use `subtle::ConstantTimeEq` for that.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 pub unsafe fn simd_compare_256(a: &[u8], b: &[u8]) -> bool {

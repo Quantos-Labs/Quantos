@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use crate::types::{Address, Amount, Hash, PublicKey, ShardId, Signature, hash_data};
-use crate::crypto::verify_dilithium;
+use crate::crypto::{verify_dilithium, with_domain, DOMAIN_TX};
 
 /// MEDIUM (z7): Reduced timestamp drift from 5 min to 30 sec to limit manipulation
 const MAX_TIMESTAMP_DRIFT: u64 = 30;
@@ -68,19 +68,19 @@ impl Transaction {
     }
 
     pub fn signing_data(&self) -> Vec<u8> {
-        let mut data = Vec::new();
-        data.extend_from_slice(&[self.tx_type.clone() as u8]);
-        data.extend_from_slice(&self.from);
-        data.extend_from_slice(&self.to);
-        data.extend_from_slice(&self.amount.0.to_le_bytes());
-        data.extend_from_slice(&self.nonce.to_le_bytes());
-        data.extend_from_slice(&self.gas_limit.to_le_bytes());
-        data.extend_from_slice(&self.gas_price.to_le_bytes());
-        data.extend_from_slice(&self.data);
-        data.extend_from_slice(&self.shard_id.to_le_bytes());
-        data.extend_from_slice(&self.timestamp.to_le_bytes());
-        data.extend_from_slice(&self.chain_id.to_le_bytes());
-        data
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&[self.tx_type.clone() as u8]);
+        msg.extend_from_slice(&self.from);
+        msg.extend_from_slice(&self.to);
+        msg.extend_from_slice(&self.amount.0.to_le_bytes());
+        msg.extend_from_slice(&self.nonce.to_le_bytes());
+        msg.extend_from_slice(&self.gas_limit.to_le_bytes());
+        msg.extend_from_slice(&self.gas_price.to_le_bytes());
+        msg.extend_from_slice(&self.data);
+        msg.extend_from_slice(&self.shard_id.to_le_bytes());
+        msg.extend_from_slice(&self.timestamp.to_le_bytes());
+        msg.extend_from_slice(&self.chain_id.to_le_bytes());
+        with_domain(DOMAIN_TX, &msg)
     }
 
     pub fn set_signature(&mut self, signature: Signature, public_key: PublicKey) -> Result<(), String> {

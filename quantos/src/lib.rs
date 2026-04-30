@@ -1,7 +1,3 @@
-// Active development: suppress dead_code warnings for data structs not yet consumed.
-// TODO: Remove these allows as modules become fully integrated.
-#![allow(dead_code, unused_imports, unused_variables)]
-
 //! # Quantos - Post-Quantum L1 Blockchain
 //!
 //! Quantos is a revolutionary Layer 1 blockchain featuring:

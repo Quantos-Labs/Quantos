@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -6,13 +7,17 @@ use parking_lot::{RwLock, Mutex};
 use rand::rngs::OsRng;
 use rand::RngCore;
 
-use crate::crypto::{merkle_root, verify_dilithium, public_key_to_address};
+use crate::crypto::{verify_dilithium, public_key_to_address};
 use crate::state::{StateError, StateResult, QuantumStateCompressor};
 use crate::storage::Storage;
 use crate::types::{
     Account, Address, Amount, Hash, Log, SignedTransaction, TransactionReceipt, TransactionStatus, TransactionType,
 };
 use crate::vm::{decode_contract_deploy_payload, ContractManager};
+
+const SMT_EMPTY_LEAF_DOMAIN: &[u8] = b"QUANTOS_STATE_SMT_EMPTY_LEAF_V1";
+const SMT_LEAF_DOMAIN: &[u8] = b"QUANTOS_STATE_SMT_LEAF_V1";
+const SMT_NODE_DOMAIN: &[u8] = b"QUANTOS_STATE_SMT_NODE_V1";
 
 /// Maximum transaction amount to prevent overflow
 const MAX_TRANSACTION_AMOUNT: u128 = u64::MAX as u128;
@@ -125,6 +130,90 @@ pub struct StateManager {
     contract_manager: Arc<RwLock<Option<Arc<ContractManager>>>>,
 }
 
+/// Result of deterministic state execution.
+#[derive(Clone, Debug)]
+pub struct StateExecution {
+    pub state_root: Hash,
+    pub receipts: Vec<TransactionReceipt>,
+    pub accounts: Vec<Account>,
+}
+
+fn smt_hash_leaf(address: &Address, account_hash: &Hash) -> Hash {
+    let mut data = Vec::with_capacity(SMT_LEAF_DOMAIN.len() + 64);
+    data.extend_from_slice(SMT_LEAF_DOMAIN);
+    data.extend_from_slice(address);
+    data.extend_from_slice(account_hash);
+    crate::types::hash_data(&data)
+}
+
+fn smt_hash_node(left: &Hash, right: &Hash) -> Hash {
+    let mut data = Vec::with_capacity(SMT_NODE_DOMAIN.len() + 64);
+    data.extend_from_slice(SMT_NODE_DOMAIN);
+    data.extend_from_slice(left);
+    data.extend_from_slice(right);
+    crate::types::hash_data(&data)
+}
+
+fn smt_default_hashes() -> Vec<Hash> {
+    let mut defaults = Vec::with_capacity(257);
+    defaults.push(crate::types::hash_data(SMT_EMPTY_LEAF_DOMAIN));
+    for level in 0..256 {
+        let parent = smt_hash_node(&defaults[level], &defaults[level]);
+        defaults.push(parent);
+    }
+    defaults
+}
+
+fn shift_right_one(mut key: Address) -> Address {
+    let mut carry = 0u8;
+    for byte in key.iter_mut() {
+        let next_carry = *byte & 1;
+        *byte = (*byte >> 1) | (carry << 7);
+        carry = next_carry;
+    }
+    key
+}
+
+fn toggle_lowest_bit(mut key: Address) -> Address {
+    key[31] ^= 1;
+    key
+}
+
+fn sparse_merkle_root(account_hashes: Vec<(Address, Hash)>) -> Hash {
+    let defaults = smt_default_hashes();
+    if account_hashes.is_empty() {
+        return defaults[256];
+    }
+
+    let mut nodes: BTreeMap<Address, Hash> = account_hashes
+        .into_iter()
+        .map(|(address, account_hash)| (address, smt_hash_leaf(&address, &account_hash)))
+        .collect();
+
+    for level in 0..256 {
+        let mut parents: BTreeMap<Address, Hash> = BTreeMap::new();
+
+        for (key, hash) in nodes.iter() {
+            let sibling_key = toggle_lowest_bit(*key);
+            if sibling_key < *key && nodes.contains_key(&sibling_key) {
+                continue;
+            }
+
+            let sibling_hash = nodes.get(&sibling_key).copied().unwrap_or(defaults[level]);
+            let (left, right) = if key[31] & 1 == 0 {
+                (*hash, sibling_hash)
+            } else {
+                (sibling_hash, *hash)
+            };
+            parents.insert(shift_right_one(*key), smt_hash_node(&left, &right));
+        }
+
+        nodes = parents;
+    }
+
+    nodes.values().next().copied().unwrap_or(defaults[256])
+}
+
 impl StateManager {
     pub fn new(storage: Storage) -> Self {
         // CRITICAL (w1): Use OsRng for cryptographically secure auth token
@@ -153,8 +242,8 @@ impl StateManager {
         self.state_compressor.clone()
     }
     
-    /// Gets the authorization token (should be called once at startup)
-    pub fn get_auth_token(&self) -> [u8; 32] {
+    /// Returns the local bootstrap token for trusted in-crate initialization.
+    pub(crate) fn bootstrap_auth_token(&self) -> [u8; 32] {
         *self.auth_token.lock()
     }
     
@@ -469,6 +558,324 @@ impl StateManager {
         txs.iter().map(|tx| self.apply_transaction(tx)).collect()
     }
 
+    /// Executes transactions against an in-memory overlay and returns the
+    /// resulting state root without writing accounts or contract storage.
+    pub fn simulate_transactions(&self, txs: &[SignedTransaction]) -> StateResult<StateExecution> {
+        self.execute_transactions_overlay(txs, false)
+    }
+
+    /// Executes transactions deterministically, then atomically persists the
+    /// changed accounts only after the full overlay execution succeeds.
+    pub fn apply_transactions_atomically(&self, txs: &[SignedTransaction]) -> StateResult<StateExecution> {
+        let execution = self.execute_transactions_overlay(txs, true)?;
+
+        for account in &execution.accounts {
+            self.storage.put_account(account)
+                .map_err(|e| StateError::StorageError(format!("Failed to commit account: {}", e)))?;
+            self.account_cache.insert(account.address, account.clone());
+        }
+
+        *self.state_root.write() = execution.state_root;
+        Ok(execution)
+    }
+
+    fn execute_transactions_overlay(
+        &self,
+        txs: &[SignedTransaction],
+        persist_contracts: bool,
+    ) -> StateResult<StateExecution> {
+        let mut overlay: HashMap<Address, Account> = HashMap::new();
+        let mut receipts = Vec::with_capacity(txs.len());
+
+        for tx in txs {
+            match self.execute_transaction_overlay(tx, &mut overlay, persist_contracts) {
+                Ok(receipt) => receipts.push(receipt),
+                Err(err) => {
+                    tracing::warn!(
+                        "Transaction {} failed during overlay execution: {}",
+                        hex::encode(&tx.hash[..8]),
+                        err
+                    );
+                    receipts.push(TransactionReceipt {
+                        tx_hash: tx.hash,
+                        status: TransactionStatus::Failed(err.to_string()),
+                        gas_used: tx.transaction.gas_limit,
+                        vertex_hash: [0u8; 32],
+                        shard_id: tx.transaction.shard_id,
+                        logs: Vec::new(),
+                        slot: 0,
+                        from: tx.transaction.from,
+                        to: tx.transaction.to,
+                        success: false,
+                    });
+                }
+            }
+        }
+
+        let state_root = self.compute_state_root_with_overlay(&overlay)?;
+        let mut accounts: Vec<_> = overlay.into_values().collect();
+        accounts.sort_by(|a, b| a.address.cmp(&b.address));
+
+        Ok(StateExecution {
+            state_root,
+            receipts,
+            accounts,
+        })
+    }
+
+    fn overlay_account(
+        &self,
+        overlay: &HashMap<Address, Account>,
+        address: &Address,
+    ) -> StateResult<Account> {
+        overlay
+            .get(address)
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| self.get_account(address))
+    }
+
+    fn execute_transaction_overlay(
+        &self,
+        tx: &SignedTransaction,
+        overlay: &mut HashMap<Address, Account>,
+        persist_contracts: bool,
+    ) -> StateResult<TransactionReceipt> {
+        self.validate_transaction_against_overlay(tx, overlay)?;
+
+        let mut sender = self.overlay_account(overlay, &tx.transaction.from)?;
+        let mut recipient = self.overlay_account(overlay, &tx.transaction.to)?;
+        let mut receipt_logs: Vec<Log> = Vec::new();
+
+        let gas_cost = tx.transaction.gas_cost()
+            .ok_or(StateError::ArithmeticOverflow)?;
+        if !sender.sub_balance(&Amount(gas_cost)) {
+            return Err(StateError::InsufficientBalance);
+        }
+
+        match tx.transaction.tx_type {
+            TransactionType::Transfer => {
+                if !sender.sub_balance(&tx.transaction.amount) {
+                    return Err(StateError::InsufficientBalance);
+                }
+                if sender.address == recipient.address {
+                    sender.add_balance(&tx.transaction.amount);
+                } else {
+                    recipient.add_balance(&tx.transaction.amount);
+                }
+            }
+            TransactionType::Stake => {
+                if !sender.add_stake(&tx.transaction.amount) {
+                    return Err(StateError::InsufficientBalance);
+                }
+            }
+            TransactionType::Unstake => {
+                if !sender.remove_stake(&tx.transaction.amount) {
+                    return Err(StateError::InsufficientBalance);
+                }
+            }
+            TransactionType::ContractDeploy => {
+                let (bytecode, constructor_data) = decode_contract_deploy_payload(&tx.transaction.data)
+                    .map_err(|e| StateError::ExecutionError(format!("Invalid deploy payload: {}", e)))?;
+                if bytecode.is_empty() {
+                    return Err(StateError::ExecutionError("Empty bytecode in ContractDeploy".to_string()));
+                }
+
+                let deployer = tx.transaction.from;
+                let nonce = tx.transaction.nonce;
+                let bytecode_hash = crate::types::hash_data(&bytecode);
+                let mut addr_input = Vec::with_capacity(72);
+                addr_input.extend_from_slice(&deployer);
+                addr_input.extend_from_slice(&bytecode_hash);
+                addr_input.extend_from_slice(&nonce.to_le_bytes());
+                let contract_address = crate::types::hash_data(&addr_input);
+                recipient = self.overlay_account(overlay, &contract_address)?;
+                recipient.code_hash = Some(bytecode_hash);
+
+                if persist_contracts {
+                    let cm_guard = self.contract_manager.read();
+                    let cm = cm_guard.as_ref().ok_or_else(|| {
+                        StateError::ExecutionError("ContractManager not initialized".to_string())
+                    })?;
+                    let deploy_result = cm.deploy_contract(
+                        bytecode,
+                        constructor_data,
+                        deployer,
+                        nonce,
+                        tx.transaction.timestamp,
+                        tx.transaction.timestamp,
+                        tx.transaction.chain_id,
+                        None,
+                    ).map_err(|e| StateError::ExecutionError(format!("ContractDeploy failed: {}", e)))?;
+
+                    recipient = self.overlay_account(overlay, &deploy_result.address)?;
+                    recipient.code_hash = Some(bytecode_hash);
+                    if let Some(init_result) = deploy_result.init_result {
+                        receipt_logs = init_result.logs.into_iter().map(|log| Log {
+                            address: log.address,
+                            topics: log.topics,
+                            data: log.data,
+                        }).collect();
+                    }
+                }
+            }
+            TransactionType::ContractCall => {
+                let contract_address = tx.transaction.to;
+                let caller = tx.transaction.from;
+
+                if tx.transaction.amount.0 > 0 {
+                    if !sender.sub_balance(&tx.transaction.amount) {
+                        return Err(StateError::InsufficientBalance);
+                    }
+                    if sender.address == recipient.address {
+                        sender.add_balance(&tx.transaction.amount);
+                    } else {
+                        recipient.add_balance(&tx.transaction.amount);
+                    }
+                }
+
+                let cm_guard = self.contract_manager.read();
+                let cm = cm_guard.as_ref().ok_or_else(|| {
+                    StateError::ExecutionError("ContractManager not initialized".to_string())
+                })?;
+                let execution_timestamp = current_execution_timestamp(tx.transaction.timestamp);
+                let result = if persist_contracts {
+                    cm.execute_contract(
+                        contract_address,
+                        caller,
+                        tx.transaction.data.clone(),
+                        execution_timestamp,
+                        execution_timestamp,
+                        tx.transaction.chain_id,
+                    )
+                } else {
+                    cm.simulate_contract(
+                        contract_address,
+                        caller,
+                        tx.transaction.data.clone(),
+                        execution_timestamp,
+                        execution_timestamp,
+                        tx.transaction.chain_id,
+                    )
+                }.map_err(|e| StateError::ExecutionError(format!("ContractCall failed: {}", e)))?;
+
+                if !result.success {
+                    let revert_reason = if !result.return_data.is_empty() {
+                        decode_contract_revert_reason(&result.return_data)
+                    } else {
+                        result.debug_messages.iter()
+                            .rev()
+                            .map(|m| m.trim().trim_end_matches(','))
+                            .find(|m| {
+                                !m.is_empty()
+                                    && !m.starts_with("call:")
+                                    && !m.starts_with("runtime_error:")
+                            })
+                            .unwrap_or("No revert reason provided")
+                            .to_string()
+                    };
+                    return Err(StateError::ExecutionError(
+                        format!("ContractCall reverted: {}", revert_reason)
+                    ));
+                }
+
+                receipt_logs = result.logs.into_iter().map(|log| Log {
+                    address: log.address,
+                    topics: log.topics,
+                    data: log.data,
+                }).collect();
+            }
+            _ => {}
+        }
+
+        sender.increment_nonce()
+            .map_err(StateError::StorageError)?;
+
+        let receipt_to = recipient.address;
+        overlay.insert(sender.address, sender);
+        if tx.transaction.from != receipt_to {
+            overlay.insert(receipt_to, recipient);
+        }
+
+        Ok(TransactionReceipt {
+            tx_hash: tx.hash,
+            status: TransactionStatus::Finalized,
+            gas_used: tx.transaction.gas_limit,
+            vertex_hash: [0u8; 32],
+            shard_id: tx.transaction.shard_id,
+            logs: receipt_logs,
+            slot: 0,
+            from: tx.transaction.from,
+            to: receipt_to,
+            success: true,
+        })
+    }
+
+    fn validate_transaction_against_overlay(
+        &self,
+        tx: &SignedTransaction,
+        overlay: &HashMap<Address, Account>,
+    ) -> StateResult<()> {
+        let sender_address = public_key_to_address(&tx.transaction.public_key);
+        if sender_address != tx.transaction.from {
+            return Err(StateError::InvalidSignature);
+        }
+
+        let valid = verify_dilithium(
+            &tx.transaction.public_key,
+            &tx.transaction.signing_data(),
+            &tx.transaction.signature,
+        ).map_err(|_| StateError::InvalidSignature)?;
+        if !valid {
+            return Err(StateError::InvalidSignature);
+        }
+
+        let amount_value = tx.transaction.amount.0;
+        let requires_amount = matches!(
+            tx.transaction.tx_type,
+            TransactionType::Transfer | TransactionType::Stake | TransactionType::Unstake
+        );
+        if requires_amount && amount_value < MIN_TRANSACTION_AMOUNT {
+            return Err(StateError::InvalidAmount);
+        }
+        if amount_value > MAX_TRANSACTION_AMOUNT {
+            return Err(StateError::InvalidAmount);
+        }
+
+        let account = self.overlay_account(overlay, &tx.transaction.from)?;
+        if tx.transaction.nonce != account.nonce {
+            return Err(StateError::InvalidNonce {
+                expected: account.nonce,
+                got: tx.transaction.nonce,
+            });
+        }
+
+        let total_cost = tx.transaction.total_cost()
+            .ok_or(StateError::ArithmeticOverflow)?;
+        if account.balance.0 < total_cost {
+            return Err(StateError::InsufficientBalance);
+        }
+
+        Ok(())
+    }
+
+    fn compute_state_root_with_overlay(
+        &self,
+        overlay: &HashMap<Address, Account>,
+    ) -> StateResult<Hash> {
+        let mut accounts: BTreeMap<Address, Hash> = self.storage.iter_accounts()
+            .map_err(|e| StateError::StorageError(e.to_string()))?
+            .into_iter()
+            .map(|account| (account.address, account.hash()))
+            .collect();
+
+        for account in overlay.values() {
+            accounts.insert(account.address, account.hash());
+        }
+
+        Ok(sparse_merkle_root(accounts.into_iter().collect()))
+    }
+
     pub fn speculative_apply(&self, tx: &SignedTransaction) -> StateResult<Account> {
         // CRITICAL: Atomic read-modify-write to prevent race conditions
         let _order = self.speculative_counter.fetch_add(1, Ordering::SeqCst);
@@ -573,22 +980,13 @@ impl StateManager {
     
     /// Computes state root from all accounts with deterministic ordering
     fn compute_full_state_root(&self) -> StateResult<Hash> {
-        // CRITICAL: Include both cached and storage accounts for complete state
-        let mut account_hashes: Vec<(Address, Hash)> = self.account_cache
-            .iter()
-            .map(|entry| (entry.key().clone(), entry.value().hash()))
+        let accounts: Vec<(Address, Hash)> = self.storage.iter_accounts()
+            .map_err(|e| StateError::StorageError(e.to_string()))?
+            .into_iter()
+            .map(|account| (account.address, account.hash()))
             .collect();
-        
-        // CRITICAL: Sort by address first, then hash for deterministic ordering
-        account_hashes.sort_by(|a, b| {
-            match a.0.cmp(&b.0) {
-                std::cmp::Ordering::Equal => a.1.cmp(&b.1),
-                other => other,
-            }
-        });
-        
-        let hashes: Vec<Hash> = account_hashes.into_iter().map(|(_, h)| h).collect();
-        Ok(merkle_root(&hashes))
+
+        Ok(sparse_merkle_root(accounts))
     }
 
     /// Sets account balance (requires authorization - CRITICAL OPERATION)
@@ -658,12 +1056,9 @@ impl StateManager {
             self.account_cache.insert(account.address, account.clone());
         }
         
-        // Compute and update state root
-        let account_hashes: Vec<Hash> = accounts.iter()
-            .map(|acc| acc.hash())
-            .collect();
-        
-        let new_state_root = merkle_root(&account_hashes);
+        // Compute and update state root from durable storage using the same
+        // Sparse Merkle Tree used by normal execution.
+        let new_state_root = self.compute_full_state_root()?;
         *self.state_root.write() = new_state_root;
         
         tracing::info!("✅ Genesis state applied successfully");
@@ -706,7 +1101,7 @@ mod tests {
         let state = StateManager::new(storage);
 
         let address = [1u8; 32];
-        let auth_token = state.get_auth_token();
+        let auth_token = state.bootstrap_auth_token();
         state.set_balance(&address, Amount(1000), &auth_token).unwrap();
         
         let balance = state.get_balance(&address).unwrap();

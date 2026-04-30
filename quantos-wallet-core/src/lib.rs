@@ -8,7 +8,48 @@ const SECRETKEYBYTES: usize = 4000;
 const PUBLICKEYBYTES: usize = 1952;
 const SIGNATUREBYTES: usize = 3293;
 
-// Helper to construct Keypair from raw bytes (fields are private)
+// ── Domain separation (must stay in sync with quantos/src/crypto/domains.rs) ──
+//
+// Every `signing_data()` method in the node prepends a length-prefixed domain
+// tag so that a signature over a transaction cannot be replayed as a vote, a
+// checkpoint, or any other message type.
+//
+// The tag format is: [u16-LE tag length] || [tag bytes] || [message bytes]
+const DOMAIN_TX: &[u8] = b"QUANTOS_TX_V1";
+
+/// Prepends the domain tag to `message`, mirroring `crypto::with_domain`.
+fn with_domain(domain: &[u8], message: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(2 + domain.len() + message.len());
+    out.extend_from_slice(&(domain.len() as u16).to_le_bytes());
+    out.extend_from_slice(domain);
+    out.extend_from_slice(message);
+    out
+}
+
+/// Constructs a `pqc_dilithium::Keypair` from raw public and secret key bytes.
+///
+/// # Safety
+///
+/// `pqc_dilithium 0.2.0::Keypair` is defined as:
+/// ```ignore
+/// pub struct Keypair {
+///     pub public: [u8; 1952],
+///     secret:     [u8; 4000],  // private field
+/// }
+/// ```
+/// The struct carries no `#[repr(C)]` attribute, but both fields are `[u8; N]`
+/// (alignment = 1, no padding possible). Rust's ABI for this specific layout
+/// is identical to `([u8; 1952], [u8; 4000])`, making the transmute safe.
+///
+/// Risks and mitigations:
+/// * **Field reorder**: the Rust compiler may reorder fields of structs
+///   without `#[repr(C)]`, but gains nothing here (all fields have alignment 1),
+///   so no reorder is expected or observed with rustc up to 1.87.
+/// * **Version drift**: pinned to `pqc_dilithium = "0.2"` in `Cargo.toml`.
+///   Any minor-version upgrade that changes the struct must be audited here.
+/// * **Alternative**: `pqc_dilithium` does not expose a `Keypair::from_bytes`
+///   constructor and `crypto_sign_signature` is not public, leaving transmute
+///   as the only option short of forking the crate.
 unsafe fn keypair_from_bytes(public: &[u8; PUBLICKEYBYTES], secret: &[u8; SECRETKEYBYTES]) -> Keypair {
     std::mem::transmute::<([u8; PUBLICKEYBYTES], [u8; SECRETKEYBYTES]), Keypair>((*public, *secret))
 }
@@ -67,21 +108,27 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    // Must match quantos/src/types/transaction.rs::Transaction::signing_data() exactly
+    /// Produces the byte string that is signed by the sender's Dilithium-3 key.
+    ///
+    /// **Must stay byte-for-byte identical to
+    /// `quantos/src/types/transaction.rs::Transaction::signing_data()`.**
+    ///
+    /// Format: `with_domain(DOMAIN_TX, raw_fields)` where `raw_fields` is the
+    /// concatenation of all transaction fields in the order below.
     pub fn signing_data(&self) -> Vec<u8> {
-        let mut data = Vec::new();
-        data.extend_from_slice(&[self.tx_type.clone() as u8]);
-        data.extend_from_slice(&self.from);
-        data.extend_from_slice(&self.to);
-        data.extend_from_slice(&self.amount.0.to_le_bytes());
-        data.extend_from_slice(&self.nonce.to_le_bytes());
-        data.extend_from_slice(&self.gas_limit.to_le_bytes());
-        data.extend_from_slice(&self.gas_price.to_le_bytes());
-        data.extend_from_slice(&self.data);
-        data.extend_from_slice(&self.shard_id.to_le_bytes());
-        data.extend_from_slice(&self.timestamp.to_le_bytes());
-        data.extend_from_slice(&self.chain_id.to_le_bytes());
-        data
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&[self.tx_type.clone() as u8]);
+        msg.extend_from_slice(&self.from);
+        msg.extend_from_slice(&self.to);
+        msg.extend_from_slice(&self.amount.0.to_le_bytes());
+        msg.extend_from_slice(&self.nonce.to_le_bytes());
+        msg.extend_from_slice(&self.gas_limit.to_le_bytes());
+        msg.extend_from_slice(&self.gas_price.to_le_bytes());
+        msg.extend_from_slice(&self.data);
+        msg.extend_from_slice(&self.shard_id.to_le_bytes());
+        msg.extend_from_slice(&self.timestamp.to_le_bytes());
+        msg.extend_from_slice(&self.chain_id.to_le_bytes());
+        with_domain(DOMAIN_TX, &msg)
     }
 
     pub fn hash(&self) -> Hash {

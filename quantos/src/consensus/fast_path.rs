@@ -17,7 +17,7 @@ const CLEANUP_INTERVAL_SECS: u64 = 3;
 const MAX_PENDING_AGE_SECS: u64 = 30;
 
 use crate::consensus::{ConsensusError, ConsensusResult, CommitteeManager};
-use crate::crypto::{sign_dilithium, DilithiumBatchVerifier};
+use crate::crypto::{sign_dilithium, verify_dilithium, DilithiumBatchVerifier, DILITHIUM3_PUBLIC_KEY_SIZE};
 use crate::dag::DAGGraph;
 use crate::mempool::ShardedMempool;
 use crate::state::OptimisticExecutor;
@@ -273,11 +273,35 @@ impl FastPath {
                 return Err(ConsensusError::NotCommitteeMember);
             }
 
+            if pending.votes.iter().any(|existing| existing.validator == vote.validator) {
+                return Err(ConsensusError::InvalidVote(
+                    "duplicate vote from validator".to_string()
+                ));
+            }
+
+            let validator_set = self.committee_manager.get_validator_set();
+            let validator_info = validator_set.get_validator(&vote.validator)
+                .ok_or_else(|| ConsensusError::InvalidValidator(
+                    format!("Validator {:?} not found", vote.validator)
+                ))?;
+
+            let signature_valid = verify_dilithium(
+                &validator_info.public_key,
+                &vote.signing_data(),
+                &vote.signature,
+            ).map_err(|e| ConsensusError::CryptoError(e.to_string()))?;
+            if !signature_valid {
+                return Err(ConsensusError::InvalidVote(
+                    "invalid vote signature".to_string()
+                ));
+            }
+
             pending.votes.push(vote);
 
             let approve_stake: u128 = pending.votes.iter()
                 .filter(|v| v.approve)
-                .map(|v| v.stake_weight as u128)
+                .filter_map(|v| validator_set.get_validator(&v.validator))
+                .map(|validator| validator.effective_stake())
                 .sum();
 
             let quorum = committee.quorum_threshold()
@@ -336,7 +360,16 @@ impl FastPath {
         
         let signature = sign_dilithium(secret_key, &vote.signing_data())
             .map_err(|e| ConsensusError::CryptoError(e.to_string()))?;
-        vote.set_signature(signature, &validator)
+
+        if secret_key.len() < DILITHIUM3_PUBLIC_KEY_SIZE {
+            return Err(ConsensusError::CryptoError(
+                "Dilithium secret key is too short to derive public key".to_string()
+            ));
+        }
+        let public_key_offset = secret_key.len() - DILITHIUM3_PUBLIC_KEY_SIZE;
+        let public_key = &secret_key[public_key_offset..];
+
+        vote.set_signature(signature, public_key)
             .map_err(|e| ConsensusError::CryptoError(e))?;
 
         Ok(vote)

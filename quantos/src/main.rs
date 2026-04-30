@@ -195,7 +195,7 @@ async fn main() -> Result<()> {
 
     // Initialize state manager
     let state_manager = StateManager::new(storage.clone());
-    let auth_token = state_manager.get_auth_token();
+    let auth_token = state_manager.bootstrap_auth_token();
     info!("✓ State manager initialized");
     
     // Apply genesis state

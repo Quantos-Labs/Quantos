@@ -119,8 +119,8 @@ impl Storage {
         Ok(storage)
     }
     
-    /// HIGH (x2): Get the auth token for privileged operations
-    pub fn get_auth_token(&self) -> [u8; 32] {
+    /// Returns the local bootstrap token for trusted in-crate maintenance.
+    pub(crate) fn bootstrap_auth_token(&self) -> [u8; 32] {
         *self.auth_token.lock()
     }
     
@@ -201,6 +201,38 @@ impl Storage {
         
         self.db.put_cf(&cf, &key, &data)
             .map_err(|e| StorageError::DatabaseError(e.to_string()))
+    }
+
+    /// Iterates all persisted accounts in deterministic key order.
+    ///
+    /// State roots must be computed from durable storage, not from in-memory
+    /// caches, otherwise two nodes with different cache warmth can fork.
+    pub fn iter_accounts(&self) -> StorageResult<Vec<Account>> {
+        let cf = self.db.cf_handle(CF_ACCOUNTS)
+            .ok_or_else(|| StorageError::DatabaseError("CF not found".to_string()))?;
+
+        let prefix = vec![0x01, PREFIX_SEPARATOR];
+        let read_opts = ReadOptions::default();
+        let iter = self.db.iterator_cf_opt(
+            &cf,
+            read_opts,
+            IteratorMode::From(&prefix, rocksdb::Direction::Forward),
+        );
+
+        let mut accounts = Vec::new();
+        for item in iter {
+            let (key, value) = item.map_err(|e| StorageError::DatabaseError(e.to_string()))?;
+            if !key.starts_with(&prefix) {
+                break;
+            }
+
+            let account: Account = bincode::deserialize(&value)
+                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+            accounts.push(account);
+        }
+
+        accounts.sort_by(|a, b| a.address.cmp(&b.address));
+        Ok(accounts)
     }
 
     pub fn get_vertex(&self, hash: &Hash) -> StorageResult<Option<DAGVertex>> {

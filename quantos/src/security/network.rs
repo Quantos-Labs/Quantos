@@ -602,8 +602,8 @@ impl NetworkSecurityManager {
         }
     }
     
-    /// Gets the authorization token (should be called once at startup)
-    pub fn get_auth_token(&self) -> Option<[u8; 32]> {
+    /// Returns the local bootstrap token for trusted in-crate operations.
+    pub(crate) fn bootstrap_auth_token(&self) -> Option<[u8; 32]> {
         match self.auth_token.lock() {
             Ok(guard) => *guard,
             Err(_) => None,

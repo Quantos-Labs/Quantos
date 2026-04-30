@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use crate::types::{Address, Hash, ShardId, SignedTransaction, hash_data};
-use crate::crypto::verify_dilithium;
+use crate::crypto::{verify_dilithium, with_domain, DOMAIN_VERTEX, DOMAIN_COMMITTEE_VOTE};
 
 /// Maximum transactions per vertex
 const MAX_TRANSACTIONS_PER_VERTEX: usize = 10000;
@@ -85,10 +85,10 @@ impl DAGVertex {
     }
 
     pub fn signing_data(&self) -> Vec<u8> {
-        let mut data = Vec::new();
-        data.extend_from_slice(&self.hash);
-        data.extend_from_slice(&self.state_root);
-        data
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&self.hash);
+        msg.extend_from_slice(&self.state_root);
+        with_domain(DOMAIN_VERTEX, &msg)
     }
 
     pub fn set_signature(&mut self, signature: Vec<u8>, public_key: &[u8]) -> Result<(), String> {
@@ -178,13 +178,13 @@ impl CommitteeVote {
     }
 
     pub fn signing_data(&self) -> Vec<u8> {
-        let mut data = Vec::new();
-        data.extend_from_slice(&self.validator);
-        data.extend_from_slice(&self.vertex_hash);
-        data.push(self.approve as u8);
-        data.extend_from_slice(&self.stake_weight.to_le_bytes());
-        data.extend_from_slice(&self.timestamp.to_le_bytes());
-        data
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&self.validator);
+        msg.extend_from_slice(&self.vertex_hash);
+        msg.push(self.approve as u8);
+        msg.extend_from_slice(&self.stake_weight.to_le_bytes());
+        msg.extend_from_slice(&self.timestamp.to_le_bytes());
+        with_domain(DOMAIN_COMMITTEE_VOTE, &msg)
     }
 
     pub fn set_signature(&mut self, signature: Vec<u8>, public_key: &[u8]) -> Result<(), String> {

@@ -70,10 +70,6 @@ impl QuantosConsensus {
             config.num_committees as u16,
             config.validators_per_committee,
         ));
-        
-        // Authorize system address for committee rotation
-        committee_manager.add_authorized_rotator([0u8; 32]);
-
         let (vertex_tx, _vertex_rx) = mpsc::channel(10000);
 
         let fast_path = Arc::new(FastPath::new(
@@ -127,11 +123,13 @@ impl QuantosConsensus {
     ) {
         let address = signing_key.address();
 
-        // Register validator in committee manager for single-node testnet
-        let auth_token = self.committee_manager.get_auth_token();
+        // Register validator in committee manager for single-node testnet.
+        // Validator registration is a local node bootstrap operation here; the
+        // public auth-token getter has intentionally been removed.
         let validator = Validator {
             address,
             public_key: signing_key.public_key.clone(),
+            finality_public_key: finality_key.public_key.clone(),
             stake: crate::types::Amount(1_000_000),
             commission_rate: 0,
             active: true,
@@ -140,7 +138,7 @@ impl QuantosConsensus {
             last_active_slot: 0,
             vrf_public_key: vrf_key.public_key().to_vec(),
         };
-        if let Err(e) = self.committee_manager.add_validator(validator, &auth_token) {
+        if let Err(e) = self.committee_manager.add_validator(validator) {
             tracing::warn!("Failed to register validator: {}", e);
         }
 
@@ -205,9 +203,7 @@ impl QuantosConsensus {
 
         if slot % 32 == 0 {
             let randomness = self.compute_epoch_randomness(epoch);
-            // Use system address for authorized rotation
-            let system_address = [0u8; 32];
-            self.committee_manager.rotate_committees(epoch, slot, &randomness, &system_address)?;
+            self.committee_manager.rotate_committees(epoch, slot, &randomness)?;
             tracing::debug!("Committees rotated for epoch {}", epoch);
         }
 
@@ -225,10 +221,7 @@ impl QuantosConsensus {
                     &keys.finality_key,
                 ).await {
                     Ok(sig) => {
-                        let stake = self.state_manager.get_account(&keys.address)
-                            .map(|a| a.stake.0)
-                            .unwrap_or(0);
-                        if let Err(e) = self.finality.receive_checkpoint_signature(&checkpoint.hash(), sig, stake).await {
+                        if let Err(e) = self.finality.receive_checkpoint_signature(&checkpoint.hash(), sig).await {
                             tracing::debug!("Checkpoint signature not accepted: {}", e);
                         }
                     }
@@ -401,8 +394,8 @@ impl QuantosConsensus {
         self.fast_path.confirmed_count()
     }
 
-    pub fn register_validator(&self, validator: Validator, auth_token: &[u8; 32]) -> Result<(), String> {
-        self.committee_manager.add_validator(validator, auth_token)
+    pub fn register_validator(&self, validator: Validator) -> Result<(), String> {
+        self.committee_manager.add_validator(validator)
     }
 
     pub fn get_metrics(&self) -> ConsensusMetrics {

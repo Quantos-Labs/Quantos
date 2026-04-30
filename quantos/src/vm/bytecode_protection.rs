@@ -535,8 +535,8 @@ impl BytecodeProtector {
         Ok(contract.encrypted_bytecode.len() == contract.metadata.encrypted_size)
     }
 
-    /// Returns the current auth token (for initial setup only).
-    pub fn auth_token(&self) -> AuthToken {
+    /// Returns the local bootstrap token for trusted in-crate setup.
+    pub(crate) fn bootstrap_auth_token(&self) -> AuthToken {
         *self.auth_token.lock()
     }
 
@@ -662,13 +662,15 @@ pub struct BytecodeProtectorStats {
 mod tests {
     use super::*;
 
+    /// Header + custom section (id 0), size 1, payload `0x00` — valid under our section parser.
+    const TEST_MIN_WASM: &[u8] = b"\0asm\x01\x00\x00\x00\x00\x01\x00";
+
     #[test]
     fn test_contract_deployment() {
         let config = BytecodeProtectionConfig::default();
         let protector = BytecodeProtector::new(config);
 
-        // Valid WASM magic + minimal content
-        let bytecode = b"\0asm\x01\x00\x00\x00test bytecode content";
+        let bytecode = TEST_MIN_WASM;
         let deployer = [1u8; 32];
 
         let result = protector.deploy_contract(bytecode, deployer, 0, false, None);
@@ -696,13 +698,13 @@ mod tests {
         let config = BytecodeProtectionConfig::default();
         let protector = BytecodeProtector::new(config);
 
-        let bytecode = b"\0asm\x01\x00\x00\x00test bytecode";
+        let bytecode = TEST_MIN_WASM;
         let deployer = [1u8; 32];
 
         let metadata = protector.deploy_contract(bytecode, deployer, 0, false, None).unwrap();
 
         let result = protector.execute_contract(&metadata.address, |code| {
-            assert_eq!(code, bytecode.as_slice());
+            assert_eq!(code, bytecode);
             Ok(42)
         });
 
@@ -713,7 +715,7 @@ mod tests {
     fn test_key_rotation() {
         let config = BytecodeProtectionConfig::default();
         let protector = BytecodeProtector::new(config);
-        let auth_token = protector.auth_token();
+        let auth_token = protector.bootstrap_auth_token();
 
         assert_eq!(protector.master_key.read().version, 1);
         
@@ -732,7 +734,7 @@ mod tests {
         let config = BytecodeProtectionConfig::default();
         let protector = BytecodeProtector::new(config);
 
-        let bytecode = b"\0asm\x01\x00\x00\x00content";
+        let bytecode = TEST_MIN_WASM;
         let deployer = [2u8; 32];
 
         let metadata = protector.deploy_contract(bytecode, deployer, 0, true, None).unwrap();

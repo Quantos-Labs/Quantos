@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use dashmap::DashMap;
 use parking_lot::RwLock;
@@ -25,7 +26,9 @@ pub struct FinalityLayer {
 
 struct PendingCheckpoint {
     checkpoint: Checkpoint,
+    dag_tips: Vec<Hash>,
     signatures: Vec<ValidatorSignature>,
+    signers: HashSet<Address>,
     total_stake_signed: u128,
 }
 
@@ -92,7 +95,9 @@ impl FinalityLayer {
         let checkpoint_hash = checkpoint.hash();
         self.pending_checkpoints.insert(checkpoint_hash, PendingCheckpoint {
             checkpoint: checkpoint.clone(),
+            dag_tips,
             signatures: Vec::new(),
+            signers: HashSet::new(),
             total_stake_signed: 0,
         });
 
@@ -132,10 +137,10 @@ impl FinalityLayer {
                 format!("Validator {:?} not found", validator)
             ))?;
 
-        // Verify the public key matches
-        if validator_info.public_key != falcon_key.public_key {
+        // Verify the finality public key matches the registered Falcon key.
+        if validator_info.finality_public_key != falcon_key.public_key {
             return Err(ConsensusError::Unauthorized(
-                format!("Public key mismatch for validator {:?}", validator)
+                format!("Finality public key mismatch for validator {:?}", validator)
             ));
         }
 
@@ -149,21 +154,37 @@ impl FinalityLayer {
         &self,
         checkpoint_hash: &Hash,
         signature: ValidatorSignature,
-        validator_stake: u128,
     ) -> ConsensusResult<bool> {
         let mut finalized = false;
 
         if let Some(mut pending) = self.pending_checkpoints.get_mut(checkpoint_hash) {
-            // Verify the signature against the validator's registered public key
-            // This prevents key confusion attacks where signatures don't match registered keys
+            if pending.signers.contains(&signature.validator) {
+                return Ok(false);
+            }
+
             let validator_set = self.committee_manager.get_validator_set();
             let validator_info = validator_set.get_validator(&signature.validator)
                 .ok_or_else(|| ConsensusError::InvalidValidator(
                     format!("Validator {:?} not found for checkpoint signature", signature.validator)
                 ))?;
+            if !validator_info.active || validator_info.jailed {
+                return Err(ConsensusError::Unauthorized(
+                    format!("Validator {:?} is not active in the finality set", signature.validator)
+                ));
+            }
+
+            if validator_info.finality_public_key.is_empty() {
+                return Err(ConsensusError::InvalidValidator(
+                    format!("Validator {:?} has no registered finality public key", signature.validator)
+                ));
+            }
             
             let checkpoint_data = pending.checkpoint.signing_data();
-            let valid = verify_falcon(&validator_info.public_key, &checkpoint_data, &signature.signature)
+            let valid = verify_falcon(
+                &validator_info.finality_public_key,
+                &checkpoint_data,
+                &signature.signature,
+            )
                 .map_err(|e| ConsensusError::CryptoError(e.to_string()))?;
             
             if !valid {
@@ -172,8 +193,13 @@ impl FinalityLayer {
                 ));
             }
             
+            pending.signers.insert(signature.validator);
             pending.signatures.push(signature);
-            pending.total_stake_signed += validator_stake;
+            pending.total_stake_signed = pending.total_stake_signed
+                .checked_add(validator_info.effective_stake())
+                .ok_or_else(|| ConsensusError::ArithmeticOverflow(
+                    "Checkpoint signed stake overflow".to_string()
+                ))?;
 
             let total_stake = self.committee_manager.get_validator_set().total_active_stake();
             let threshold = (total_stake * 2) / 3 + 1;
@@ -200,7 +226,7 @@ impl FinalityLayer {
 
             self.finalized_checkpoints.write().push(checkpoint.clone());
 
-            self.mark_vertices_finalized(&checkpoint).await?;
+            self.mark_vertices_finalized(&checkpoint, &pending.dag_tips).await?;
 
             tracing::info!(
                 "Checkpoint finalized: epoch={}, slot={}, vertices={}",
@@ -213,7 +239,21 @@ impl FinalityLayer {
         Ok(())
     }
 
-    async fn mark_vertices_finalized(&self, _checkpoint: &Checkpoint) -> ConsensusResult<()> {
+    async fn mark_vertices_finalized(
+        &self,
+        checkpoint: &Checkpoint,
+        dag_tips: &[Hash],
+    ) -> ConsensusResult<()> {
+        let (vertices, transactions) = self.dag
+            .finalize_reachable_from_tips(dag_tips)
+            .map_err(|e| ConsensusError::StorageError(e.to_string()))?;
+
+        tracing::info!(
+            "Marked finalized DAG state for checkpoint: slot={}, vertices={}, transactions={}",
+            checkpoint.slot,
+            vertices,
+            transactions
+        );
         Ok(())
     }
 
@@ -240,7 +280,7 @@ impl FinalityLayer {
             let validator_set = self.committee_manager.get_validator_set();
             let (stake, pubkey) = validator_set
                 .get_validator(&sig.validator)
-                .map(|v| (v.stake.0, v.public_key.clone()))
+                .map(|v| (v.effective_stake(), v.finality_public_key.clone()))
                 .unwrap_or((0, Vec::new()));
             // CRITICAL (z3): add_signature now verifies the signature cryptographically
             if let Err(e) = proof.add_signature(sig.clone(), stake, &pubkey) {
@@ -257,22 +297,33 @@ impl FinalityLayer {
         }
 
         let checkpoint_data = proof.checkpoint.signing_data();
+        let mut seen = HashSet::new();
+        let mut signed_stake = 0u128;
         
         for sig in &proof.super_committee_signatures {
+            if !seen.insert(sig.validator) {
+                return Ok(false);
+            }
             let validator_set = self.committee_manager.get_validator_set();
             let validator = validator_set.get_validator(&sig.validator);
             
             if let Some(v) = validator {
-                let valid = verify_falcon(&v.public_key, &checkpoint_data, &sig.signature)
+                if !v.active || v.jailed || v.finality_public_key.is_empty() {
+                    return Ok(false);
+                }
+                let valid = verify_falcon(&v.finality_public_key, &checkpoint_data, &sig.signature)
                     .map_err(|e| ConsensusError::CryptoError(e.to_string()))?;
                 
                 if !valid {
                     return Ok(false);
                 }
+                signed_stake = signed_stake.saturating_add(v.effective_stake());
+            } else {
+                return Ok(false);
             }
         }
 
-        Ok(true)
+        Ok(signed_stake >= proof.stake_threshold && signed_stake == proof.total_stake_signed)
     }
 
     pub fn finalized_slot(&self) -> u64 {

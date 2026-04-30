@@ -59,53 +59,53 @@ impl QuantosMetrics {
 
         let current_slot = register_int_gauge_with_registry!(
             "consensus_current_slot", "Current consensus slot", registry
-        ).unwrap();
+        ).expect("Failed to register consensus_current_slot metric");
 
         let current_epoch = register_int_gauge_with_registry!(
             "consensus_current_epoch", "Current consensus epoch", registry
-        ).unwrap();
+        ).expect("Failed to register consensus_current_epoch metric");
 
         let finalized_slot = register_int_gauge_with_registry!(
             "consensus_finalized_slot", "Last finalized slot", registry
-        ).unwrap();
+        ).expect("Failed to register consensus_finalized_slot metric");
 
         let total_validators = register_int_gauge_with_registry!(
             "consensus_total_validators", "Total registered validators", registry
-        ).unwrap();
+        ).expect("Failed to register consensus_total_validators metric");
 
         let pending_vertices = register_int_gauge_with_registry!(
             "dag_pending_vertices", "Pending DAG vertices", registry
-        ).unwrap();
+        ).expect("Failed to register dag_pending_vertices metric");
 
         let confirmed_vertices = register_int_gauge_with_registry!(
             "dag_confirmed_vertices", "Confirmed DAG vertices", registry
-        ).unwrap();
+        ).expect("Failed to register dag_confirmed_vertices metric");
 
         let pending_transactions = register_int_gauge_with_registry!(
             "mempool_pending_transactions", "Total pending transactions in mempool", registry
-        ).unwrap();
+        ).expect("Failed to register mempool_pending_transactions metric");
 
         let uptime_seconds = register_int_gauge_with_registry!(
             "node_uptime_seconds", "Node uptime in seconds", registry
-        ).unwrap();
+        ).expect("Failed to register node_uptime_seconds metric");
 
         let num_shards = register_int_gauge_with_registry!(
             "node_num_shards", "Number of active shards", registry
-        ).unwrap();
+        ).expect("Failed to register node_num_shards metric");
 
         let shard_pending_txs = register_int_gauge_vec_with_registry!(
             opts!("shard_pending_transactions", "Pending transactions per shard"),
             &["shard_id"],
             registry
-        ).unwrap();
+        ).expect("Failed to register shard_pending_transactions metric");
 
         let rpc_requests_total = register_int_gauge_with_registry!(
             "rpc_requests_total", "Total RPC requests received", registry
-        ).unwrap();
+        ).expect("Failed to register rpc_requests_total metric");
 
         let rpc_errors_total = register_int_gauge_with_registry!(
             "rpc_errors_total", "Total RPC errors", registry
-        ).unwrap();
+        ).expect("Failed to register rpc_errors_total metric");
 
         Self {
             registry,

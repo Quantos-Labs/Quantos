@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use crate::types::{Address, Hash, hash_data};
-use crate::crypto::verify_dilithium;
+use crate::crypto::{verify_falcon, with_domain, DOMAIN_CHECKPOINT};
 
 /// HIGH (z5): Maximum validators per checkpoint to prevent DoS
 const MAX_CHECKPOINT_VALIDATORS: usize = 1000;
@@ -71,8 +71,7 @@ impl Checkpoint {
     }
 
     pub fn signing_data(&self) -> Vec<u8> {
-        let hash = self.hash();
-        hash.to_vec()
+        with_domain(DOMAIN_CHECKPOINT, &self.hash())
     }
 
     pub fn genesis() -> Self {
@@ -121,9 +120,9 @@ impl FinalityProof {
             return Err("Duplicate validator signature".to_string());
         }
         
-        // CRITICAL (z3): Verify the signature cryptographically
+        // CRITICAL (z3): Verify the finality signature cryptographically.
         let checkpoint_hash = self.checkpoint.hash();
-        match verify_dilithium(validator_pubkey, &checkpoint_hash, &sig.signature) {
+        match verify_falcon(validator_pubkey, &checkpoint_hash, &sig.signature) {
             Ok(true) => {},
             Ok(false) => return Err("Invalid finality signature: verification failed".to_string()),
             Err(e) => return Err(format!("Signature verification error: {:?}", e)),

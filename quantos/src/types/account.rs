@@ -10,18 +10,6 @@ const MIN_VRF_KEY_SIZE: usize = 32;
 /// MEDIUM (z9): Maximum VRF public key size
 const MAX_VRF_KEY_SIZE: usize = 256;
 
-/// Authorization token for privileged operations
-pub type AuthToken = [u8; 32];
-
-/// CRITICAL (z1): Constant-time comparison to prevent timing attacks
-fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
-    let mut diff = 0u8;
-    for i in 0..32 {
-        diff |= a[i] ^ b[i];
-    }
-    diff == 0
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Account {
     pub address: Address,
@@ -128,6 +116,9 @@ impl Account {
 pub struct Validator {
     pub address: Address,
     pub public_key: Vec<u8>,
+    /// Falcon public key used for checkpoint/finality signatures.
+    #[serde(default)]
+    pub finality_public_key: Vec<u8>,
     pub stake: Amount,
     pub commission_rate: u16,
     pub active: bool,
@@ -153,6 +144,7 @@ impl Validator {
         Ok(Self {
             address,
             public_key,
+            finality_public_key: Vec::new(),
             stake,
             commission_rate: 500,
             active: true,
@@ -163,11 +155,7 @@ impl Validator {
         })
     }
 
-    /// CRITICAL (z1): Validates auth_token before performing slash
-    pub fn slash(&mut self, percentage: u16, auth_token: &AuthToken, expected_token: &AuthToken) -> Result<Amount, String> {
-        if !constant_time_eq(auth_token, expected_token) {
-            return Err("Unauthorized: invalid auth token for slash operation".to_string());
-        }
+    pub(crate) fn slash(&mut self, percentage: u16) -> Result<Amount, String> {
         if percentage > MAX_COMMISSION_RATE {
             return Err(format!("Slash percentage {} exceeds maximum {}", percentage, MAX_COMMISSION_RATE));
         }
@@ -225,12 +213,7 @@ impl ValidatorSet {
         }
     }
 
-    /// CRITICAL (z1): Validates auth_token before adding validator
-    pub fn add_validator(&mut self, validator: Validator, auth_token: &AuthToken, expected_token: &AuthToken) -> Result<(), String> {
-        if !constant_time_eq(auth_token, expected_token) {
-            return Err("Unauthorized: invalid auth token for add_validator".to_string());
-        }
-        
+    pub fn add_validator(&mut self, validator: Validator) -> Result<(), String> {
         if self.validators.len() >= MAX_VALIDATORS {
             return Err(format!("Validator set full: {} validators", MAX_VALIDATORS));
         }
@@ -245,17 +228,12 @@ impl ValidatorSet {
         Ok(())
     }
     
-    /// CRITICAL (z1): Validates auth_token before slashing validator
-    pub fn slash_validator(&mut self, address: &Address, percentage: u16, auth_token: &AuthToken, expected_token: &AuthToken) -> Result<Amount, String> {
-        if !constant_time_eq(auth_token, expected_token) {
-            return Err("Unauthorized: invalid auth token for slash_validator".to_string());
-        }
-        
+    pub(crate) fn slash_validator(&mut self, address: &Address, percentage: u16) -> Result<Amount, String> {
         let validator = self.validators.iter_mut()
             .find(|v| &v.address == address)
             .ok_or("Validator not found")?;
         
-        let slashed_amount = validator.slash(percentage, auth_token, expected_token)?;
+        let slashed_amount = validator.slash(percentage)?;
         
         self.total_stake = self.total_stake.checked_sub(&slashed_amount)
             .unwrap_or(Amount::zero());

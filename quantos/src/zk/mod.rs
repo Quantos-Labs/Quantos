@@ -1207,14 +1207,20 @@ impl StarkProver {
         }
         
         // Extract combined data size
-        let combined_size = u64::from_le_bytes(proof_data[4..12].try_into().unwrap()) as usize;
+        let combined_size = u64::from_le_bytes(
+            <[u8; 8]>::try_from(&proof_data[4..12])
+                .map_err(|_| ZkError::VerificationFailed("Aggregated proof header truncated (size field)".into()))?
+        ) as usize;
         
         // Extract Merkle root
         let claimed_merkle_root: [u8; 32] = proof_data[12..44].try_into()
             .map_err(|_| ZkError::VerificationFailed("Invalid Merkle root".to_string()))?;
         
         // Extract number of proofs
-        let num_proofs = u32::from_le_bytes(proof_data[44..48].try_into().unwrap()) as usize;
+        let num_proofs = u32::from_le_bytes(
+            <[u8; 4]>::try_from(&proof_data[44..48])
+                .map_err(|_| ZkError::VerificationFailed("Aggregated proof header truncated (count field)".into()))?
+        ) as usize;
         
         if num_proofs == 0 {
             return Ok(false);
@@ -1825,12 +1831,18 @@ const RESCUE_ROUND_CONSTANTS: [u64; 16] = [
     0xba7c9045f12c7f99, 0x24a19947b3916cf7, 0x0801f2e2858efc16, 0x636920d871574e69,
 ];
 
-/// Convert a 32-byte hash to 4 field elements
+/// Convert a 32-byte hash to 4 field elements.
+///
+/// `hash` is always `[u8; 32]`, so each 8-byte window `[i*8 .. i*8+8]` is
+/// within bounds for `i in 0..4`. The `try_into` is therefore infallible, but
+/// we make it explicit rather than hiding it with `unwrap`.
 fn hash_to_field_elements(hash: &Hash) -> [BaseElement; 4] {
     let mut elements = [BaseElement::ZERO; 4];
     for i in 0..4 {
         let start = i * 8;
-        let bytes: [u8; 8] = hash[start..start + 8].try_into().unwrap();
+        let bytes: [u8; 8] = hash[start..start + 8]
+            .try_into()
+            .expect("hash is [u8;32], window [i*8..i*8+8] is always 8 bytes for i in 0..4");
         elements[i] = BaseElement::from(u64::from_le_bytes(bytes));
     }
     elements

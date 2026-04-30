@@ -45,65 +45,15 @@ impl ParallelExecutor {
     }
 
     pub fn execute_vertex(&self, vertex: &DAGVertex) -> StateResult<(Hash, Vec<TransactionReceipt>)> {
-        let shard_id = vertex.shard_id;
-        
-        let (valid_txs, conflicts) = self.detect_conflicts(&vertex.transactions);
-        
-        // CRITICAL: Always produce a receipt — failed TXs get success=false
-        let receipts: Vec<TransactionReceipt> = valid_txs
-            .par_iter()
-            .map(|tx| {
-                match self.execute_transaction(tx, shard_id) {
-                    Ok(receipt) => receipt,
-                    Err(e) => {
-                        tracing::warn!("Transaction {} execution failed: {}", hex::encode(&tx.hash[..8]), e);
-                        TransactionReceipt {
-                            tx_hash: tx.hash,
-                            status: TransactionStatus::Failed(format!("{}", e)),
-                            gas_used: tx.transaction.gas_limit,
-                            vertex_hash: [0u8; 32],
-                            shard_id: tx.transaction.shard_id,
-                            logs: Vec::new(),
-                            slot: 0,
-                            from: tx.transaction.from,
-                            to: tx.transaction.to,
-                            success: false,
-                        }
-                    }
-                }
-            })
-            .collect();
-        
-        let conflict_receipts: Vec<TransactionReceipt> = conflicts
-            .iter()
-            .map(|tx| {
-                match self.execute_transaction(tx, shard_id) {
-                    Ok(receipt) => receipt,
-                    Err(e) => {
-                        tracing::warn!("Conflict transaction {} execution failed: {}", hex::encode(&tx.hash[..8]), e);
-                        TransactionReceipt {
-                            tx_hash: tx.hash,
-                            status: TransactionStatus::Failed(format!("{}", e)),
-                            gas_used: tx.transaction.gas_limit,
-                            vertex_hash: [0u8; 32],
-                            shard_id: tx.transaction.shard_id,
-                            logs: Vec::new(),
-                            slot: 0,
-                            from: tx.transaction.from,
-                            to: tx.transaction.to,
-                            success: false,
-                        }
-                    }
-                }
-            })
-            .collect();
+        let execution = self.state_manager.apply_transactions_atomically(&vertex.transactions)?;
+        Ok((execution.state_root, execution.receipts))
+    }
 
-        let mut all_receipts = receipts;
-        all_receipts.extend(conflict_receipts);
-
-        let state_root = self.state_manager.compute_state_root()?;
-
-        Ok((state_root, all_receipts))
+    /// Executes against an in-memory overlay only. This is used by consensus
+    /// pre-confirmation, so rollback is simply dropping the speculative result.
+    pub fn execute_vertex_speculative(&self, vertex: &DAGVertex) -> StateResult<(Hash, Vec<TransactionReceipt>)> {
+        let execution = self.state_manager.simulate_transactions(&vertex.transactions)?;
+        Ok((execution.state_root, execution.receipts))
     }
 
     /// HIGH (w4): Improved conflict detection that properly tracks all account touches.
@@ -219,6 +169,7 @@ pub struct OptimisticExecutor {
 }
 
 struct SpeculativeResult {
+    vertex: DAGVertex,
     vertex_hash: Hash,
     state_root: Hash,
     receipts: Vec<TransactionReceipt>,
@@ -234,9 +185,10 @@ impl OptimisticExecutor {
     }
 
     pub fn speculative_execute(&self, vertex: &DAGVertex) -> StateResult<Hash> {
-        let (state_root, receipts) = self.executor.execute_vertex(vertex)?;
+        let (state_root, receipts) = self.executor.execute_vertex_speculative(vertex)?;
         
         self.speculative_results.insert(vertex.hash, SpeculativeResult {
+            vertex: vertex.clone(),
             vertex_hash: vertex.hash,
             state_root,
             receipts,
@@ -248,7 +200,19 @@ impl OptimisticExecutor {
 
     pub fn confirm_execution(&self, vertex_hash: &Hash) -> Option<(Hash, Vec<TransactionReceipt>)> {
         self.speculative_results.remove(vertex_hash)
-            .map(|(_, result)| (result.state_root, result.receipts))
+            .and_then(|(_, result)| {
+                match self.executor.execute_vertex(&result.vertex) {
+                    Ok((state_root, receipts)) => Some((state_root, receipts)),
+                    Err(err) => {
+                        tracing::error!(
+                            "Failed to commit speculative execution for vertex {}: {}",
+                            hex::encode(&result.vertex_hash[..8]),
+                            err
+                        );
+                        None
+                    }
+                }
+            })
     }
 
     pub fn rollback_execution(&self, vertex_hash: &Hash) {
