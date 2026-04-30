@@ -99,7 +99,7 @@ impl AdaptiveMempoolRouter {
             sender: tx.transaction.from,
             receiver: tx.transaction.to,
             tx_type: tx.transaction.tx_type.clone(),
-            gas_limit: tx.transaction.gas_limit,
+            max_compute_units: tx.transaction.max_compute_units,
             nonce: tx.transaction.nonce,
             // Contract calls have different routing patterns
             is_contract_call: tx.transaction.data.len() > 0,
@@ -159,8 +159,8 @@ impl AdaptiveMempoolRouter {
     }
 
     /// Updates shard load metrics (called after block production)
-    pub fn update_shard_load(&self, shard_id: ShardId, tx_count: usize, avg_gas_used: u64) {
-        self.shard_load_metrics.update(shard_id, tx_count, avg_gas_used);
+    pub fn update_shard_load(&self, shard_id: ShardId, tx_count: usize, avg_cu_used: u64) {
+        self.shard_load_metrics.update(shard_id, tx_count, avg_cu_used);
     }
 }
 
@@ -170,7 +170,7 @@ struct TxFeatures {
     sender: Address,
     receiver: Address,
     tx_type: crate::types::TransactionType,
-    gas_limit: u64,
+    max_compute_units: u64,
     nonce: u64,
     is_contract_call: bool,
     data_size: usize,
@@ -336,7 +336,7 @@ impl ExecutionPatternCache {
 struct ShardLoadMetrics {
     loads: RwLock<Vec<f32>>,
     tx_counts: RwLock<Vec<usize>>,
-    avg_gas_used: RwLock<Vec<u64>>,
+    avg_cu_used: RwLock<Vec<u64>>,
 }
 
 impl ShardLoadMetrics {
@@ -344,7 +344,7 @@ impl ShardLoadMetrics {
         Self {
             loads: RwLock::new(vec![0.0; num_shards as usize]),
             tx_counts: RwLock::new(vec![0; num_shards as usize]),
-            avg_gas_used: RwLock::new(vec![0; num_shards as usize]),
+            avg_cu_used: RwLock::new(vec![0; num_shards as usize]),
         }
     }
 
@@ -364,11 +364,11 @@ impl ShardLoadMetrics {
         
         let mut loads = self.loads.write();
         let mut tx_counts = self.tx_counts.write();
-        let mut gas_used = self.avg_gas_used.write();
+        let mut cu_used = self.avg_cu_used.write();
         
         // Update metrics
         tx_counts[idx] = tx_count;
-        gas_used[idx] = avg_gas;
+        cu_used[idx] = avg_gas;
         
         // Calculate load score (0-100)
         // Higher TX count and gas = higher load

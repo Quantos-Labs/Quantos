@@ -325,7 +325,7 @@ pub struct TransactionReceipt {
     /// Success status
     pub success: bool,
     /// Gas used
-    pub gas_used: u64,
+    pub cu_used: u64,
     /// Logs/events
     pub logs: Vec<LogEntry>,
 }

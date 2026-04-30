@@ -53,8 +53,7 @@ impl TransactionBuilder {
         keypair: &DilithiumKeypair,
         to: Address,
         amount: Amount,
-        gas_limit: u64,
-        gas_price: u64,
+        max_compute_units: u64,
     ) -> RpcResult<SignedTransaction> {
         // MEDIUM: Validate amount at the builder boundary
         validate_amount(&amount)?;
@@ -79,8 +78,8 @@ impl TransactionBuilder {
             to,
             amount,
             nonce,
-            gas_limit,
-            gas_price,
+            max_compute_units,
+            None,
             Vec::new(),
             shard_id,
         );
@@ -98,8 +97,7 @@ impl TransactionBuilder {
         &self,
         keypair: &DilithiumKeypair,
         amount: Amount,
-        gas_limit: u64,
-        gas_price: u64,
+        max_compute_units: u64,
     ) -> RpcResult<SignedTransaction> {
         // MEDIUM: Validate amount at the builder boundary
         validate_amount(&amount)?;
@@ -119,8 +117,8 @@ impl TransactionBuilder {
             from,
             amount,
             nonce,
-            gas_limit,
-            gas_price,
+            max_compute_units,
+            None,
             Vec::new(),
             shard_id,
         );
@@ -138,8 +136,7 @@ impl TransactionBuilder {
         &self,
         keypair: &DilithiumKeypair,
         amount: Amount,
-        gas_limit: u64,
-        gas_price: u64,
+        max_compute_units: u64,
     ) -> RpcResult<SignedTransaction> {
         // MEDIUM: Validate amount at the builder boundary
         validate_amount(&amount)?;
@@ -159,8 +156,8 @@ impl TransactionBuilder {
             from,
             amount,
             nonce,
-            gas_limit,
-            gas_price,
+            max_compute_units,
+            None,
             Vec::new(),
             shard_id,
         );

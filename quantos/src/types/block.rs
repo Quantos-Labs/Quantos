@@ -12,8 +12,8 @@ pub struct BlockHeader {
     pub receipts_root: Hash,
     pub proposer: Address,
     pub shard_id: ShardId,
-    pub gas_limit: u64,
-    pub gas_used: u64,
+    pub block_cu_limit: u64,
+    pub block_cu_used: u64,
 }
 
 impl BlockHeader {
@@ -30,8 +30,8 @@ impl BlockHeader {
         data.extend_from_slice(&self.receipts_root);
         data.extend_from_slice(&self.proposer);
         data.extend_from_slice(&self.shard_id.to_le_bytes());
-        data.extend_from_slice(&self.gas_limit.to_le_bytes());
-        data.extend_from_slice(&self.gas_used.to_le_bytes());
+        data.extend_from_slice(&self.block_cu_limit.to_le_bytes());
+        data.extend_from_slice(&self.block_cu_used.to_le_bytes());
         hash_data(&data)
     }
 }
@@ -67,8 +67,8 @@ impl Block {
             receipts_root: [0u8; 32],
             proposer: [0u8; 32],
             shard_id,
-            gas_limit: 30_000_000,
-            gas_used: 0,
+            block_cu_limit: 30_000_000,
+            block_cu_used: 0,
         };
         Self::new(header, Vec::new())
     }
@@ -100,8 +100,7 @@ pub struct GenesisAccount {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChainParameters {
-    pub block_gas_limit: u64,
-    pub min_gas_price: u64,
+    pub block_cu_limit: u64,
     pub committee_size: usize,
     pub num_committees: usize,
     pub epoch_length: u64,
@@ -115,8 +114,7 @@ pub struct ChainParameters {
 impl Default for ChainParameters {
     fn default() -> Self {
         Self {
-            block_gas_limit: 30_000_000,
-            min_gas_price: 1_000_000_000,
+            block_cu_limit: 30_000_000,
             committee_size: 21,
             num_committees: 1000,
             epoch_length: 32,

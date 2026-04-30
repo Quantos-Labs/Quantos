@@ -92,8 +92,8 @@ pub struct TransactionContext {
     /// Timestamp
     pub timestamp: u64,
     
-    /// Gas price (indicator of urgency)
-    pub gas_price: u64,
+    /// STACC: max compute units (indicator of urgency / resource demand)
+    pub max_compute_units: u64,
 }
 
 /// Network state metrics for adaptive selection
@@ -601,7 +601,7 @@ impl AdaptivePQCSelector {
         vec![
             context.value.0 as f32 / 1_000_000_000.0,
             context.priority as f32 / 255.0,
-            context.gas_price as f32 / 1000.0,
+            context.max_compute_units as f32 / 1000.0,
             network.bandwidth_utilization / 100.0,
             network.avg_latency_ms / 1000.0,
             network.mempool_size as f32 / 100_000.0,
@@ -778,7 +778,7 @@ mod tests {
             sender: [0u8; 32],
             recipient: [1u8; 32],
             timestamp: 0,
-            gas_price: 10,
+            max_compute_units: 10,
         };
         
         let selection = selector.select_algorithm(&context);
@@ -812,7 +812,7 @@ mod tests {
             sender: [0u8; 32],
             recipient: [1u8; 32],
             timestamp: 0,
-            gas_price: 10,
+            max_compute_units: 10,
         };
         
         let selection = selector.select_algorithm(&context);
@@ -859,7 +859,7 @@ mod tests {
                 sender: [0u8; 32],
                 recipient: [1u8; 32],
                 timestamp: 12345,
-                gas_price: 5,
+                max_compute_units: 5,
             },
             TransactionContext {
                 value: Amount(999_999_999_999),
@@ -867,7 +867,7 @@ mod tests {
                 sender: [2u8; 32],
                 recipient: [3u8; 32],
                 timestamp: 67890,
-                gas_price: 1000,
+                max_compute_units: 1000,
             },
             TransactionContext {
                 value: Amount(50_000),
@@ -875,7 +875,7 @@ mod tests {
                 sender: [4u8; 32],
                 recipient: [5u8; 32],
                 timestamp: 0,
-                gas_price: 50,
+                max_compute_units: 50,
             },
         ];
 
@@ -916,7 +916,7 @@ mod tests {
             sender: [0u8; 32],
             recipient: [1u8; 32],
             timestamp: 0,
-            gas_price: 20,
+            max_compute_units: 20,
         };
 
         let r1 = selector.select_algorithm(&ctx).algorithm;

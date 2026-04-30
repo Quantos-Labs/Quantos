@@ -377,12 +377,12 @@ impl SelfHealingShardManager {
     /// Updates load metrics (called after block production)
     /// 
     /// MEDIUM: Now validates shard_id is within valid range before indexing.
-    pub fn update_load(&self, shard_id: ShardId, tx_count: usize, gas_used: u64) {
+    pub fn update_load(&self, shard_id: ShardId, tx_count: usize, cu_used: u64) {
         if shard_id >= self.num_shards {
             tracing::warn!("Invalid shard_id {} (max {}), ignoring update", shard_id, self.num_shards);
             return;
         }
-        self.load_monitor.update(shard_id, tx_count, gas_used);
+        self.load_monitor.update(shard_id, tx_count, cu_used);
         
         // Feed to predictor for learning
         self.hotspot_predictor.record_observation(shard_id, tx_count as f32);
@@ -406,7 +406,7 @@ impl SelfHealingShardManager {
 struct ShardLoadMonitor {
     loads: RwLock<Vec<f32>>,
     tx_counts: RwLock<Vec<usize>>,
-    gas_used: RwLock<Vec<u64>>,
+    cu_used: RwLock<Vec<u64>>,
 }
 
 impl ShardLoadMonitor {
@@ -414,29 +414,29 @@ impl ShardLoadMonitor {
         Self {
             loads: RwLock::new(vec![0.0; num_shards as usize]),
             tx_counts: RwLock::new(vec![0; num_shards as usize]),
-            gas_used: RwLock::new(vec![0; num_shards as usize]),
+            cu_used: RwLock::new(vec![0; num_shards as usize]),
         }
     }
 
-    fn update(&self, shard_id: ShardId, tx_count: usize, gas: u64) {
+    fn update(&self, shard_id: ShardId, tx_count: usize, cu: u64) {
         let idx = shard_id as usize;
         
         let mut loads = self.loads.write();
         let mut tx_counts = self.tx_counts.write();
-        let mut gas_used = self.gas_used.write();
+        let mut cu_used = self.cu_used.write();
         
         // MEDIUM: Bounds check to prevent panic on invalid shard_id
-        if idx >= loads.len() || idx >= tx_counts.len() || idx >= gas_used.len() {
+        if idx >= loads.len() || idx >= tx_counts.len() || idx >= cu_used.len() {
             tracing::warn!("ShardLoadMonitor::update: shard_id {} out of bounds (max {})", shard_id, loads.len());
             return;
         }
         
         tx_counts[idx] = tx_count;
-        gas_used[idx] = gas;
+        cu_used[idx] = cu;
         
         // Calculate load percentage (0-100)
         let load = (tx_count as f32 / 10000.0).min(1.0) * 50.0 +
-                   (gas as f32 / 10_000_000.0).min(1.0) * 50.0;
+                   (cu as f32 / 10_000_000.0).min(1.0) * 50.0;
         loads[idx] = load;
     }
 
@@ -449,14 +449,14 @@ impl ShardLoadMonitor {
         let idx = shard_id as usize;
         let loads = self.loads.read();
         let tx_counts = self.tx_counts.read();
-        let gas_used = self.gas_used.read();
+        let cu_used = self.cu_used.read();
         
         if idx < loads.len() {
             Some(ShardMetrics {
                 shard_id,
                 load: loads[idx],
                 tx_count: tx_counts[idx],
-                gas_used: gas_used[idx],
+                cu_used: cu_used[idx],
             })
         } else {
             None
@@ -470,7 +470,7 @@ struct ShardMetrics {
     shard_id: ShardId,
     load: f32,
     tx_count: usize,
-    gas_used: u64,
+    cu_used: u64,
 }
 
 /// ML-based hotspot predictor
@@ -694,7 +694,7 @@ impl MigrationStrategy {
     /// 
     /// Derives per-account load contribution from shard metrics:
     /// - tx_count: total recent transactions processed by the shard
-    /// - gas_used: total gas consumed (proxy for computational weight)
+    /// - cu_used: total compute units consumed (proxy for computational weight)
     /// 
     /// Accounts are ranked using a Zipf distribution model (empirically
     /// validated for blockchain workloads: top ~20% of accounts generate
@@ -709,7 +709,7 @@ impl MigrationStrategy {
         
         // Derive active account count from tx throughput and gas density
         let tx_based_estimate = shard_metrics.tx_count as usize;
-        let gas_based_estimate = (shard_metrics.gas_used / 21_000) as usize; // avg gas per simple transfer
+        let cu_based_estimate = (shard_metrics.cu_used / 21_000) as usize; // avg CU per simple transfer
         let estimated_active = tx_based_estimate
             .max(gas_based_estimate)
             .min(10_000)
@@ -721,7 +721,7 @@ impl MigrationStrategy {
         // Zipf parameter s=1.0 (empirical fit for blockchain tx distributions)
         // Harmonic number H_N for normalization
         let harmonic_n: f32 = (1..=estimated_active).map(|k| 1.0 / k as f32).sum();
-        let total_load = shard_metrics.tx_count as f32 + (shard_metrics.gas_used as f32 / 100_000.0);
+        let total_load = shard_metrics.tx_count as f32 + (shard_metrics.cu_used as f32 / 100_000.0);
         
         for rank in 0..estimated_active {
             // Generate deterministic account address from shard and rank

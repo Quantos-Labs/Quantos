@@ -68,8 +68,8 @@ pub struct TxNode {
     pub dependents: HashSet<TxId>,
     /// Priority (for scheduling)
     pub priority: i64,
-    /// Gas estimate
-    pub gas_estimate: u64,
+    /// CU estimate (compute units)
+    pub cu_estimate: u64,
     /// Original transaction
     pub transaction: SignedTransaction,
 }
@@ -86,7 +86,7 @@ impl TxNode {
             dependencies: HashSet::new(),
             dependents: HashSet::new(),
             priority: 0,
-            gas_estimate: transaction.transaction.gas_limit,
+            cu_estimate: transaction.transaction.max_compute_units,
             transaction,
         }
     }
@@ -184,8 +184,8 @@ impl Ord for ScheduledTx {
 pub struct ExecutionBatch {
     /// Transactions in this batch (can be executed in parallel)
     pub transactions: Vec<TxId>,
-    /// Total gas in batch
-    pub total_gas: u64,
+    /// Total compute units (CU) in batch
+    pub total_cu: u64,
     /// Batch priority
     pub priority: i64,
 }
@@ -197,7 +197,7 @@ impl ExecutionBatch {
     
     pub fn add(&mut self, tx: &TxNode) {
         self.transactions.push(tx.id);
-        self.total_gas += tx.gas_estimate;
+        self.total_cu += tx.cu_estimate;
         self.priority = self.priority.max(tx.priority);
     }
     
@@ -217,8 +217,8 @@ pub struct DependencyGraphConfig {
     pub max_transactions: usize,
     /// Maximum batch size
     pub max_batch_size: usize,
-    /// Maximum gas per batch
-    pub max_batch_gas: u64,
+    /// Maximum compute units (CU) per batch
+    pub max_batch_cu: u64,
     /// Enable storage dependency tracking
     pub track_storage: bool,
     /// Priority boost for high-value transactions
@@ -230,7 +230,7 @@ impl Default for DependencyGraphConfig {
         Self {
             max_transactions: 100_000,
             max_batch_size: 1000,
-            max_batch_gas: 30_000_000,
+            max_batch_cu: 30_000_000,
             track_storage: true,
             value_priority_factor: 0.001,
         }
@@ -324,8 +324,9 @@ impl TxDependencyGraph {
     fn calculate_priority(&self, node: &TxNode) -> i64 {
         let tx = &node.transaction.transaction;
         
-        // Base priority from gas price
-        let gas_priority = tx.gas_price as i64;
+        // STACC: no gas-price market. Use smaller CU as mild priority so we
+        // improve throughput under congestion (shorter jobs first).
+        let cu_priority = -(tx.max_compute_units as i64);
         
         // Boost for high-value transactions
         let value_boost = (tx.amount.0 as f64 * self.config.value_priority_factor) as i64;
@@ -333,7 +334,7 @@ impl TxDependencyGraph {
         // Penalty for many dependencies (harder to schedule)
         let dep_penalty = (node.dependencies.len() as i64) * 10;
         
-        gas_priority + value_boost - dep_penalty
+        cu_priority + value_boost - dep_penalty
     }
     
     /// Detects dependencies between a new node and existing nodes
@@ -419,7 +420,7 @@ impl TxDependencyGraph {
                         ready.push(ScheduledTx {
                             id: *id,
                             priority: node.priority,
-                            gas: node.gas_estimate,
+                            gas: node.cu_estimate,
                         });
                     }
                 }
@@ -498,7 +499,7 @@ impl TxDependencyGraph {
             }
             
             if let Some(node) = nodes.get(&scheduled.id) {
-                if batch.total_gas + node.gas_estimate > self.config.max_batch_gas {
+                if batch.total_cu + node.cu_estimate > self.config.max_batch_cu {
                     continue;
                 }
                 

@@ -108,12 +108,10 @@ pub struct ChainConfig {
     pub max_tx_per_block: u64,
     /// Maximum block size in bytes
     pub max_block_size: u64,
-    /// Minimum gas price in smallest units
-    pub min_gas_price: u64,
-    /// Maximum gas per transaction
-    pub max_gas_per_tx: u64,
-    /// Maximum gas per block
-    pub max_gas_per_block: u64,
+    /// STACC: maximum compute units per transaction (CU).
+    pub max_cu_per_tx: u64,
+    /// STACC: maximum compute units per block (CU).
+    pub block_cu_limit: u64,
     /// Minimum stake to become a validator
     pub min_validator_stake: u128,
     /// Maximum validators per committee
@@ -143,9 +141,8 @@ impl Default for ChainConfig {
             block_time_ms: 200, // 200ms DAG slot interval (production target)
             max_tx_per_block: 10_000,
             max_block_size: 10 * 1024 * 1024, // 10MB
-            min_gas_price: 0, // Quantos is gas-free
-            max_gas_per_tx: 0,
-            max_gas_per_block: 0,
+            max_cu_per_tx: 100_000_000,
+            block_cu_limit: 30_000_000,
             min_validator_stake: 100_000 * 10u128.pow(18), // 100,000 QTS
             max_validators_per_committee: 21,
             initial_shards: 4,

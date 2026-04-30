@@ -23,14 +23,26 @@ pub struct Transaction {
     pub to: Address,
     pub amount: Amount,
     pub nonce: u64,
-    pub gas_limit: u64,
-    pub gas_price: u64,
+    /// Maximum compute units allowed for this transaction (STACC).
+    pub max_compute_units: u64,
+    /// Optional priority boost lock (STACC). Tokens are never burned.
+    #[serde(default)]
+    pub boost: Option<PriorityBoost>,
     pub data: Vec<u8>,
     pub shard_id: ShardId,
     pub timestamp: u64,
     pub signature: Signature,
     pub public_key: PublicKey,
     pub chain_id: u64,
+}
+
+/// Priority boost lock (STACC).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PriorityBoost {
+    /// Tokens locked temporarily to signal urgency.
+    pub locked_tokens: u64,
+    /// Lock duration in blocks.
+    pub lock_duration_blocks: u64,
 }
 
 impl Transaction {
@@ -40,8 +52,8 @@ impl Transaction {
         to: Address,
         amount: Amount,
         nonce: u64,
-        gas_limit: u64,
-        gas_price: u64,
+        max_compute_units: u64,
+        boost: Option<PriorityBoost>,
         data: Vec<u8>,
         shard_id: ShardId,
     ) -> Self {
@@ -51,8 +63,8 @@ impl Transaction {
             to,
             amount,
             nonce,
-            gas_limit,
-            gas_price,
+            max_compute_units,
+            boost,
             data,
             shard_id,
             timestamp: chrono::Utc::now().timestamp() as u64,
@@ -74,8 +86,14 @@ impl Transaction {
         msg.extend_from_slice(&self.to);
         msg.extend_from_slice(&self.amount.0.to_le_bytes());
         msg.extend_from_slice(&self.nonce.to_le_bytes());
-        msg.extend_from_slice(&self.gas_limit.to_le_bytes());
-        msg.extend_from_slice(&self.gas_price.to_le_bytes());
+        msg.extend_from_slice(&self.max_compute_units.to_le_bytes());
+        if let Some(boost) = &self.boost {
+            msg.extend_from_slice(&boost.locked_tokens.to_le_bytes());
+            msg.extend_from_slice(&boost.lock_duration_blocks.to_le_bytes());
+        } else {
+            msg.extend_from_slice(&0u64.to_le_bytes());
+            msg.extend_from_slice(&0u64.to_le_bytes());
+        }
         msg.extend_from_slice(&self.data);
         msg.extend_from_slice(&self.shard_id.to_le_bytes());
         msg.extend_from_slice(&self.timestamp.to_le_bytes());
@@ -107,14 +125,9 @@ impl Transaction {
         Ok(())
     }
 
-    pub fn gas_cost(&self) -> Option<u128> {
-        // CRITICAL: Use checked arithmetic to prevent overflow
-        (self.gas_limit as u128).checked_mul(self.gas_price as u128)
-    }
-
-    pub fn total_cost(&self) -> Option<u128> {
-        // CRITICAL: Use checked arithmetic to prevent overflow
-        self.gas_cost()?.checked_add(self.amount.0)
+    /// Total locked tokens required by this tx (priority boost only).
+    pub fn boost_locked_tokens(&self) -> u64 {
+        self.boost.as_ref().map(|b| b.locked_tokens).unwrap_or(0)
     }
 
     /// MEDIUM (z10): Use more address bytes for better entropy in shard mapping.
@@ -150,7 +163,7 @@ impl SignedTransaction {
 pub struct TransactionReceipt {
     pub tx_hash: Hash,
     pub status: TransactionStatus,
-    pub gas_used: u64,
+    pub cu_used: u64,
     pub vertex_hash: Hash,
     pub shard_id: ShardId,
     pub logs: Vec<Log>,

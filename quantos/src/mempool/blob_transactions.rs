@@ -71,10 +71,8 @@ pub struct BlobTransaction {
     pub sender: Address,
     /// Transaction nonce
     pub nonce: u64,
-    /// Gas limit for execution
-    pub gas_limit: u64,
-    /// Gas price
-    pub gas_price: u64,
+    /// STACC: max compute units for execution
+    pub max_compute_units: u64,
     /// Target shard
     pub shard_id: ShardId,
     /// Calldata (contract interaction, if any)
@@ -641,8 +639,7 @@ mod tests {
         let tx = BlobTransaction {
             sender: [1u8; 32],
             nonce: 0,
-            gas_limit: 100_000,
-            gas_price: 1,
+            max_compute_units: 100_000,
             shard_id: 0,
             data: Vec::new(),
             blobs: vec![Blob { data: data.clone(), index: 0 }],
@@ -682,8 +679,7 @@ mod tests {
         let tx = BlobTransaction {
             sender: [1u8; 32],
             nonce: 0,
-            gas_limit: 100_000,
-            gas_price: 1,
+            max_compute_units: 100_000,
             shard_id: 0,
             data: Vec::new(),
             blobs: vec![Blob { data: data.clone(), index: 0 }],
@@ -717,8 +713,7 @@ mod tests {
         let tx = BlobTransaction {
             sender: [1u8; 32],
             nonce: 0,
-            gas_limit: 100_000,
-            gas_price: 1,
+            max_compute_units: 100_000,
             shard_id: 0,
             data: Vec::new(),
             blobs: vec![],

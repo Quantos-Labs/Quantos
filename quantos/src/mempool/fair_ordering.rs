@@ -376,7 +376,7 @@ impl FairOrderingProtocol {
             .filter_map(|(commitment, reveal)| {
                 batch.commitments.iter()
                     .find(|c| c.commitment == *commitment)
-                    .map(|c| (*commitment, c.commit_time, reveal.transaction.transaction.gas_price))
+                    .map(|c| (*commitment, c.commit_time, reveal.transaction.transaction.max_compute_units))
             })
             .collect();
         
@@ -603,8 +603,8 @@ mod tests {
             to,
             Amount(100),
             0,
-            21000,
-            1,
+            100_000,
+            None,
             Vec::new(),
             0,
         );

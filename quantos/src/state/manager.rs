@@ -341,24 +341,8 @@ impl StateManager {
             });
         }
 
-        // CRITICAL: Use checked arithmetic for total cost calculation
-        let gas_cost = tx.transaction.gas_cost()
-            .ok_or(StateError::ArithmeticOverflow)?;
-        let amount = tx.transaction.amount.0;
-        let total_cost = gas_cost.checked_add(amount)
-            .ok_or(StateError::ArithmeticOverflow)?;
-        
-        // HIGH (w2): balance.0 is already u128, no cast needed
-        if account.balance.0 < total_cost {
-            tracing::error!(
-                "validate_tx: insufficient balance! from={}, balance={}, total_cost={}, tx_type={:?}",
-                hex::encode(&tx.transaction.from[..8]),
-                account.balance.0,
-                total_cost,
-                tx.transaction.tx_type
-            );
-            return Err(StateError::InsufficientBalance);
-        }
+        // STACC: transactions are free (no gas fees). Balance checks apply only
+        // to value transfers/staking amounts, enforced during apply_transaction.
 
         Ok(())
     }
@@ -369,13 +353,6 @@ impl StateManager {
         let mut sender = self.get_account(&tx.transaction.from)?;
         let mut recipient = self.get_account(&tx.transaction.to)?;
         let mut receipt_logs: Vec<Log> = Vec::new();
-
-        // CRITICAL: Use checked arithmetic for gas cost
-        let gas_cost = tx.transaction.gas_cost()
-            .ok_or(StateError::ArithmeticOverflow)?;
-        if !sender.sub_balance(&Amount(gas_cost)) {
-            return Err(StateError::InsufficientBalance);
-        }
 
         match tx.transaction.tx_type {
             TransactionType::Transfer => {
@@ -448,13 +425,13 @@ impl StateManager {
                 let execution_timestamp = current_execution_timestamp(tx_timestamp);
                 let chain_id = tx.transaction.chain_id;
                 tracing::info!(
-                    "ContractCall: caller={}, contract={}, data_len={}, amount={}, nonce={}, gas_limit={}, tx_timestamp={}, exec_timestamp={}",
+                    "ContractCall: caller={}, contract={}, data_len={}, amount={}, nonce={}, max_cu={}, tx_timestamp={}, exec_timestamp={}",
                     hex::encode(&caller[..8]),
                     hex::encode(&contract_address[..8]),
                     input_data.len(),
                     tx.transaction.amount.0,
                     tx.transaction.nonce,
-                    tx.transaction.gas_limit,
+                    tx.transaction.max_compute_units,
                     tx_timestamp,
                     execution_timestamp
                 );
@@ -540,7 +517,7 @@ impl StateManager {
         Ok(TransactionReceipt {
             tx_hash: tx.hash,
             status: TransactionStatus::Finalized,
-            gas_used: tx.transaction.gas_limit,
+            cu_used: tx.transaction.max_compute_units,
             vertex_hash: [0u8; 32],
             shard_id: tx.transaction.shard_id,
             logs: receipt_logs,
@@ -599,7 +576,7 @@ impl StateManager {
                     receipts.push(TransactionReceipt {
                         tx_hash: tx.hash,
                         status: TransactionStatus::Failed(err.to_string()),
-                        gas_used: tx.transaction.gas_limit,
+                        cu_used: tx.transaction.max_compute_units,
                         vertex_hash: [0u8; 32],
                         shard_id: tx.transaction.shard_id,
                         logs: Vec::new(),
@@ -647,11 +624,8 @@ impl StateManager {
         let mut recipient = self.overlay_account(overlay, &tx.transaction.to)?;
         let mut receipt_logs: Vec<Log> = Vec::new();
 
-        let gas_cost = tx.transaction.gas_cost()
-            .ok_or(StateError::ArithmeticOverflow)?;
-        if !sender.sub_balance(&Amount(gas_cost)) {
-            return Err(StateError::InsufficientBalance);
-        }
+        // STACC: no gas fees are charged. Only explicit value transfers/staking
+        // change balances.
 
         match tx.transaction.tx_type {
             TransactionType::Transfer => {
@@ -800,7 +774,7 @@ impl StateManager {
         Ok(TransactionReceipt {
             tx_hash: tx.hash,
             status: TransactionStatus::Finalized,
-            gas_used: tx.transaction.gas_limit,
+            cu_used: tx.transaction.max_compute_units,
             vertex_hash: [0u8; 32],
             shard_id: tx.transaction.shard_id,
             logs: receipt_logs,
@@ -850,11 +824,8 @@ impl StateManager {
             });
         }
 
-        let total_cost = tx.transaction.total_cost()
-            .ok_or(StateError::ArithmeticOverflow)?;
-        if account.balance.0 < total_cost {
-            return Err(StateError::InsufficientBalance);
-        }
+        // STACC: no gas fees, so only value transfers/staking must be funded.
+        // Overlay validation defers balance checks to apply paths.
 
         Ok(())
     }
@@ -895,20 +866,8 @@ impl StateManager {
             });
         }
 
-        // CRITICAL: Use checked arithmetic
-        let gas_cost = tx.transaction.gas_cost()
-            .ok_or(StateError::ArithmeticOverflow)?;
-        let amount = tx.transaction.amount.0;
-        let total_cost = gas_cost.checked_add(amount)
-            .ok_or(StateError::ArithmeticOverflow)?;
-        
-        if account.balance.0 < total_cost {
-            return Err(StateError::InsufficientBalance);
-        }
-        
-        if !account.sub_balance(&Amount(total_cost)) {
-            return Err(StateError::InsufficientBalance);
-        }
+        // STACC: speculative_apply does not charge fees. It only advances nonce
+        // and is used for conflict detection / prechecks.
 
         account.increment_nonce()
             .map_err(|e| StateError::StorageError(e))?;

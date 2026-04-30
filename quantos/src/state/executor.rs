@@ -128,7 +128,7 @@ impl ParallelExecutor {
                                 TransactionReceipt {
                                     tx_hash: tx.hash,
                                     status: TransactionStatus::Failed(format!("{}", e)),
-                                    gas_used: tx.transaction.gas_limit,
+                                    cu_used: tx.transaction.max_compute_units,
                                     vertex_hash: [0u8; 32],
                                     shard_id: tx.transaction.shard_id,
                                     logs: Vec::new(),

@@ -25,12 +25,10 @@ pub struct EncryptedTransaction {
     pub ciphertext: Vec<u8>,
     /// Encryption nonce
     pub nonce: [u8; 24],
-    /// Sender address (unencrypted for gas payment)
+    /// Sender address (unencrypted for anti-spam)
     pub sender: Address,
-    /// Gas limit (unencrypted)
-    pub gas_limit: u64,
-    /// Gas price (unencrypted for priority)
-    pub gas_price: u64,
+    /// STACC: max compute units (unencrypted for admission control)
+    pub max_compute_units: u64,
     /// Target block for decryption
     pub target_block: u64,
     /// Encryption public key ID
@@ -250,8 +248,7 @@ impl EncryptedMempool {
             ciphertext,
             nonce,
             sender: tx.transaction.from,
-            gas_limit: tx.transaction.gas_limit,
-            gas_price: tx.transaction.gas_price,
+            max_compute_units: tx.transaction.max_compute_units,
             target_block,
             encryption_key_id: sha3_256(&params.public_key),
             commitment,
@@ -468,8 +465,7 @@ impl EncryptedMempool {
         data.extend_from_slice(&tx.transaction.to);
         data.extend_from_slice(&tx.transaction.amount.0.to_le_bytes());
         data.extend_from_slice(&tx.transaction.nonce.to_le_bytes());
-        data.extend_from_slice(&tx.transaction.gas_limit.to_le_bytes());
-        data.extend_from_slice(&tx.transaction.gas_price.to_le_bytes());
+        data.extend_from_slice(&tx.transaction.max_compute_units.to_le_bytes());
         data.extend_from_slice(&(tx.transaction.data.len() as u32).to_le_bytes());
         data.extend_from_slice(&tx.transaction.data);
         data.extend_from_slice(&tx.transaction.signature);
@@ -497,10 +493,7 @@ impl EncryptedMempool {
         let nonce = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
         offset += 8;
         
-        let gas_limit = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
-        offset += 8;
-        
-        let gas_price = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
+        let max_compute_units = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
         offset += 8;
         
         let data_len = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
@@ -517,8 +510,7 @@ impl EncryptedMempool {
             to,
             amount: crate::types::Amount(amount),
             nonce,
-            gas_limit,
-            gas_price,
+            max_compute_units,
             data: tx_data,
             shard_id: 0,
             timestamp: chrono::Utc::now().timestamp() as u64,

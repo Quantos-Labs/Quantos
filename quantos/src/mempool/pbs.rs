@@ -50,10 +50,10 @@ pub struct BlockBid {
     pub parent_hash: Hash,
     /// Bid value (payment to proposer)
     pub value: u64,
-    /// Gas limit
-    pub gas_limit: u64,
-    /// Gas used
-    pub gas_used: u64,
+    /// Block CU limit (STACC)
+    pub block_cu_limit: u64,
+    /// Block CU used (STACC)
+    pub block_cu_used: u64,
     /// Block hash (commitment)
     pub block_hash: Hash,
     /// Transaction root
@@ -102,8 +102,8 @@ pub struct BlockHeader {
     pub state_root: Hash,
     pub transactions_root: Hash,
     pub receipts_root: Hash,
-    pub gas_limit: u64,
-    pub gas_used: u64,
+    pub block_cu_limit: u64,
+    pub block_cu_used: u64,
     pub timestamp: u64,
     pub extra_data: Vec<u8>,
 }
@@ -797,8 +797,8 @@ mod tests {
             slot: 100,
             parent_hash: [0u8; 32],
             value: 10000,
-            gas_limit: 30_000_000,
-            gas_used: 15_000_000,
+            block_cu_limit: 30_000_000,
+            block_cu_used: 15_000_000,
             block_hash: [3u8; 32],
             transactions_root: [4u8; 32],
             state_root: [5u8; 32],

@@ -24,6 +24,9 @@ const MAX_SHARD_TXS: usize = 10_000;
 
 use crate::crypto::verify_dilithium;
 use crate::state::StateManager;
+use crate::stacc::{ActivationLedger, ACTIVATION_DEPOSIT, QuotaManager};
+use crate::stacc::quota::{StakeProvider, AncienneteProvider};
+use crate::stacc::mempool::StaccAdmission;
 use crate::types::{
     Address, Hash, ShardId, SignedTransaction,
 };
@@ -57,11 +60,29 @@ pub struct Mempool {
     tx_receiver: Receiver<SignedTransaction>,
     /// Lock for atomic transaction insertion
     insert_lock: Arc<Mutex<()>>,
+    /// STACC admission + WFQ ordering per shard mempool instance.
+    stacc: Arc<Mutex<StaccAdmission<ZeroStakeProvider, FixedAgeProvider>>>,
+}
+
+#[derive(Clone)]
+struct ZeroStakeProvider;
+impl StakeProvider for ZeroStakeProvider {
+    fn stake_of(&self, _addr: &Address) -> u128 { 0 }
+    fn total_stake(&self) -> u128 { 0 }
+}
+
+#[derive(Clone)]
+struct FixedAgeProvider;
+impl AncienneteProvider for FixedAgeProvider {
+    fn anciennete_factor(&self, _addr: &Address, _now_block: u64) -> f64 { 1.0 }
 }
 
 impl Mempool {
     pub fn new(state_manager: StateManager, max_size: usize) -> Self {
         let (tx_sender, tx_receiver) = bounded(10000);
+        let activation = ActivationLedger::default();
+        let quota = QuotaManager::new(ZeroStakeProvider, FixedAgeProvider);
+        let stacc = StaccAdmission::new(activation, quota);
         
         Self {
             pending: Arc::new(DashMap::new()),
@@ -73,6 +94,7 @@ impl Mempool {
             tx_sender,
             tx_receiver,
             insert_lock: Arc::new(Mutex::new(())),
+            stacc: Arc::new(Mutex::new(stacc)),
         }
     }
 
@@ -89,6 +111,15 @@ impl Mempool {
         }
 
         self.validate_transaction(&tx)?;
+        // STACC activation heuristic (prod: this is a system contract deposit).
+        // For now, treat any staked balance >= ACTIVATION_DEPOSIT as activation.
+        let now_block = 0u64;
+        if let Ok(acct) = self.state_manager.get_account(&tx.transaction.from) {
+            if acct.stake.0 >= ACTIVATION_DEPOSIT as u128 {
+                self.stacc.lock().activation.activate(tx.transaction.from, now_block);
+            }
+        }
+        self.stacc.lock().admit(tx.clone(), now_block)?;
 
         let sender = tx.transaction.from;
         let nonce = tx.transaction.nonce;
@@ -184,30 +215,21 @@ impl Mempool {
     }
 
     pub fn get_pending_for_shard(&self, shard_id: ShardId, limit: usize) -> Vec<SignedTransaction> {
-        // OPTIMIZATION: Collect and sort only what we need
-        if let Some(shard_txs) = self.by_shard.get(&shard_id) {
-            let mut txs: Vec<SignedTransaction> = Vec::new();
-            
-            // Only process up to limit * 2 transactions for efficiency
-            let process_limit = (limit * 2).min(shard_txs.len());
-            
-            for hash in shard_txs.iter().take(process_limit) {
-                if let Some(tx) = self.pending.get(hash) {
-                    txs.push(tx.clone());
-                }
+        // STACC: WFQ scheduler decides global ordering; we then filter by shard.
+        // NOTE: This pop-based approach is acceptable because fast_path removes
+        // selected txs from the mempool immediately after vertex creation.
+        let mut out = Vec::new();
+        let mut stacc = self.stacc.lock();
+        while out.len() < limit {
+            let Some(tx) = stacc.pop_next() else { break; };
+            if tx.transaction.shard_id != shard_id {
+                continue;
             }
-            
-            // Sort by gas price (descending) then nonce (ascending)
-            txs.sort_by(|a, b| {
-                b.transaction.gas_price.cmp(&a.transaction.gas_price)
-                    .then_with(|| a.transaction.nonce.cmp(&b.transaction.nonce))
-            });
-            
-            txs.truncate(limit);
-            txs
-        } else {
-            Vec::new()
+            if self.pending.contains_key(&tx.hash) {
+                out.push(tx);
+            }
         }
+        out
     }
 
     pub fn get_executable_transactions(&self, sender: &Address) -> Vec<SignedTransaction> {
@@ -344,8 +366,8 @@ impl ShardedMempool {
     }
     
     /// Updates shard load metrics
-    pub fn update_shard_load(&self, shard_id: ShardId, tx_count: usize, avg_gas_used: u64) {
-        self.amr_router.update_shard_load(shard_id, tx_count, avg_gas_used);
+    pub fn update_shard_load(&self, shard_id: ShardId, tx_count: usize, avg_cu_used: u64) {
+        self.amr_router.update_shard_load(shard_id, tx_count, avg_cu_used);
     }
     
     /// Gets routing metrics
@@ -386,8 +408,8 @@ mod tests {
             [2u8; 32],
             Amount(100),
             nonce,
-            21000,
-            1000000000,
+            100_000,
+            None,
             Vec::new(),
             shard_id,
         );

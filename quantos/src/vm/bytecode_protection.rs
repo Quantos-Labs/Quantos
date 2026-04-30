@@ -187,7 +187,7 @@ pub struct BytecodeProtector {
 pub struct SandboxState {
     pub contract_address: Address,
     pub started_at: Instant,
-    pub gas_used: u64,
+    pub cu_used: u64,
     pub memory_used: usize,
 }
 
@@ -504,7 +504,7 @@ impl BytecodeProtector {
         let sandbox = SandboxState {
             contract_address: *address,
             started_at: Instant::now(),
-            gas_used: 0,
+            cu_used: 0,
             memory_used: 0,
         };
         self.sandboxes.insert(*address, sandbox.clone());

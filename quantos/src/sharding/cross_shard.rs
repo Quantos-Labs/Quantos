@@ -175,7 +175,7 @@ pub struct CrossShardReceipt {
     /// Total time taken (milliseconds)
     pub duration_ms: u64,
     /// Gas used
-    pub gas_used: u64,
+    pub cu_used: u64,
     /// Error message if failed
     pub error: Option<String>,
 }
@@ -669,7 +669,7 @@ impl CrossShardCoordinator {
             dest_shard: tx.dest_shard,
             final_phase: if success { CrossShardPhase::Finalized } else { CrossShardPhase::RolledBack },
             duration_ms: duration * 1000,
-            gas_used: 21000, // Base gas
+            cu_used: 21000, // Base CU
             error,
         };
 
