@@ -1,4 +1,4 @@
-use crate::types::transaction::PriorityBoost;
+use crate::types::PriorityBoost;
 
 pub const BOOST_BASE: u64 = 1_000;
 

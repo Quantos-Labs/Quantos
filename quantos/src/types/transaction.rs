@@ -130,6 +130,11 @@ impl Transaction {
         self.boost.as_ref().map(|b| b.locked_tokens).unwrap_or(0)
     }
 
+    /// Native balance that must be coverable by `from` (value + boost lock). CU limits do not spend balance.
+    pub fn balance_commitment(&self) -> Option<u128> {
+        (self.amount.0 as u128).checked_add(self.boost_locked_tokens() as u128)
+    }
+
     /// MEDIUM (z10): Use more address bytes for better entropy in shard mapping.
     /// Uses first 8 bytes (64 bits) instead of 2 bytes (16 bits) to prevent
     /// attackers from easily generating addresses targeting specific shards.

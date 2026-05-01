@@ -16,7 +16,7 @@ pub struct StaccAdmission<S: StakeProvider, A: AncienneteProvider> {
     pending_cu_total: u64,
 }
 
-impl<S: StakeProvider, A: AncienneteProvider> StaccAdmission<S, A> {
+impl<S: StakeProvider + Clone, A: AncienneteProvider + Clone> StaccAdmission<S, A> {
     pub fn new(activation: ActivationLedger, quota: QuotaManager<S, A>) -> Self {
         let scheduler = WfqScheduler::new(quota.clone());
         Self {

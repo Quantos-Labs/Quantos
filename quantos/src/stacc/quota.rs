@@ -103,10 +103,11 @@ impl<S: StakeProvider, A: AncienneteProvider> QuotaManager<S, A> {
     }
 
     pub fn ensure_bucket(&mut self, addr: Address, now_block: u64) {
-        self.buckets.entry(addr).or_insert_with(|| {
-            let cap = self.bucket_capacity(&addr, now_block);
-            Bucket::new(cap, now_block)
-        });
+        if self.buckets.contains_key(&addr) {
+            return;
+        }
+        let cap = self.bucket_capacity(&addr, now_block);
+        self.buckets.insert(addr, Bucket::new(cap, now_block));
     }
 
     pub fn try_consume(&mut self, addr: Address, cu: u64, now_block: u64) -> Result<(), QuotaError> {

@@ -711,7 +711,7 @@ impl MigrationStrategy {
         let tx_based_estimate = shard_metrics.tx_count as usize;
         let cu_based_estimate = (shard_metrics.cu_used / 21_000) as usize; // avg CU per simple transfer
         let estimated_active = tx_based_estimate
-            .max(gas_based_estimate)
+            .max(cu_based_estimate)
             .min(10_000)
             .max(1);
         

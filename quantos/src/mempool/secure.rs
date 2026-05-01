@@ -371,7 +371,7 @@ impl SecureMempool {
         if let Some(sender_txs) = self.by_sender.get(&tx.transaction.from) {
             for hash in sender_txs.values() {
                 if let Some(pending_tx) = self.pending.get(hash) {
-                    if let Some(cost) = pending_tx.tx.transaction.total_cost() {
+                    if let Some(cost) = pending_tx.tx.transaction.balance_commitment() {
                         pending_cost = pending_cost.checked_add(cost)
                             .ok_or(MempoolError::InvalidTransaction(
                                 "Pending cost overflow: too many large pending transactions".to_string()
@@ -381,8 +381,8 @@ impl SecureMempool {
             }
         }
         
-        let tx_cost = tx.transaction.total_cost()
-            .ok_or(MempoolError::InvalidTransaction("Transaction cost overflow".to_string()))?;
+        let tx_cost = tx.transaction.balance_commitment()
+            .ok_or(MempoolError::InvalidTransaction("Transaction balance commitment overflow".to_string()))?;
         let total_required = pending_cost.checked_add(tx_cost)
             .ok_or(MempoolError::InvalidTransaction(
                 "Total required cost overflow".to_string()

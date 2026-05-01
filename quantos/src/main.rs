@@ -39,6 +39,7 @@ mod light_client;
 mod security;
 mod vm;
 mod standards;
+mod stacc;
 mod genesis;
 
 use std::time::Duration;

@@ -511,6 +511,7 @@ impl EncryptedMempool {
             amount: crate::types::Amount(amount),
             nonce,
             max_compute_units,
+            boost: None,
             data: tx_data,
             shard_id: 0,
             timestamp: chrono::Utc::now().timestamp() as u64,
