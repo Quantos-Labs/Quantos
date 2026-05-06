@@ -14,6 +14,8 @@ use crate::types::{
     Account, Address, Amount, Hash, Log, SignedTransaction, TransactionReceipt, TransactionStatus, TransactionType,
 };
 use crate::vm::{decode_contract_deploy_payload, ContractManager};
+use crate::vm::evm::EvmEngine;
+use crate::types::VmKind;
 
 const SMT_EMPTY_LEAF_DOMAIN: &[u8] = b"QUANTOS_STATE_SMT_EMPTY_LEAF_V1";
 const SMT_LEAF_DOMAIN: &[u8] = b"QUANTOS_STATE_SMT_LEAF_V1";
@@ -128,6 +130,7 @@ pub struct StateManager {
     state_compressor: Arc<QuantumStateCompressor>,
     /// Contract manager for executing ContractDeploy and ContractCall transactions
     contract_manager: Arc<RwLock<Option<Arc<ContractManager>>>>,
+    evm_engine: Arc<RwLock<Option<Arc<EvmEngine>>>>,
 }
 
 /// Result of deterministic state execution.
@@ -229,12 +232,18 @@ impl StateManager {
             speculative_counter: Arc::new(AtomicU64::new(0)),
             state_compressor: Arc::new(QuantumStateCompressor::new()),
             contract_manager: Arc::new(RwLock::new(None)),
+            evm_engine: Arc::new(RwLock::new(None)),
         }
     }
 
     /// Sets the contract manager after initialization (avoids circular deps).
     pub fn set_contract_manager(&self, cm: Arc<ContractManager>) {
         *self.contract_manager.write() = Some(cm);
+    }
+
+    /// Sets the EVM engine after initialization.
+    pub fn set_evm_engine(&self, evm: Arc<EvmEngine>) {
+        *self.evm_engine.write() = Some(evm);
     }
     
     /// Get QRSC compressor for state compression operations
@@ -372,132 +381,162 @@ impl StateManager {
                 }
             }
             TransactionType::ContractDeploy => {
-                let cm_guard = self.contract_manager.read();
-                let cm = cm_guard.as_ref().ok_or_else(|| {
-                    StateError::ExecutionError("ContractManager not initialized".to_string())
-                })?;
-                let (bytecode, constructor_data) = decode_contract_deploy_payload(&tx.transaction.data)
-                    .map_err(|e| StateError::ExecutionError(format!("Invalid deploy payload: {}", e)))?;
-                if bytecode.is_empty() {
-                    return Err(StateError::ExecutionError("Empty bytecode in ContractDeploy".to_string()));
+                match tx.transaction.vm_kind {
+                    VmKind::Qvm => {
+                        let cm_guard = self.contract_manager.read();
+                        let cm = cm_guard.as_ref().ok_or_else(|| {
+                            StateError::ExecutionError("ContractManager not initialized".to_string())
+                        })?;
+                        let (bytecode, constructor_data) = decode_contract_deploy_payload(&tx.transaction.data)
+                            .map_err(|e| StateError::ExecutionError(format!("Invalid deploy payload: {}", e)))?;
+                        if bytecode.is_empty() {
+                            return Err(StateError::ExecutionError("Empty bytecode in ContractDeploy".to_string()));
+                        }
+                        let deployer = tx.transaction.from;
+                        let nonce = tx.transaction.nonce;
+                        let timestamp = tx.transaction.timestamp;
+                        let deploy_result = cm.deploy_contract(
+                            bytecode.clone(),
+                            constructor_data,
+                            deployer,
+                            nonce,
+                            timestamp,
+                            timestamp,
+                            tx.transaction.chain_id,
+                            None,
+                        ).map_err(|e| StateError::ExecutionError(format!("ContractDeploy failed: {}", e)))?;
+                        let contract_address = deploy_result.address;
+                        recipient = self.get_account(&contract_address)?;
+                        recipient.code_hash = Some(crate::types::hash_data(&bytecode));
+                        if let Some(init_result) = deploy_result.init_result {
+                            receipt_logs = init_result.logs.into_iter().map(|log| Log {
+                                address: log.address,
+                                topics: log.topics,
+                                data: log.data,
+                            }).collect();
+                        }
+                        tracing::info!(
+                            "QVM ContractDeploy: deployer={}, contract={}",
+                            hex::encode(&deployer[..8]),
+                            hex::encode(contract_address)
+                        );
+                    }
+                    VmKind::Evm => {
+                        let evm_guard = self.evm_engine.read();
+                        let evm = evm_guard.as_ref().ok_or_else(|| {
+                            StateError::ExecutionError("EvmEngine not initialized".to_string())
+                        })?;
+                        let deployer = tx.transaction.from;
+                        let nonce = tx.transaction.nonce;
+                        let init_code = tx.transaction.data.clone();
+                        let out = evm.deploy(
+                            deployer,
+                            nonce,
+                            tx.transaction.amount.clone(),
+                            init_code,
+                            tx.transaction.max_compute_units,
+                            tx.transaction.chain_id,
+                        ).map_err(|e| StateError::ExecutionError(format!("EVM deploy failed: {}", e)))?;
+                        let contract_address = out.created_address.ok_or_else(|| {
+                            StateError::ExecutionError("EVM deploy missing address".into())
+                        })?;
+                        recipient = self.get_account(&contract_address)?;
+                        if let Some(code) = &out.deployed_code {
+                            recipient.code_hash = Some(crate::types::hash_data(code));
+                        }
+                        receipt_logs = out.logs.into_iter().map(|log| Log {
+                            address: log.address,
+                            topics: log.topics,
+                            data: log.data,
+                        }).collect();
+                        tracing::info!(
+                            "EVM ContractDeploy: deployer={}, contract={}",
+                            hex::encode(&deployer[..8]),
+                            hex::encode(contract_address)
+                        );
+                    }
                 }
-                let deployer = tx.transaction.from;
-                let nonce = tx.transaction.nonce;
-                let timestamp = tx.transaction.timestamp;
-                let deploy_result = cm.deploy_contract(
-                    bytecode.clone(),
-                    constructor_data,
-                    deployer,
-                    nonce,
-                    timestamp,
-                    timestamp, // block_height approximated by timestamp
-                    tx.transaction.chain_id,
-                    None,      // ABI passed separately if needed
-                ).map_err(|e| StateError::ExecutionError(format!("ContractDeploy failed: {}", e)))?;
-                let contract_address = deploy_result.address;
-                // Set recipient to deployed contract address for receipt
-                recipient = self.get_account(&contract_address)?;
-                // Mark account as contract by setting code_hash
-                recipient.code_hash = Some(crate::types::hash_data(&bytecode));
-                if let Some(init_result) = deploy_result.init_result {
-                    receipt_logs = init_result.logs.into_iter().map(|log| Log {
-                        address: log.address,
-                        topics: log.topics,
-                        data: log.data,
-                    }).collect();
-                }
-                tracing::info!(
-                    "ContractDeploy: deployer={}, contract={}",
-                    hex::encode(&deployer[..8]),
-                    hex::encode(contract_address)
-                );
             }
             TransactionType::ContractCall => {
-                let cm_guard = self.contract_manager.read();
-                let cm = cm_guard.as_ref().ok_or_else(|| {
-                    tracing::error!("ContractCall: ContractManager not initialized!");
-                    StateError::ExecutionError("ContractManager not initialized".to_string())
-                })?;
-                let contract_address = tx.transaction.to;
-                let caller = tx.transaction.from;
-                let input_data = tx.transaction.data.clone();
-                let tx_timestamp = tx.transaction.timestamp;
-                let execution_timestamp = current_execution_timestamp(tx_timestamp);
-                let chain_id = tx.transaction.chain_id;
-                tracing::info!(
-                    "ContractCall: caller={}, contract={}, data_len={}, amount={}, nonce={}, max_cu={}, tx_timestamp={}, exec_timestamp={}",
-                    hex::encode(&caller[..8]),
-                    hex::encode(&contract_address[..8]),
-                    input_data.len(),
-                    tx.transaction.amount.0,
-                    tx.transaction.nonce,
-                    tx.transaction.max_compute_units,
-                    tx_timestamp,
-                    execution_timestamp
-                );
-                // Transfer value if amount > 0
-                if tx.transaction.amount.0 > 0 {
-                    if !sender.sub_balance(&tx.transaction.amount) {
-                        return Err(StateError::InsufficientBalance);
+                match tx.transaction.vm_kind {
+                    VmKind::Qvm => {
+                        let cm_guard = self.contract_manager.read();
+                        let cm = cm_guard.as_ref().ok_or_else(|| {
+                            tracing::error!("ContractCall: ContractManager not initialized!");
+                            StateError::ExecutionError("ContractManager not initialized".to_string())
+                        })?;
+                        let contract_address = tx.transaction.to;
+                        let caller = tx.transaction.from;
+                        let input_data = tx.transaction.data.clone();
+                        let tx_timestamp = tx.transaction.timestamp;
+                        let execution_timestamp = current_execution_timestamp(tx_timestamp);
+                        let chain_id = tx.transaction.chain_id;
+                        tracing::info!(
+                            "QVM ContractCall: caller={}, contract={}, data_len={}, amount={}, nonce={}, max_cu={}",
+                            hex::encode(&caller[..8]),
+                            hex::encode(&contract_address[..8]),
+                            input_data.len(),
+                            tx.transaction.amount.0,
+                            tx.transaction.nonce,
+                            tx.transaction.max_compute_units,
+                        );
+                        if tx.transaction.amount.0 > 0 {
+                            if !sender.sub_balance(&tx.transaction.amount) {
+                                return Err(StateError::InsufficientBalance);
+                            }
+                            recipient.add_balance(&tx.transaction.amount);
+                        }
+                        let result = cm.execute_contract(
+                            contract_address,
+                            caller,
+                            input_data,
+                            execution_timestamp,
+                            execution_timestamp,
+                            chain_id,
+                        ).map_err(|e| StateError::ExecutionError(format!("ContractCall failed: {}", e)))?;
+                        if !result.success {
+                            let revert_reason = decode_contract_revert_reason(&result.return_data);
+                            return Err(StateError::ExecutionError(format!("ContractCall reverted: {}", revert_reason)));
+                        }
+                        receipt_logs = result.logs.into_iter().map(|log| Log {
+                            address: log.address,
+                            topics: log.topics,
+                            data: log.data,
+                        }).collect();
                     }
-                    recipient.add_balance(&tx.transaction.amount);
+                    VmKind::Evm => {
+                        let evm_guard = self.evm_engine.read();
+                        let evm = evm_guard.as_ref().ok_or_else(|| {
+                            StateError::ExecutionError("EvmEngine not initialized".to_string())
+                        })?;
+                        let contract_address = tx.transaction.to;
+                        let caller = tx.transaction.from;
+                        let input_data = tx.transaction.data.clone();
+                        if tx.transaction.amount.0 > 0 {
+                            if !sender.sub_balance(&tx.transaction.amount) {
+                                return Err(StateError::InsufficientBalance);
+                            }
+                            recipient.add_balance(&tx.transaction.amount);
+                        }
+                        let out = evm.call(
+                            caller,
+                            contract_address,
+                            tx.transaction.amount.clone(),
+                            input_data,
+                            tx.transaction.max_compute_units,
+                            tx.transaction.chain_id,
+                        ).map_err(|e| StateError::ExecutionError(format!("EVM call failed: {}", e)))?;
+                        if !out.success {
+                            let revert_reason = decode_contract_revert_reason(&out.return_data);
+                            return Err(StateError::ExecutionError(format!("EVM call reverted: {}", revert_reason)));
+                        }
+                        receipt_logs = out.logs.into_iter().map(|log| Log {
+                            address: log.address,
+                            topics: log.topics,
+                            data: log.data,
+                        }).collect();
+                    }
                 }
-                let result = cm.execute_contract(
-                    contract_address,
-                    caller,
-                    input_data,
-                    execution_timestamp,
-                    execution_timestamp, // block_height approximated
-                    chain_id,
-                ).map_err(|e| {
-                    tracing::error!(
-                        "ContractCall VM error: caller={}, contract={}, err={}",
-                        hex::encode(&caller[..8]),
-                        hex::encode(&contract_address[..8]),
-                        e
-                    );
-                    StateError::ExecutionError(format!("ContractCall failed: {}", e))
-                })?;
-                if !result.success {
-                    let revert_reason = if !result.return_data.is_empty() {
-                        decode_contract_revert_reason(&result.return_data)
-                    } else {
-                        // Search debug_messages for a meaningful Solidity revert reason
-                        // (e.g. "Insufficient balance", "Insufficient allowance").
-                        // Skip VM-internal trace lines like "call: seal_*" or "runtime_error:".
-                        result.debug_messages.iter()
-                            .rev()
-                            .map(|m| m.trim().trim_end_matches(','))
-                            .find(|m| {
-                                !m.is_empty()
-                                    && !m.starts_with("call:")
-                                    && !m.starts_with("runtime_error:")
-                            })
-                            .unwrap_or("No revert reason provided")
-                            .to_string()
-                    };
-                    tracing::error!(
-                        "ContractCall reverted: caller={}, contract={}, reason={}, debug_messages={:?}",
-                        hex::encode(&caller[..8]),
-                        hex::encode(&contract_address[..8]),
-                        revert_reason,
-                        result.debug_messages,
-                    );
-                    return Err(StateError::ExecutionError(
-                        format!("ContractCall reverted: {}", revert_reason)
-                    ));
-                }
-                tracing::info!(
-                    "ContractCall OK: caller={}, contract={}, cu_used={}",
-                    hex::encode(&caller[..8]),
-                    hex::encode(&contract_address[..8]),
-                    result.cu_used
-                );
-                receipt_logs = result.logs.into_iter().map(|log| Log {
-                    address: log.address,
-                    topics: log.topics,
-                    data: log.data,
-                }).collect();
             }
             _ => {}
         }

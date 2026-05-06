@@ -1044,6 +1044,49 @@ impl Storage {
         }
     }
 
+    /// Deletes all storage entries for a contract.
+    ///
+    /// Used for EVM SELFDESTRUCT / full contract deletion.
+    pub fn delete_contract_storage_all(&self, contract_address: &Address) -> StorageResult<()> {
+        let cf = self.db.cf_handle(CF_CONTRACT_STORAGE)
+            .ok_or_else(|| StorageError::DatabaseError("CF not found".to_string()))?;
+
+        let prefix = contract_storage_prefix(contract_address);
+        let mut batch = WriteBatch::default();
+
+        // Snapshot to iterate consistently.
+        let snapshot = self.db.snapshot();
+        let mut read_opts = ReadOptions::default();
+        read_opts.set_snapshot(&snapshot);
+
+        let iter = self.db.iterator_cf_opt(
+            &cf,
+            read_opts,
+            IteratorMode::From(&prefix, rocksdb::Direction::Forward),
+        );
+
+        let mut deleted = 0usize;
+        for item in iter {
+            let (key, _value) = item.map_err(|e| StorageError::DatabaseError(e.to_string()))?;
+            if !key.starts_with(&prefix) {
+                break;
+            }
+            batch.delete_cf(&cf, &key);
+            deleted = deleted.saturating_add(1);
+        }
+
+        if deleted == 0 {
+            return Ok(());
+        }
+
+        self.db.write(batch)
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))?;
+
+        // Best-effort: clear cached count (count will be recomputed on restart if needed).
+        self.contract_storage_counts.insert(*contract_address, 0);
+        Ok(())
+    }
+
     // ========================================================================
     // QN8 NFT Collection Storage Methods
     // ========================================================================

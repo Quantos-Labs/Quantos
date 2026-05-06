@@ -73,6 +73,14 @@ pub const DOMAIN_SLASH_EQUIVOC: &[u8] = b"QUANTOS_SLASH_EQ_V1";
 /// Message prefix for invalid-block proposer signatures.
 pub const DOMAIN_SLASH_INVALID_BLOCK: &[u8] = b"QUANTOS_SLASH_IBLOCK_V1";
 
+// ── Network / transport binding (not transaction signatures) ─────────────────
+
+/// Binds a Dilithium public key to a Quantos network PeerId preimage (SHA-256 multihash).
+pub const DOMAIN_PQ_PEER_ID: &[u8] = b"QUANTOS_PQ_PEER_ID_V1";
+
+/// Prefix for Dilithium signatures over PQ-KEM handshake transcripts.
+pub const DOMAIN_PQ_KEM_HANDSHAKE: &[u8] = b"QUANTOS_PQ_KEM_HS_V1";
+
 #[cfg(test)]
 mod tests {
     use super::*;

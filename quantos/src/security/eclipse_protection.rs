@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use libp2p::PeerId;
+use crate::network::PeerId;
 
 /// Configuration for eclipse attack prevention.
 #[derive(Clone, Debug)]

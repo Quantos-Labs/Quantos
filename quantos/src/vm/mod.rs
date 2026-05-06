@@ -29,6 +29,7 @@
 
 pub mod bytecode_protection;
 pub mod runtime;
+pub mod evm;
 pub mod contract;
 pub mod abi;
 pub mod erc_compat;

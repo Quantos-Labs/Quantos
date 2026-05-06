@@ -14,7 +14,9 @@ categories = ["cryptography", "network-programming"]
 pqcrypto-dilithium = "0.5"
 pqcrypto-sphincsplus = "0.7"
 pqcrypto-falcon = "0.3"
+pqcrypto-kyber = "0.8"
 pqcrypto-traits = "0.3"
+hkdf = "0.12"
 
 # zk-STARKs
 winterfell = "0.9"
@@ -46,22 +48,8 @@ snap = "1.1"
 # Storage
 rocksdb = "0.22"
 
-# Networking - Full libp2p with all features
-libp2p = { version = "0.53", features = [
-    "tcp",
-    "quic",
-    "noise",
-    "yamux",
-    "gossipsub",
-    "kad",
-    "identify",
-    "tokio",
-    "macros",
-    "ping",
-    "request-response",
-    "dns",
-    "websocket",
-] }
+# Networking — native PQ P2P (TCP); PeerId base58 / multiaddr strings use bs58
+bs58 = "0.5"
 tokio = { version = "1.35", features = ["full"] }
 
 # RPC
@@ -105,6 +93,9 @@ rs_merkle = "1.4"
 wasmer = "4.2"
 wasmer-compiler-cranelift = "4.2"
 wasmer-middlewares = "4.2"
+# EVM runtime (no ECDSA signing in Quantos core; keep features minimal).
+# `portable` enables a broad set of standard precompiles without pulling secp256k1.
+revm = { version = "38.0.0", default-features = false, features = ["std", "portable"] }
 
 [dev-dependencies]
 criterion = "0.5"

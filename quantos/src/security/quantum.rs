@@ -37,7 +37,7 @@ pub struct QuantumSecurityConfig {
     pub min_hash_bits: u32,
     /// Minimum symmetric key size in bits
     pub min_symmetric_bits: u32,
-    /// Enable hybrid signatures (classical + PQ)
+    /// Hybrid classical + PQ signatures (disabled: Quantos P2P / policy is PQ-only).
     pub hybrid_signatures: bool,
     /// Require multiple signature schemes for critical ops
     pub multi_signature_critical: bool,
@@ -53,7 +53,7 @@ impl Default for QuantumSecurityConfig {
             min_signature_level: 3,           // NIST Level 3 minimum
             min_hash_bits: 256,               // SHA3-256 minimum
             min_symmetric_bits: 256,          // AES-256 equivalent
-            hybrid_signatures: true,          // Classical + PQ
+            hybrid_signatures: false,
             multi_signature_critical: true,   // Dilithium + SPHINCS+ for critical
             key_rotation_interval: Duration::from_secs(86400), // Daily rotation
             quantum_key_exchange: true,       // Use Kyber for key exchange

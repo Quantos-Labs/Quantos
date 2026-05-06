@@ -512,6 +512,7 @@ impl EncryptedMempool {
             nonce,
             max_compute_units,
             boost: None,
+            vm_kind: crate::types::VmKind::Qvm,
             data: tx_data,
             shard_id: 0,
             timestamp: chrono::Utc::now().timestamp() as u64,

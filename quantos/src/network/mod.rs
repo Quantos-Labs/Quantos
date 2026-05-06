@@ -1,16 +1,17 @@
 //! # Quantos Network Layer
 //!
-//! P2P networking with QUIC transport, gossipsub, and Kademlia DHT.
-//!
-//! ## Features
-//!
-//! - **QUIC Transport**: Fast, multiplexed, encrypted connections
-//! - **Gossipsub**: Efficient pub/sub message propagation
-//! - **Kademlia DHT**: Decentralized peer discovery
-//! - **Message Compression**: LZ4/Zstd for bandwidth efficiency
-//! - **Batch Broadcasting**: Efficient multi-message transmission
+//! Native TCP P2P with **full PQ wiring**: Kyber768 handshake + ML-DSA (Dilithium3) mutual auth,
+//! AES-256-GCM transport. No libp2p, no classical TLS identities.
 
+mod peer_id;
+mod address;
+mod peer_manager;
+mod peer_store;
+mod pq_identity_store;
+mod pq_net;
+mod protocol;
 mod p2p;
+mod pq_identity;
 mod gossip;
 mod sync;
 pub mod erasure_coding;
@@ -18,6 +19,11 @@ pub mod turbo_gossip;
 pub mod nat_traversal;
 pub mod bandwidth_scheduler;
 
+pub use address::*;
+pub use peer_id::PeerId;
+pub use peer_manager::PeerManager;
+pub use peer_store::PeerStore;
+pub use protocol::*;
 pub use p2p::*;
 pub use gossip::*;
 pub use sync::*;

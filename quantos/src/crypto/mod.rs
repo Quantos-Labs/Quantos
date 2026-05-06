@@ -35,6 +35,7 @@
 //! ```
 
 mod dilithium;
+mod kyber_kem;
 mod sphincs;
 mod falcon;
 mod vrf;
@@ -59,8 +60,10 @@ pub use domains::{with_domain, DOMAIN_TX, DOMAIN_VERTEX, DOMAIN_COMMITTEE_VOTE,
     DOMAIN_CHECKPOINT, DOMAIN_VIEW_CHANGE, DOMAIN_PIPELINE_VOTE,
     DOMAIN_VRF_PRF, DOMAIN_VRF_OUTPUT, DOMAIN_VRF_PROVE,
     DOMAIN_CSAP_VOTE, DOMAIN_CSAP_ACK,
-    DOMAIN_SLASH_DOUBLE_SIGN, DOMAIN_SLASH_EQUIVOC, DOMAIN_SLASH_INVALID_BLOCK};
+    DOMAIN_SLASH_DOUBLE_SIGN, DOMAIN_SLASH_EQUIVOC, DOMAIN_SLASH_INVALID_BLOCK,
+    DOMAIN_PQ_PEER_ID, DOMAIN_PQ_KEM_HANDSHAKE};
 pub use dilithium::*;
+pub use kyber_kem::*;
 pub use sphincs::*;
 pub use falcon::*;
 pub use vrf::*;
@@ -112,6 +115,10 @@ pub enum CryptoError {
     /// Hash computation error
     #[error("Hash error: {0}")]
     HashError(String),
+
+    /// KEM ciphertext malformed or failed decapsulation
+    #[error("Invalid KEM ciphertext")]
+    InvalidKemCiphertext,
 }
 
 /// Result type for cryptographic operations.

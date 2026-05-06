@@ -304,6 +304,11 @@ async fn main() -> Result<()> {
     state_manager.set_contract_manager(contract_manager.clone());
     info!("✓ ContractManager wired into StateManager (signed deploy/call enabled)");
 
+    // Wire EVM engine into StateManager (EVM-compatible execution, no fees; CU-limited)
+    let evm_engine = std::sync::Arc::new(vm::evm::EvmEngine::new(storage.clone()));
+    state_manager.set_evm_engine(evm_engine);
+    info!("✓ EvmEngine wired into StateManager");
+
     // Initialize RPC server
     let rpc_server = RpcServer::new(
         config.clone(),

@@ -1,99 +1,35 @@
 //! # Quantos P2P Network Layer
 //!
-//! Production-grade P2P networking using libp2p with:
-//! - **QUIC Transport**: Fast, multiplexed connections
-//! - **Gossipsub**: Efficient message propagation
-//! - **Kademlia DHT**: Peer discovery
-//! - **Noise Protocol**: Encrypted handshakes
-//! - **Message Compression**: LZ4/Zstd for bandwidth efficiency
-//!
-//! ## Architecture
-//!
-//! ```text
-//! ┌─────────────────────────────────────────────────────────────┐
-//! │                    Quantos P2P Network                      │
-//! │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-//! │  │  Gossipsub  │  │  Kademlia   │  │  Request-   │        │
-//! │  │  (pubsub)   │  │  (DHT)      │  │  Response   │        │
-//! │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘        │
-//! │         │                │                │                │
-//! │         └────────────────┼────────────────┘                │
-//! │                          │                                 │
-//! │              ┌───────────▼───────────┐                    │
-//! │              │   QUIC Transport      │                    │
-//! │              │   (Noise encrypted)   │                    │
-//! │              └───────────────────────┘                    │
-//! └─────────────────────────────────────────────────────────────┘
-//! ```
+//! Native TCP stack with **full PQ**: Kyber768 KEM + ML-DSA (Dilithium3) handshake,
+//! AES-256-GCM links, Blake3 topic routing. No libp2p / RSA / classical TLS identities.
 
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 /// Maximum cross-shard payload size (10MB)
 const MAX_CROSS_SHARD_PAYLOAD: usize = 10 * 1024 * 1024;
-/// Minimum reasonable peer count
-const MIN_PEER_COUNT: usize = 1;
-/// Maximum reasonable peer count
-const MAX_PEER_COUNT: usize = 10_000;
 /// Maximum seen messages cache entries to prevent memory exhaustion
 const MAX_SEEN_MESSAGES: usize = 1_000_000;
 
-use libp2p::{
-    Multiaddr, PeerId,
-    gossipsub::{IdentTopic, TopicHash},
-};
 use tokio::sync::mpsc;
 use parking_lot::RwLock;
 use dashmap::DashMap;
 
 use crate::consensus::QuantosConsensus;
-use crate::network::{NetworkError, NetworkResult};
+use crate::crypto::KemKeypair;
+use crate::network::address::parse_quantos_multiaddr;
+use crate::network::pq_identity::peer_id_from_dilithium_public_key;
+use crate::network::pq_net::{run_quantos_pq_p2p, PqCommand};
+use crate::network::protocol::{
+    core_subscription_topics, topic_hash, CrossShardNetworkMessage, NetworkMessage, NetworkMetrics,
+    P2PConfig, PeerInfo, SyncRequest, topics, TopicHash,
+};
+use crate::network::{NetworkError, NetworkResult, PeerId, PeerManager, PeerStore};
 use crate::types::{CommitteeVote, DAGVertex, Hash, ShardId, SignedTransaction};
 use crate::NodeConfig;
-
-/// P2P network configuration.
-#[derive(Clone, Debug)]
-pub struct P2PConfig {
-    /// Maximum number of peers
-    pub max_peers: usize,
-    /// Target number of peers to maintain
-    pub target_peers: usize,
-    /// Gossipsub mesh size
-    pub mesh_n: usize,
-    /// Gossipsub mesh low watermark
-    pub mesh_n_low: usize,
-    /// Gossipsub mesh high watermark
-    pub mesh_n_high: usize,
-    /// Message cache TTL in seconds
-    pub message_cache_ttl: u64,
-    /// Enable message compression
-    pub compression_enabled: bool,
-    /// Ping interval in seconds
-    pub ping_interval: u64,
-    /// Connection timeout in seconds
-    pub connection_timeout: u64,
-    /// Bootstrap nodes
-    pub bootstrap_nodes: Vec<String>,
-}
-
-impl Default for P2PConfig {
-    fn default() -> Self {
-        Self {
-            max_peers: 100,
-            target_peers: 50,
-            mesh_n: 8,
-            mesh_n_low: 4,
-            mesh_n_high: 12,
-            message_cache_ttl: 120,
-            compression_enabled: true,
-            ping_interval: 30,
-            connection_timeout: 30,
-            bootstrap_nodes: Vec::new(),
-        }
-    }
-}
 
 /// Main P2P network structure for Quantos.
 ///
@@ -109,12 +45,12 @@ pub struct P2PNetwork {
     p2p_config: P2PConfig,
     /// Consensus engine reference
     consensus: QuantosConsensus,
-    /// Local peer ID
+    /// Canonical Quantos [`PeerId`] (ML-DSA / Dilithium-derived).
     local_peer_id: PeerId,
-    /// Local keypair (Ed25519 for libp2p transport only)
-    local_key: libp2p::identity::Keypair,
-    /// Post-quantum keypair for application-layer signatures (Dilithium)
+    /// Dilithium keypair for consensus / protocol signatures
     pq_keypair: crate::crypto::DilithiumKeypair,
+    /// Kyber768 keypair for PQ encapsulated session secrets toward this node
+    kem_keypair: KemKeypair,
     /// Connected peers with metadata
     connected_peers: Arc<DashMap<PeerId, PeerInfo>>,
     /// Outgoing message channel
@@ -123,7 +59,7 @@ pub struct P2PNetwork {
     message_rx: Arc<RwLock<mpsc::Receiver<NetworkMessage>>>,
     /// Compression enabled flag
     compression_enabled: bool,
-    /// Subscribed topics
+    /// Subscribed gossip topics (Blake3 digests).
     subscribed_topics: Arc<RwLock<HashSet<TopicHash>>>,
     /// Message deduplication cache
     seen_messages: Arc<DashMap<Hash, u64>>,
@@ -131,177 +67,10 @@ pub struct P2PNetwork {
     metrics: Arc<RwLock<NetworkMetrics>>,
     /// Peer manager
     peer_manager: Arc<PeerManager>,
-}
-
-/// Information about a connected peer.
-#[derive(Clone, Debug)]
-pub struct PeerInfo {
-    /// Peer ID
-    pub peer_id: PeerId,
-    /// Connection address
-    pub addr: Option<String>,
-    /// Protocol version
-    pub protocol_version: String,
-    /// Agent version
-    pub agent_version: String,
-    /// Supported protocols
-    pub protocols: Vec<String>,
-    /// Connection timestamp
-    pub connected_at: u64,
-    /// Last message timestamp
-    pub last_seen: u64,
-    /// Latency in milliseconds
-    pub latency_ms: u64,
-    /// Messages received from this peer
-    pub messages_received: u64,
-    /// Messages sent to this peer
-    pub messages_sent: u64,
-    /// Peer reputation score
-    pub reputation: i32,
-    /// Shards this peer is interested in
-    pub subscribed_shards: HashSet<ShardId>,
-}
-
-impl PeerInfo {
-    /// Creates a new peer info with default values.
-    pub fn new(peer_id: PeerId) -> Self {
-        Self {
-            peer_id,
-            addr: None,
-            protocol_version: String::new(),
-            agent_version: String::new(),
-            protocols: Vec::new(),
-            connected_at: chrono::Utc::now().timestamp() as u64,
-            last_seen: chrono::Utc::now().timestamp() as u64,
-            latency_ms: 0,
-            messages_received: 0,
-            messages_sent: 0,
-            reputation: 100,
-            subscribed_shards: HashSet::new(),
-        }
-    }
-}
-
-/// Network message types.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum NetworkMessage {
-    /// New transaction to propagate
-    NewTransaction(SignedTransaction),
-    /// New DAG vertex
-    NewVertex(DAGVertex),
-    /// Committee vote
-    NewVote(CommitteeVote),
-    /// Batch of transactions
-    TransactionBatch(Vec<SignedTransaction>),
-    /// Sync request
-    SyncRequest(SyncRequest),
-    /// Sync response
-    SyncResponse(SyncResponse),
-    /// Checkpoint announcement
-    CheckpointAnnouncement(crate::types::Checkpoint),
-    /// Cross-shard message
-    CrossShard(CrossShardNetworkMessage),
-    /// Peer discovery request
-    DiscoveryRequest,
-    /// Peer discovery response  
-    DiscoveryResponse(Vec<String>),
-}
-
-/// Cross-shard network message.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct CrossShardNetworkMessage {
-    /// Source shard
-    pub source_shard: ShardId,
-    /// Destination shard
-    pub dest_shard: ShardId,
-    /// Message payload (compressed)
-    pub payload: Vec<u8>,
-    /// Message hash for deduplication
-    pub hash: Hash,
-}
-
-/// Sync request parameters.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct SyncRequest {
-    /// Starting slot
-    pub from_slot: u64,
-    /// Ending slot
-    pub to_slot: u64,
-    /// Specific shard (None for all)
-    pub shard_id: Option<u16>,
-    /// Request batch size
-    pub batch_size: u32,
-}
-
-/// Sync response data.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct SyncResponse {
-    /// DAG vertices
-    pub vertices: Vec<DAGVertex>,
-    /// Latest checkpoint if available
-    pub checkpoint: Option<crate::types::Checkpoint>,
-    /// Has more data to sync
-    pub has_more: bool,
-    /// Next slot to request
-    pub next_slot: u64,
-}
-
-/// Network metrics.
-#[derive(Clone, Debug, Default)]
-pub struct NetworkMetrics {
-    /// Total messages sent
-    pub messages_sent: u64,
-    /// Total messages received
-    pub messages_received: u64,
-    /// Total bytes sent
-    pub bytes_sent: u64,
-    /// Total bytes received
-    pub bytes_received: u64,
-    /// Bytes saved by compression
-    pub compression_savings: u64,
-    /// Current peer count
-    pub peer_count: usize,
-    /// Average latency in ms
-    pub avg_latency_ms: u64,
-    /// Messages dropped (dedup)
-    pub messages_dropped: u64,
-    /// Active subscriptions
-    pub active_subscriptions: usize,
-    /// Total connections established
-    pub connections_established: u64,
-    /// Total connections failed
-    pub connections_failed: u64,
-}
-
-/// Topic names for Quantos gossipsub.
-pub mod topics {
-    /// Global transaction topic
-    pub const TRANSACTIONS: &str = "/quantos/tx/1.0.0";
-    /// Global vertex topic
-    pub const VERTICES: &str = "/quantos/vertex/1.0.0";
-    /// Global votes topic
-    pub const VOTES: &str = "/quantos/vote/1.0.0";
-    /// Checkpoint announcements
-    pub const CHECKPOINTS: &str = "/quantos/checkpoint/1.0.0";
-    /// Cross-shard messages
-    pub const CROSS_SHARD: &str = "/quantos/xshard/1.0.0";
-    /// Peer discovery
-    pub const DISCOVERY: &str = "/quantos/discovery/1.0.0";
-    
-    /// Returns shard-specific transaction topic.
-    pub fn shard_tx(shard_id: u16) -> String {
-        format!("/quantos/shard/{}/tx/1.0.0", shard_id)
-    }
-    
-    /// Returns shard-specific vertex topic.
-    pub fn shard_vertex(shard_id: u16) -> String {
-        format!("/quantos/shard/{}/vertex/1.0.0", shard_id)
-    }
-    
-    /// Returns committee-specific topic.
-    pub fn committee(committee_id: u16) -> String {
-        format!("/quantos/committee/{}/1.0.0", committee_id)
-    }
+    peer_store: Arc<PeerStore>,
+    pq_cmd: mpsc::Sender<PqCommand>,
+    /// Last discovery broadcast (unix millis), for prod gossip fan-out throttling.
+    last_discovery_broadcast_ms: Arc<AtomicU64>,
 }
 
 impl P2PNetwork {
@@ -317,53 +86,92 @@ impl P2PNetwork {
     /// Initialized P2P network ready to run
     pub async fn new(config: NodeConfig, consensus: QuantosConsensus) -> NetworkResult<Self> {
         let (message_tx, message_rx) = mpsc::channel(100_000);
+        let (pq_cmd, pq_rx) = mpsc::channel::<PqCommand>(4096);
 
-        // Generate post-quantum identity using Dilithium
-        // Derive a deterministic seed from Dilithium keypair for libp2p compatibility
-        // Note: libp2p transport uses this for connection encryption, but our 
-        // application-layer signatures all use Dilithium (post-quantum)
-        let dilithium_keypair = crate::crypto::DilithiumKeypair::generate()
-            .map_err(|e| NetworkError::ConnectionFailed(format!("Key generation failed: {}", e)))?;
-        
-        // Hash the Dilithium public key to derive a seed for libp2p identity
-        // This ensures peer identity is bound to our post-quantum key
-        let identity_seed = crate::crypto::sha3_256(&dilithium_keypair.public_key);
-        let local_key = libp2p::identity::Keypair::ed25519_from_bytes(identity_seed)
-            .unwrap_or_else(|_| libp2p::identity::Keypair::generate_ed25519());
-        let local_peer_id = PeerId::from(local_key.public());
-        
-        tracing::info!("Quantos P2P initialized with peer ID: {} (PQ-secured)", local_peer_id);
+        let mut p2p_config = P2PConfig::default();
+        p2p_config.merge_bootstrap_from_env();
 
-        let p2p_config = P2PConfig::default();
         let peer_manager = Arc::new(PeerManager::new(p2p_config.max_peers)?);
+        let peer_store = Arc::new(PeerStore::load_or_create(&config.db_path)?);
+        peer_manager.load_banned(peer_store.banned_peers());
+
+        let (dilithium_keypair, kem_keypair) =
+            crate::network::pq_identity_store::load_or_create_identity(&config.db_path)?;
+
+        let quantos_peer_id = peer_id_from_dilithium_public_key(&dilithium_keypair.public_key);
+
+        let connected_peers = Arc::new(DashMap::new());
+        let metrics = Arc::new(RwLock::new(NetworkMetrics::default()));
+        let bootstrap = p2p_config.bootstrap_nodes.clone();
+        let listen_port = config.p2p_port;
+        let dispatch_tx = message_tx.clone();
+        let cp = Arc::clone(&connected_peers);
+        let met = Arc::clone(&metrics);
+        let subscribed_topics = Arc::new(RwLock::new(core_subscription_topics()));
+        let sub_runtime = Arc::clone(&subscribed_topics);
+
+        let dil_spawn = dilithium_keypair.clone();
+        let kem_spawn = kem_keypair.clone();
+        let peer_mgr_rt = Arc::clone(&peer_manager);
+        tokio::spawn(async move {
+            run_quantos_pq_p2p(
+                listen_port,
+                bootstrap,
+                dil_spawn,
+                kem_spawn,
+                pq_rx,
+                dispatch_tx,
+                cp,
+                met,
+                sub_runtime,
+                peer_mgr_rt,
+                p2p_config.mesh_n,
+            )
+            .await;
+        });
+
+        tracing::info!(
+            "Quantos PQ P2P listening on :{} peer={}",
+            listen_port,
+            quantos_peer_id
+        );
 
         Ok(Self {
             config,
             p2p_config,
             consensus,
-            local_peer_id,
-            local_key,
+            local_peer_id: quantos_peer_id,
             pq_keypair: dilithium_keypair,
-            connected_peers: Arc::new(DashMap::new()),
+            kem_keypair,
+            connected_peers,
             message_tx,
             message_rx: Arc::new(RwLock::new(message_rx)),
             compression_enabled: true,
-            subscribed_topics: Arc::new(RwLock::new(HashSet::new())),
+            subscribed_topics,
             seen_messages: Arc::new(DashMap::new()),
-            metrics: Arc::new(RwLock::new(NetworkMetrics::default())),
+            metrics,
             peer_manager,
+            peer_store,
+            pq_cmd,
+            last_discovery_broadcast_ms: Arc::new(AtomicU64::new(0)),
         })
     }
 
-    /// Runs the P2P network event loop.
-    ///
-    /// This starts all network services:
-    /// - Gossipsub for message propagation
-    /// - Kademlia for peer discovery
-    /// - Request-response for direct communication
+    async fn gossip_publish(&self, topic_str: &str, msg: &NetworkMessage) -> NetworkResult<()> {
+        let payload =
+            bincode::serialize(msg).map_err(|e| NetworkError::SerializationError(e.to_string()))?;
+        let topic = topic_hash(topic_str);
+        self.pq_cmd
+            .send(PqCommand::Publish { topic, payload })
+            .await
+            .map_err(|_| NetworkError::ConnectionFailed("PQ P2P task stopped".into()))?;
+        Ok(())
+    }
+
+    /// Runs the P2P network event loop (PQ TCP gossip + periodic discovery).
     pub async fn run(&self) -> NetworkResult<()> {
         tracing::info!(
-            "Starting Quantos P2P network on port {} (QUIC enabled)",
+            "Starting Quantos PQ P2P network on port {}",
             self.config.p2p_port
         );
 
@@ -399,12 +207,12 @@ impl P2PNetwork {
             topics::CHECKPOINTS,
             topics::CROSS_SHARD,
             topics::DISCOVERY,
+            topics::SYNC,
         ];
 
         let mut subscribed = self.subscribed_topics.write();
         for topic_str in core_topics {
-            let topic = IdentTopic::new(topic_str);
-            subscribed.insert(topic.hash());
+            subscribed.insert(topic_hash(topic_str));
             tracing::debug!("Subscribed to topic: {}", topic_str);
         }
 
@@ -414,12 +222,9 @@ impl P2PNetwork {
 
     /// Subscribes to shard-specific topics.
     pub async fn subscribe_to_shard(&self, shard_id: ShardId) -> NetworkResult<()> {
-        let tx_topic = IdentTopic::new(topics::shard_tx(shard_id));
-        let vertex_topic = IdentTopic::new(topics::shard_vertex(shard_id));
-
         let mut subscribed = self.subscribed_topics.write();
-        subscribed.insert(tx_topic.hash());
-        subscribed.insert(vertex_topic.hash());
+        subscribed.insert(topic_hash(&topics::shard_tx(shard_id)));
+        subscribed.insert(topic_hash(&topics::shard_vertex(shard_id)));
 
         tracing::debug!("Subscribed to shard {} topics", shard_id);
         Ok(())
@@ -436,13 +241,12 @@ impl P2PNetwork {
         }
         self.seen_messages.insert(tx.hash, chrono::Utc::now().timestamp() as u64);
 
-        // Update metrics
-        self.metrics.write().messages_sent += 1;
-
-        // Send to message channel for processing
-        self.message_tx.send(NetworkMessage::NewTransaction(tx)).await
+        let msg = NetworkMessage::NewTransaction(tx);
+        self.message_tx.send(msg.clone()).await
             .map_err(|e| NetworkError::IoError(e.to_string()))?;
+        self.gossip_publish(topics::TRANSACTIONS, &msg).await?;
 
+        self.metrics.write().messages_sent += 1;
         Ok(())
     }
 
@@ -470,8 +274,10 @@ impl P2PNetwork {
             return Ok(());
         }
 
-        self.message_tx.send(NetworkMessage::TransactionBatch(new_txs)).await
+        let msg = NetworkMessage::TransactionBatch(new_txs);
+        self.message_tx.send(msg.clone()).await
             .map_err(|e| NetworkError::IoError(e.to_string()))?;
+        self.gossip_publish(topics::TRANSACTIONS, &msg).await?;
 
         Ok(())
     }
@@ -483,8 +289,10 @@ impl P2PNetwork {
         }
         self.seen_messages.insert(vertex.hash, chrono::Utc::now().timestamp() as u64);
 
-        self.message_tx.send(NetworkMessage::NewVertex(vertex)).await
+        let msg = NetworkMessage::NewVertex(vertex);
+        self.message_tx.send(msg.clone()).await
             .map_err(|e| NetworkError::IoError(e.to_string()))?;
+        self.gossip_publish(topics::VERTICES, &msg).await?;
 
         self.metrics.write().messages_sent += 1;
         Ok(())
@@ -492,8 +300,10 @@ impl P2PNetwork {
 
     /// Broadcasts a committee vote.
     pub async fn broadcast_vote(&self, vote: CommitteeVote) -> NetworkResult<()> {
-        self.message_tx.send(NetworkMessage::NewVote(vote)).await
+        let msg = NetworkMessage::NewVote(vote);
+        self.message_tx.send(msg.clone()).await
             .map_err(|e| NetworkError::IoError(e.to_string()))?;
+        self.gossip_publish(topics::VOTES, &msg).await?;
 
         self.metrics.write().messages_sent += 1;
         Ok(())
@@ -501,8 +311,10 @@ impl P2PNetwork {
 
     /// Broadcasts a checkpoint announcement.
     pub async fn broadcast_checkpoint(&self, checkpoint: crate::types::Checkpoint) -> NetworkResult<()> {
-        self.message_tx.send(NetworkMessage::CheckpointAnnouncement(checkpoint)).await
+        let msg = NetworkMessage::CheckpointAnnouncement(checkpoint);
+        self.message_tx.send(msg.clone()).await
             .map_err(|e| NetworkError::IoError(e.to_string()))?;
+        self.gossip_publish(topics::CHECKPOINTS, &msg).await?;
 
         self.metrics.write().messages_sent += 1;
         Ok(())
@@ -531,8 +343,10 @@ impl P2PNetwork {
             hash,
         };
 
-        self.message_tx.send(NetworkMessage::CrossShard(msg)).await
+        let nm = NetworkMessage::CrossShard(msg);
+        self.message_tx.send(nm.clone()).await
             .map_err(|e| NetworkError::IoError(e.to_string()))?;
+        self.gossip_publish(topics::CROSS_SHARD, &nm).await?;
 
         Ok(())
     }
@@ -555,6 +369,24 @@ impl P2PNetwork {
         &self.pq_keypair.public_key
     }
 
+    /// Kyber768 public key for PQ-KEM session establishment with peers.
+    pub fn kem_public_key(&self) -> &[u8] {
+        self.kem_keypair.public_key_slice()
+    }
+
+    /// Encapsulate a shared secret to a peer's Kyber public key (initiator side).
+    pub fn pq_encapsulate_to(&self, peer_kem_pk: &[u8]) -> NetworkResult<(Vec<u8>, Vec<u8>)> {
+        KemKeypair::encapsulate(peer_kem_pk)
+            .map_err(|e| NetworkError::InvalidMessage(format!("Kyber encapsulate failed: {}", e)))
+    }
+
+    /// Decapsulate a ciphertext addressed to this node's Kyber secret key (responder side).
+    pub fn pq_decapsulate_incoming(&self, ciphertext: &[u8]) -> NetworkResult<Vec<u8>> {
+        self.kem_keypair
+            .decapsulate(ciphertext)
+            .map_err(|e| NetworkError::InvalidMessage(format!("Kyber decapsulate failed: {}", e)))
+    }
+
     /// Requests sync from peers.
     pub async fn request_sync(&self, from_slot: u64, to_slot: u64, shard_id: Option<u16>) -> NetworkResult<()> {
         let request = SyncRequest {
@@ -564,8 +396,10 @@ impl P2PNetwork {
             batch_size: 100,
         };
 
-        self.message_tx.send(NetworkMessage::SyncRequest(request)).await
+        let msg = NetworkMessage::SyncRequest(request);
+        self.message_tx.send(msg.clone()).await
             .map_err(|e| NetworkError::IoError(e.to_string()))?;
+        self.gossip_publish(topics::SYNC, &msg).await?;
 
         Ok(())
     }
@@ -690,20 +524,22 @@ impl P2PNetwork {
                 self.metrics.write().messages_received += 1;
             }
             NetworkMessage::DiscoveryRequest => {
-                // Respond with known peers
-                let peers: Vec<String> = self.connected_peers
+                let peers: Vec<String> = self
+                    .connected_peers
                     .iter()
                     .filter_map(|entry| entry.value().addr.as_ref().map(|a| a.to_string()))
-                    .take(20)
+                    .take(32)
                     .collect();
-                tracing::debug!("Discovery request: returning {} peers", peers.len());
+                tracing::debug!("Discovery request: gossip {} peer addrs", peers.len());
                 self.metrics.write().messages_received += 1;
+                let resp = NetworkMessage::DiscoveryResponse(peers);
+                let _ = self.gossip_publish(topics::DISCOVERY, &resp).await;
             }
             NetworkMessage::DiscoveryResponse(addrs) => {
                 // Process discovered peers
                 for addr_str in addrs {
-                    if let Ok(addr) = addr_str.parse::<Multiaddr>() {
-                        let _ = self.connect_to_peer(addr).await;
+                    if let Err(e) = self.connect_to_peer(addr_str.trim()).await {
+                        tracing::debug!(target: "quantos_network", "discovery connect skipped: {}", e);
                     }
                 }
                 self.metrics.write().messages_received += 1;
@@ -714,16 +550,30 @@ impl P2PNetwork {
     /// Maintains peer connections.
     async fn maintain_peers(&self) {
         let peer_count = self.connected_peers.len();
-        
-        if peer_count < self.p2p_config.target_peers {
+
+        let interval_ms: u64 = std::env::var("QUANTOS_DISCOVERY_INTERVAL_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(60_000);
+
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+        let last = self
+            .last_discovery_broadcast_ms
+            .load(Ordering::Relaxed);
+
+        if peer_count < self.p2p_config.target_peers && now.saturating_sub(last) >= interval_ms {
+            self.last_discovery_broadcast_ms
+                .store(now, Ordering::Relaxed);
+            let _ = self
+                .gossip_publish(topics::DISCOVERY, &NetworkMessage::DiscoveryRequest)
+                .await;
             tracing::debug!(
-                "Peer count ({}) below target ({}), discovering more peers",
+                "PQ discovery ping (peers {} / target {})",
                 peer_count,
                 self.p2p_config.target_peers
             );
         }
 
-        // Update metrics
         self.metrics.write().peer_count = peer_count;
     }
 
@@ -803,72 +653,37 @@ impl P2PNetwork {
         })
     }
 
-    /// Connects to a peer by multiaddr.
-    /// 
-    /// Establishes a connection using the libp2p swarm and registers the peer.
-    pub async fn connect_to_peer(&self, addr: Multiaddr) -> NetworkResult<()> {
+    /// Dials a peer over PQ TCP. `addr` must be `/ip4|ip6/.../tcp/PORT/p2p/<PeerId>`.
+    pub async fn connect_to_peer(&self, addr: &str) -> NetworkResult<()> {
         tracing::info!("Connecting to peer: {}", addr);
-        
-        // Validate address format
-        if addr.iter().count() < 2 {
-            return Err(NetworkError::InvalidAddress(
-                "Multiaddr must contain at least protocol and address".into()
-            ));
-        }
-        
-        // Check connection limits
+
         if self.connected_peers.len() >= self.p2p_config.max_peers {
             tracing::warn!("Connection rejected: max peers ({}) reached", self.p2p_config.max_peers);
             return Err(NetworkError::ConnectionFailed(
-                "Maximum peer limit reached".into()
+                "Maximum peer limit reached".into(),
             ));
         }
-        
-        // Extract peer ID from multiaddr if present
-        let peer_id = addr.iter()
-            .find_map(|proto| {
-                if let libp2p::multiaddr::Protocol::P2p(peer_id) = proto {
-                    Some(peer_id)
-                } else {
-                    None
-                }
-            });
-        
-        // If no peer ID in address, we need to dial and discover it
-        let target_peer_id = match peer_id {
-            Some(id) => id,
-            None => {
-                // Generate temporary peer ID for tracking - will be updated on connect
-                tracing::debug!("No peer ID in address, will discover on connection");
-                // For now, return early - real connection will happen via swarm dial
-                return Ok(());
-            }
-        };
-        
-        // Check if already connected
-        if self.connected_peers.contains_key(&target_peer_id) {
-            tracing::debug!("Already connected to peer: {}", target_peer_id);
+
+        let target = parse_quantos_multiaddr(addr)?;
+
+        if self.peer_manager.is_banned(&target.peer_id) {
+            return Err(NetworkError::PeerBanned(target.peer_id.to_string()));
+        }
+
+        if self.connected_peers.contains_key(&target.peer_id) {
+            tracing::debug!("Already connected to peer: {}", target.peer_id);
             return Ok(());
         }
-        
-        // Create peer info and register
-        let mut peer_info = PeerInfo::new(target_peer_id);
-        peer_info.addr = Some(addr.to_string());
-        
-        // Add to connected peers (connection will be established by swarm)
-        self.connected_peers.insert(target_peer_id, peer_info);
-        self.peer_manager.add_peer(target_peer_id);
-        
-        // Update metrics
-        self.metrics.write().peer_count = self.connected_peers.len();
-        self.metrics.write().connections_established += 1;
-        
-        tracing::info!(
-            "Peer registered: {} (total: {})", 
-            target_peer_id, 
-            self.connected_peers.len()
-        );
-        
+
+        self.pq_cmd
+            .send(PqCommand::Dial {
+                socket: target.socket,
+                expected_peer: target.peer_id,
+            })
+            .await
+            .map_err(|_| NetworkError::ConnectionFailed("PQ P2P task stopped".into()))?;
+
+        tracing::info!("PQ dial queued for {} ({})", target.peer_id, addr);
         Ok(())
     }
 
@@ -921,6 +736,8 @@ impl P2PNetwork {
         tracing::warn!("Banning peer {} for: {}", peer_id, reason);
         self.connected_peers.remove(&peer_id);
         self.peer_manager.ban_peer(peer_id);
+        let _ = self.peer_store.ban(peer_id);
+        let _ = self.pq_cmd.try_send(PqCommand::Disconnect { peer_id });
         Ok(())
     }
 
@@ -929,7 +746,7 @@ impl P2PNetwork {
         self.connected_peers.len()
     }
 
-    /// Returns the local peer ID.
+    /// Returns the canonical Quantos peer ID (ML-DSA / Dilithium-derived).
     pub fn local_peer_id(&self) -> PeerId {
         self.local_peer_id
     }
@@ -974,63 +791,5 @@ impl P2PNetwork {
             }
         }
         Ok(())
-    }
-}
-
-pub struct PeerManager {
-    peers: Arc<RwLock<HashSet<PeerId>>>,
-    max_peers: usize,
-    banned_peers: Arc<RwLock<HashSet<PeerId>>>,
-}
-
-impl PeerManager {
-    pub fn new(max_peers: usize) -> Result<Self, NetworkError> {
-        // CRITICAL: Validate peer count limits — return error instead of silent adjustment
-        if max_peers < MIN_PEER_COUNT {
-            return Err(NetworkError::InvalidMessage(
-                format!("max_peers {} below minimum {}", max_peers, MIN_PEER_COUNT)
-            ));
-        }
-        if max_peers > MAX_PEER_COUNT {
-            return Err(NetworkError::InvalidMessage(
-                format!("max_peers {} above maximum {}", max_peers, MAX_PEER_COUNT)
-            ));
-        }
-        
-        Ok(Self {
-            peers: Arc::new(RwLock::new(HashSet::new())),
-            max_peers,
-            banned_peers: Arc::new(RwLock::new(HashSet::new())),
-        })
-    }
-
-    pub fn add_peer(&self, peer_id: PeerId) -> bool {
-        if self.banned_peers.read().contains(&peer_id) {
-            return false;
-        }
-
-        let mut peers = self.peers.write();
-        if peers.len() >= self.max_peers {
-            return false;
-        }
-
-        peers.insert(peer_id)
-    }
-
-    pub fn remove_peer(&self, peer_id: &PeerId) {
-        self.peers.write().remove(peer_id);
-    }
-
-    pub fn ban_peer(&self, peer_id: PeerId) {
-        self.remove_peer(&peer_id);
-        self.banned_peers.write().insert(peer_id);
-    }
-
-    pub fn is_banned(&self, peer_id: &PeerId) -> bool {
-        self.banned_peers.read().contains(peer_id)
-    }
-
-    pub fn peer_count(&self) -> usize {
-        self.peers.read().len()
     }
 }

@@ -16,6 +16,21 @@ pub enum TransactionType {
     ContractDeploy,
 }
 
+/// Execution engine for contract transactions.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum VmKind {
+    /// Quantos native WASM VM (QVM).
+    Qvm,
+    /// Ethereum Virtual Machine (EVM) compatible execution.
+    Evm,
+}
+
+impl Default for VmKind {
+    fn default() -> Self {
+        Self::Qvm
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transaction {
     pub tx_type: TransactionType,
@@ -28,6 +43,9 @@ pub struct Transaction {
     /// Optional priority boost lock (STACC). Tokens are never burned.
     #[serde(default)]
     pub boost: Option<PriorityBoost>,
+    /// VM selector (relevant for ContractDeploy/ContractCall). Defaults to QVM.
+    #[serde(default)]
+    pub vm_kind: VmKind,
     pub data: Vec<u8>,
     pub shard_id: ShardId,
     pub timestamp: u64,
@@ -57,6 +75,32 @@ impl Transaction {
         data: Vec<u8>,
         shard_id: ShardId,
     ) -> Self {
+        Self::new_with_vm_kind(
+            tx_type,
+            from,
+            to,
+            amount,
+            nonce,
+            max_compute_units,
+            boost,
+            VmKind::Qvm,
+            data,
+            shard_id,
+        )
+    }
+
+    pub fn new_with_vm_kind(
+        tx_type: TransactionType,
+        from: Address,
+        to: Address,
+        amount: Amount,
+        nonce: u64,
+        max_compute_units: u64,
+        boost: Option<PriorityBoost>,
+        vm_kind: VmKind,
+        data: Vec<u8>,
+        shard_id: ShardId,
+    ) -> Self {
         Self {
             tx_type,
             from,
@@ -65,6 +109,7 @@ impl Transaction {
             nonce,
             max_compute_units,
             boost,
+            vm_kind,
             data,
             shard_id,
             timestamp: chrono::Utc::now().timestamp() as u64,
@@ -94,6 +139,7 @@ impl Transaction {
             msg.extend_from_slice(&0u64.to_le_bytes());
             msg.extend_from_slice(&0u64.to_le_bytes());
         }
+        msg.extend_from_slice(&[self.vm_kind as u8]);
         msg.extend_from_slice(&self.data);
         msg.extend_from_slice(&self.shard_id.to_le_bytes());
         msg.extend_from_slice(&self.timestamp.to_le_bytes());
