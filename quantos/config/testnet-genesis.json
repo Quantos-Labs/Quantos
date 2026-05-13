@@ -9,6 +9,8 @@
     "min_gas_price": 0,
     "max_gas_per_tx": 0,
     "max_gas_per_block": 0,
+    "max_cu_per_tx": 100000000,
+    "block_cu_limit": 30000000,
     "min_validator_stake": 10000000000000000000000,
     "max_validators_per_committee": 21,
     "initial_shards": 4,

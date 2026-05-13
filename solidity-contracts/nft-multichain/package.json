@@ -1,0 +1,25 @@
+{
+  "name": "@quantos/nft-multichain-contracts",
+  "version": "1.0.0",
+  "description": "Multichain NFT marketplace contracts for Base, Arbitrum, BSC, Polygon, HyperEVM",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:base-testnet": "hardhat run scripts/deploy.ts --network baseTestnet",
+    "deploy:arbitrum-testnet": "hardhat run scripts/deploy.ts --network arbitrumTestnet",
+    "deploy:bsc-testnet": "hardhat run scripts/deploy.ts --network bscTestnet",
+    "deploy:polygon-testnet": "hardhat run scripts/deploy.ts --network polygonTestnet",
+    "deploy:hyperevm-testnet": "hardhat run scripts/deploy.ts --network hyperevmTestnet",
+    "deploy:localhost": "hardhat run scripts/deploy.ts --network localhost",
+    "verify:base": "hardhat verify --network baseTestnet",
+    "verify:arbitrum": "hardhat verify --network arbitrumTestnet",
+    "verify:bsc": "hardhat verify --network bscTestnet",
+    "verify:polygon": "hardhat verify --network polygonTestnet"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@openzeppelin/contracts": "^5.0.1",
+    "hardhat": "^2.19.0",
+    "typescript": "^5.3.0"
+  }
+}

@@ -1,0 +1,26 @@
+# Anchor
+.anchor
+target/
+**/*.rs.bk
+test-ledger/
+
+# IDL
+*.json
+
+# Build artifacts
+*.so
+*.bin
+
+# Node
+node_modules/
+yarn-error.log
+
+# Typescript
+*.tsbuildinfo
+
+# OS
+.DS_Store
+
+# Environment
+.env
+.env.local
