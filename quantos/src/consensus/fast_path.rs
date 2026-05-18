@@ -124,8 +124,8 @@ impl FastPath {
         secret_key: &[u8],
         public_key: &[u8],
     ) -> ConsensusResult<DAGVertex> {
-        // Get transactions with priority sorting already done by mempool
-        let transactions = self.mempool.get_pending_for_shard(shard_id, 10000);
+        // DAG-native selection: pull a nonce-ready conflict-minimized antichain.
+        let transactions = self.mempool.get_ready_antichain_for_shard(shard_id, 10000);
         
         if transactions.is_empty() {
             return Err(ConsensusError::InvalidVertex("No transactions".to_string()));

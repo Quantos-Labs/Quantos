@@ -28,7 +28,7 @@ use crate::stacc::{ActivationLedger, ACTIVATION_DEPOSIT, QuotaManager};
 use crate::stacc::quota::{StakeProvider, AncienneteProvider};
 use crate::stacc::mempool::StaccAdmission;
 use crate::types::{
-    Address, Hash, ShardId, SignedTransaction,
+    Address, Hash, ShardId, SignedTransaction, hash_data,
 };
 
 use thiserror::Error;
@@ -62,6 +62,8 @@ pub struct Mempool {
     insert_lock: Arc<Mutex<()>>,
     /// STACC admission + WFQ ordering per shard mempool instance.
     stacc: Arc<Mutex<StaccAdmission<ZeroStakeProvider, FixedAgeProvider>>>,
+    /// Whether STACC must see sender as activated before admitting tx.
+    stacc_require_activation: bool,
 }
 
 #[derive(Clone)]
@@ -78,11 +80,16 @@ impl AncienneteProvider for FixedAgeProvider {
 }
 
 impl Mempool {
-    pub fn new(state_manager: StateManager, max_size: usize) -> Self {
+    pub fn new(state_manager: StateManager, max_size: usize, stacc_require_activation: bool) -> Self {
         let (tx_sender, tx_receiver) = bounded(10000);
         let activation = ActivationLedger::default();
         let quota = QuotaManager::new(ZeroStakeProvider, FixedAgeProvider);
-        let stacc = StaccAdmission::new(activation, quota);
+        let stacc = if stacc_require_activation {
+            StaccAdmission::new_with_policy(activation, quota, true, true)
+        } else {
+            // Testnet/devnet QTEST-only mode: no activation deposit and no CU quota gate.
+            StaccAdmission::new_with_policy(activation, quota, false, false)
+        };
         
         Self {
             pending: Arc::new(DashMap::new()),
@@ -95,6 +102,7 @@ impl Mempool {
             tx_receiver,
             insert_lock: Arc::new(Mutex::new(())),
             stacc: Arc::new(Mutex::new(stacc)),
+            stacc_require_activation,
         }
     }
 
@@ -111,10 +119,13 @@ impl Mempool {
         }
 
         self.validate_transaction(&tx)?;
-        // STACC activation heuristic (prod: this is a system contract deposit).
-        // For now, treat any staked balance >= ACTIVATION_DEPOSIT as activation.
+        // STACC activation behavior by network profile:
+        // - mainnet-like: require explicit activation (stake/deposit heuristic)
+        // - testnet/devnet-like: auto-activate sender to allow QTEST-only flows
         let now_block = 0u64;
-        if let Ok(acct) = self.state_manager.get_account(&tx.transaction.from) {
+        if !self.stacc_require_activation {
+            self.stacc.lock().activation.activate(tx.transaction.from, now_block);
+        } else if let Ok(acct) = self.state_manager.get_account(&tx.transaction.from) {
             if acct.stake.0 >= ACTIVATION_DEPOSIT as u128 {
                 self.stacc.lock().activation.activate(tx.transaction.from, now_block);
             }
@@ -215,21 +226,90 @@ impl Mempool {
     }
 
     pub fn get_pending_for_shard(&self, shard_id: ShardId, limit: usize) -> Vec<SignedTransaction> {
-        // STACC: WFQ scheduler decides global ordering; we then filter by shard.
-        // NOTE: This pop-based approach is acceptable because fast_path removes
-        // selected txs from the mempool immediately after vertex creation.
-        let mut out = Vec::new();
-        let mut stacc = self.stacc.lock();
-        while out.len() < limit {
-            let Some(tx) = stacc.pop_next() else { break; };
-            if tx.transaction.shard_id != shard_id {
+        self.get_ready_antichain_for_shard(shard_id, limit)
+    }
+
+    /// Select a conflict-minimized, nonce-ready antichain for DAG vertex assembly.
+    pub fn get_ready_antichain_for_shard(&self, shard_id: ShardId, limit: usize) -> Vec<SignedTransaction> {
+        if limit == 0 {
+            return Vec::new();
+        }
+
+        let shard_hashes = self.by_shard
+            .get(&shard_id)
+            .map(|v| v.clone())
+            .unwrap_or_default();
+
+        if shard_hashes.is_empty() {
+            return Vec::new();
+        }
+
+        #[derive(Clone)]
+        struct Candidate {
+            tx: SignedTransaction,
+            score: u128,
+        }
+
+        let mut candidates = Vec::with_capacity(shard_hashes.len());
+        for h in shard_hashes {
+            let Some(tx_ref) = self.pending.get(&h) else { continue; };
+            let tx = tx_ref.clone();
+            let fee_signal = tx.transaction.amount.0 as u128;
+            let cu_signal = tx.transaction.max_compute_units.max(1) as u128;
+            let boost_signal = tx.transaction.boost_locked_tokens() as u128;
+            let score = (boost_signal.saturating_mul(10) + fee_signal.saturating_mul(2))
+                .saturating_mul(1_000_000)
+                / cu_signal;
+            candidates.push(Candidate { tx, score });
+        }
+
+        candidates.sort_by(|a, b| b.score.cmp(&a.score));
+
+        let mut selected = Vec::new();
+        let mut expected_nonce: BTreeMap<Address, u64> = BTreeMap::new();
+        let mut chosen_senders: BTreeMap<Address, ()> = BTreeMap::new();
+        let mut account_locks: BTreeMap<Address, ()> = BTreeMap::new();
+        let mut resource_locks: BTreeMap<Hash, ()> = BTreeMap::new();
+
+        for candidate in candidates {
+            if selected.len() >= limit {
+                break;
+            }
+
+            let tx = candidate.tx;
+            let sender = tx.transaction.from;
+
+            if chosen_senders.contains_key(&sender) {
                 continue;
             }
-            if self.pending.contains_key(&tx.hash) {
-                out.push(tx);
+
+            let sender_expected = *expected_nonce.entry(sender).or_insert_with(|| {
+                self.state_manager.get_nonce(&sender).unwrap_or(0)
+            });
+
+            if tx.transaction.nonce != sender_expected {
+                continue;
             }
+
+            let from = tx.transaction.from;
+            let to = tx.transaction.to;
+            if account_locks.contains_key(&from) || account_locks.contains_key(&to) {
+                continue;
+            }
+
+            let resource_key = resource_conflict_key(&tx);
+            if resource_locks.contains_key(&resource_key) {
+                continue;
+            }
+
+            account_locks.insert(from, ());
+            account_locks.insert(to, ());
+            resource_locks.insert(resource_key, ());
+            chosen_senders.insert(sender, ());
+            selected.push(tx);
         }
-        out
+
+        selected
     }
 
     pub fn get_executable_transactions(&self, sender: &Address) -> Vec<SignedTransaction> {
@@ -305,11 +385,19 @@ pub struct RoutingMetrics {
 }
 
 impl ShardedMempool {
-    pub fn new(state_manager: StateManager, num_shards: u16, max_per_shard: usize) -> Self {
+    pub fn new(
+        state_manager: StateManager,
+        num_shards: u16,
+        max_per_shard: usize,
+        stacc_require_activation: bool,
+    ) -> Self {
         let shards = Arc::new(DashMap::new());
         
         for i in 0..num_shards {
-            shards.insert(i, Mempool::new(state_manager.clone(), max_per_shard));
+            shards.insert(
+                i,
+                Mempool::new(state_manager.clone(), max_per_shard, stacc_require_activation),
+            );
         }
 
         Self {
@@ -382,6 +470,13 @@ impl ShardedMempool {
             .unwrap_or_default()
     }
 
+    pub fn get_ready_antichain_for_shard(&self, shard_id: ShardId, limit: usize) -> Vec<SignedTransaction> {
+        self.shards
+            .get(&shard_id)
+            .map(|m| m.get_ready_antichain_for_shard(shard_id, limit))
+            .unwrap_or_default()
+    }
+
     pub fn remove_transactions(&self, shard_id: ShardId, hashes: &[Hash]) {
         if let Some(mempool) = self.shards.get(&shard_id) {
             mempool.remove_transactions(hashes);
@@ -393,6 +488,17 @@ impl ShardedMempool {
     }
 }
 
+fn resource_conflict_key(tx: &SignedTransaction) -> Hash {
+    let mut key = Vec::with_capacity(2 + 32 + 32 + 16);
+    key.push(tx.transaction.tx_type.clone() as u8);
+    key.push(tx.transaction.vm_kind as u8);
+    key.extend_from_slice(&tx.transaction.to);
+    key.extend_from_slice(&tx.transaction.from);
+    let prefix_len = tx.transaction.data.len().min(16);
+    key.extend_from_slice(&tx.transaction.data[..prefix_len]);
+    hash_data(&key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,10 +508,19 @@ mod tests {
     use crate::types::{Amount, Transaction, TransactionType};
 
     fn create_test_tx(keypair: &DilithiumKeypair, nonce: u64, shard_id: ShardId) -> SignedTransaction {
+        create_test_tx_to(keypair, nonce, shard_id, [2u8; 32])
+    }
+
+    fn create_test_tx_to(
+        keypair: &DilithiumKeypair,
+        nonce: u64,
+        shard_id: ShardId,
+        to: Address,
+    ) -> SignedTransaction {
         let mut tx = Transaction::new(
             TransactionType::Transfer,
             keypair.address(),
-            [2u8; 32],
+            to,
             Amount(100),
             nonce,
             100_000,
@@ -426,7 +541,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let storage = Storage::new(dir.path()).unwrap();
         let state = StateManager::new(storage);
-        let mempool = Mempool::new(state, 1000);
+        let mempool = Mempool::new(state, 1000, false);
 
         let keypair = DilithiumKeypair::generate().unwrap();
         let tx = create_test_tx(&keypair, 0, 0);
@@ -437,5 +552,47 @@ mod tests {
 
         mempool.remove_transaction(&hash);
         assert_eq!(mempool.pending_count(), 0);
+    }
+
+    #[test]
+    fn test_antichain_skips_nonce_gaps() {
+        let dir = tempdir().unwrap();
+        let storage = Storage::new(dir.path()).unwrap();
+        let state = StateManager::new(storage);
+        let mempool = Mempool::new(state, 1000, false);
+
+        let keypair = DilithiumKeypair::generate().unwrap();
+        let tx0 = create_test_tx(&keypair, 0, 0);
+        let tx1 = create_test_tx(&keypair, 1, 0);
+
+        mempool.add_transaction(tx1).unwrap();
+        let selected_before = mempool.get_ready_antichain_for_shard(0, 100);
+        assert!(selected_before.is_empty());
+
+        mempool.add_transaction(tx0).unwrap();
+        let selected_after = mempool.get_ready_antichain_for_shard(0, 100);
+        assert_eq!(selected_after.len(), 1);
+        assert_eq!(selected_after[0].transaction.nonce, 0);
+    }
+
+    #[test]
+    fn test_antichain_filters_account_conflicts() {
+        let dir = tempdir().unwrap();
+        let storage = Storage::new(dir.path()).unwrap();
+        let state = StateManager::new(storage);
+        let mempool = Mempool::new(state, 1000, false);
+
+        let key_a = DilithiumKeypair::generate().unwrap();
+        let key_b = DilithiumKeypair::generate().unwrap();
+        let shared_to: Address = [9u8; 32];
+
+        let tx_a = create_test_tx_to(&key_a, 0, 0, shared_to);
+        let tx_b = create_test_tx_to(&key_b, 0, 0, shared_to);
+
+        mempool.add_transaction(tx_a).unwrap();
+        mempool.add_transaction(tx_b).unwrap();
+
+        let selected = mempool.get_ready_antichain_for_shard(0, 100);
+        assert_eq!(selected.len(), 1);
     }
 }
