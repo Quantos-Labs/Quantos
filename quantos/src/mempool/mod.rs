@@ -23,6 +23,7 @@ use tracing::warn;
 const MAX_SHARD_TXS: usize = 10_000;
 
 use crate::crypto::verify_dilithium;
+use crate::network::prefilter_tx_bytes;
 use crate::state::StateManager;
 use crate::stacc::{ActivationLedger, ACTIVATION_DEPOSIT, QuotaManager};
 use crate::stacc::quota::{StakeProvider, AncienneteProvider};
@@ -168,6 +169,11 @@ impl Mempool {
 
     fn validate_transaction(&self, tx: &SignedTransaction) -> MempoolResult<()> {
         let signing_data = tx.transaction.signing_data();
+        // Stateless prefilter to drop obvious garbage before expensive verify
+        if let Err(e) = prefilter_tx_bytes(&bincode::serialize(&tx).unwrap_or_default()) {
+            tracing::warn!("Prefilter rejected tx: {}", e);
+            return Err(MempoolError::InvalidTransaction(format!("Prefilter: {}", e)));
+        }
         // Use batched verification worker to reduce per-tx overhead
         let valid = crate::crypto::verify_dilithium_batch(
             tx.transaction.public_key.clone(),

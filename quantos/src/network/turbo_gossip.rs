@@ -377,6 +377,14 @@ impl TurboGossipRouter {
     
     /// Queues a message for gossip
     pub fn queue_message(&self, envelope: GossipEnvelope) -> bool {
+        // Stateless prefilter for large payloads
+        if envelope.msg_type == GossipMessageType::Transaction {
+            if let Err(_e) = crate::network::prefilter_tx_bytes(&envelope.payload) {
+                self.metrics.lock().duplicates_filtered += 1;
+                return false;
+            }
+        }
+
         // Check if already seen
         {
             let mut filter = self.seen_filter.lock();
