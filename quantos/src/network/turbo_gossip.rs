@@ -144,7 +144,6 @@ impl Ord for PriorityEntry {
 
 /// Peer metadata for intelligent gossip routing.
 /// For basic peer info, see `p2p::GossipPeerInfo`.
-#[derive(Clone)]
 pub struct GossipPeerInfo {
     pub id: PeerId,
     /// Estimated round-trip latency
@@ -163,6 +162,31 @@ pub struct GossipPeerInfo {
     pub is_committee_member: bool,
     /// Peer's shard assignments
     pub shards: Vec<u16>,
+    /// Per-peer token bucket for rate limiting (bytes)
+    pub token_bucket: Mutex<TokenBucket>,
+}
+
+impl Clone for GossipPeerInfo {
+    fn clone(&self) -> Self {
+        let tb = self.token_bucket.lock();
+        Self {
+            id: self.id,
+            latency_ms: self.latency_ms,
+            success_rate: self.success_rate,
+            bandwidth: self.bandwidth,
+            last_seen: self.last_seen,
+            messages_sent: self.messages_sent,
+            messages_received: self.messages_received,
+            is_committee_member: self.is_committee_member,
+            shards: self.shards.clone(),
+            token_bucket: Mutex::new(TokenBucket {
+                capacity: tb.capacity,
+                tokens: tb.tokens,
+                refill_rate: tb.refill_rate,
+                last_refill: tb.last_refill,
+            }),
+        }
+    }
 }
 
 impl GossipPeerInfo {
@@ -177,6 +201,7 @@ impl GossipPeerInfo {
             messages_received: 0,
             is_committee_member: false,
             shards: Vec::new(),
+            token_bucket: Mutex::new(TokenBucket::new(10_000_000_f32, 1_000_000_f32)),
         }
     }
     
@@ -194,6 +219,52 @@ impl GossipPeerInfo {
     pub fn update_latency(&mut self, new_latency_ms: u32) {
         const ALPHA: f32 = 0.3;
         self.latency_ms = (ALPHA * new_latency_ms as f32 + (1.0 - ALPHA) * self.latency_ms as f32) as u32;
+    }
+}
+
+/// Simple token bucket for per-peer rate limiting (bytes)
+pub struct TokenBucket {
+    pub capacity: f32,
+    pub tokens: f32,
+    pub refill_rate: f32, // tokens per second
+    pub last_refill: Instant,
+}
+
+impl TokenBucket {
+    pub fn new(capacity: f32, refill_rate: f32) -> Self {
+        Self {
+            capacity,
+            tokens: capacity,
+            refill_rate,
+            last_refill: Instant::now(),
+        }
+    }
+
+    pub fn refill(&mut self) {
+        let elapsed = self.last_refill.elapsed().as_secs_f32();
+        if elapsed <= 0.0 {
+            return;
+        }
+        let added = elapsed * self.refill_rate;
+        self.tokens = (self.tokens + added).min(self.capacity);
+        self.last_refill = Instant::now();
+    }
+
+    /// Check if we can consume `bytes` without mutating state.
+    pub fn can_consume(&mut self, bytes: usize) -> bool {
+        self.refill();
+        (self.tokens as f32) >= bytes as f32
+    }
+
+    /// Try to consume tokens; returns true if successful.
+    pub fn try_consume(&mut self, bytes: usize) -> bool {
+        self.refill();
+        if self.tokens >= bytes as f32 {
+            self.tokens -= bytes as f32;
+            true
+        } else {
+            false
+        }
     }
 }
 

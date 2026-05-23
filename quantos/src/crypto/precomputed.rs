@@ -13,6 +13,8 @@ use once_cell::sync::Lazy;
 use dashmap::DashMap;
 use lru::LruCache;
 use std::sync::Mutex;
+use pqcrypto_dilithium::dilithium3;
+use pqcrypto_traits::sign::PublicKey as _PQPublicKeyTrait;
 
 use crate::types::{Address, Hash, hash_data};
 use sha3::{Digest, Sha3_256};
@@ -46,6 +48,39 @@ impl VerifyCache {
 
 /// Global verification cache instance (LRU, bounded by entries).
 pub static VERIFY_CACHE: Lazy<VerifyCache> = Lazy::new(|| VerifyCache::new(200_000));
+
+/// Parsed public key cache to avoid repeated `PublicKey::from_bytes` allocations.
+pub struct PublicKeyCache {
+    cache: Mutex<LruCache<Vec<u8>, dilithium3::PublicKey>>,
+}
+
+impl PublicKeyCache {
+    pub fn new(capacity: usize) -> Self {
+        use std::num::NonZeroUsize;
+        let cap = NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::new(1).unwrap());
+        Self { cache: Mutex::new(LruCache::new(cap)) }
+    }
+
+    /// Get parsed public key by bytes, or parse and insert.
+    pub fn get_or_parse(&self, key: &[u8]) -> Option<dilithium3::PublicKey> {
+        let mut cache = self.cache.lock().unwrap();
+        if let Some(pk) = cache.get(key) {
+            return Some(pk.clone());
+        }
+
+        match dilithium3::PublicKey::from_bytes(key) {
+            Ok(parsed) => {
+                cache.put(key.to_vec(), parsed.clone());
+                Some(parsed)
+            }
+            Err(_) => None,
+        }
+    }
+
+    pub fn size(&self) -> usize { self.cache.lock().unwrap().len() }
+}
+
+pub static PUBLIC_KEY_CACHE: Lazy<PublicKeyCache> = Lazy::new(|| PublicKeyCache::new(50_000));
 
 /// Dilithium modulus q = 8380417
 pub const DILITHIUM_Q: i32 = 8380417;

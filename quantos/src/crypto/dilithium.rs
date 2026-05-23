@@ -1,7 +1,7 @@
 use pqcrypto_dilithium::dilithium3;
 use pqcrypto_traits::sign::{PublicKey as PQPublicKey, SecretKey as PQSecretKey, DetachedSignature};
 use crate::crypto::{CryptoError, CryptoResult};
-use crate::crypto::precomputed::VERIFY_CACHE;
+use crate::crypto::precomputed::{VERIFY_CACHE, PUBLIC_KEY_CACHE};
 use sha3::{Digest, Sha3_256};
 use crate::types::{Address, hash_data};
 
@@ -106,9 +106,9 @@ pub fn verify_dilithium(public_key: &[u8], message: &[u8], signature: &[u8]) -> 
 
     let cached = VERIFY_CACHE.get_or_compute(&key, || {
         // If not cached, perform the expensive parse + verify
-        let pk = match dilithium3::PublicKey::from_bytes(public_key) {
-            Ok(v) => v,
-            Err(_) => return false,
+        let pk = match PUBLIC_KEY_CACHE.get_or_parse(public_key) {
+            Some(v) => v,
+            None => return false,
         };
 
         let sig = match dilithium3::DetachedSignature::from_bytes(signature) {
