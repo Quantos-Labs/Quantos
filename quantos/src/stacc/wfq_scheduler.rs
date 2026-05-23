@@ -73,8 +73,9 @@ impl<S: StakeProvider, A: AncienneteProvider> WfqScheduler<S, A> {
         let base = self.quota.quota_base(addr, now_block) as f64;
         let stake = self.quota.quota_stake(addr) as f64;
         let boost = boost_factor(&tx.transaction.boost);
+        let priority = self.quota.priority_weight_boost(addr);
         // Weight must be >0 for fairness. Ensure minimal positive weight.
-        (base + stake + boost).max(1.0)
+        (base + stake + boost + priority).max(1.0)
     }
 
     pub fn insert(&mut self, tx: SignedTransaction, now_block: u64) {

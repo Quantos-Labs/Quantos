@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::types::Address;
+use crate::stacc::StaccTier;
 
 pub const BASE_RATE: u64 = 50_000;
 pub const STAKE_BW_POOL: u64 = 50_000_000;
@@ -67,8 +68,12 @@ impl<S: StakeProvider, A: AncienneteProvider> QuotaManager<S, A> {
     }
 
     pub fn quota_base(&self, addr: &Address, now_block: u64) -> u64 {
+        let tier = match StaccTier::from_stake(self.stake.stake_of(addr)) {
+            Some(t) => t,
+            None => return 0,
+        };
         let f = self.anciennete.anciennete_factor(addr, now_block);
-        (BASE_RATE as f64 * f).round().clamp(0.0, u64::MAX as f64) as u64
+        (tier.quota_base() as f64 * f).round().clamp(0.0, u64::MAX as f64) as u64
     }
 
     pub fn quota_stake(&self, addr: &Address) -> u64 {
@@ -83,6 +88,11 @@ impl<S: StakeProvider, A: AncienneteProvider> QuotaManager<S, A> {
 
     pub fn quota_total(&self, addr: &Address, now_block: u64) -> u64 {
         self.quota_base(addr, now_block).saturating_add(self.quota_stake(addr))
+    }
+
+    pub fn priority_weight_boost(&self, addr: &Address) -> f64 {
+        StaccTier::from_stake(self.stake.stake_of(addr))
+            .map_or(0.0, |tier| tier.priority_weight_boost())
     }
 
     pub fn bucket_capacity(&self, addr: &Address, now_block: u64) -> u64 {

@@ -1,9 +1,49 @@
 use std::collections::HashMap;
 use crate::types::Address;
 
-pub const ACTIVATION_DEPOSIT: u64 = 100;
+pub const BASIC_TIER_STAKE: u64 = 10;
+pub const BUILDER_TIER_STAKE: u64 = 100;
+pub const ENTERPRISE_TIER_STAKE: u64 = 1_000;
+
+pub const ACTIVATION_DEPOSIT: u64 = BASIC_TIER_STAKE;
 pub const COOLDOWN_BLOCKS: u64 = 50_400;
 pub const MAX_ANCIENNETE_FACTOR: f64 = 3.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StaccTier {
+    Basic,
+    Builder,
+    Enterprise,
+}
+
+impl StaccTier {
+    pub fn from_stake(stake: u128) -> Option<Self> {
+        if stake >= ENTERPRISE_TIER_STAKE as u128 {
+            Some(Self::Enterprise)
+        } else if stake >= BUILDER_TIER_STAKE as u128 {
+            Some(Self::Builder)
+        } else if stake >= BASIC_TIER_STAKE as u128 {
+            Some(Self::Basic)
+        } else {
+            None
+        }
+    }
+
+    pub fn quota_base(&self) -> u64 {
+        match self {
+            StaccTier::Basic => 10_000,
+            StaccTier::Builder => 30_000,
+            StaccTier::Enterprise => 100_000,
+        }
+    }
+
+    pub fn priority_weight_boost(&self) -> f64 {
+        match self {
+            StaccTier::Enterprise => 20_000.0,
+            _ => 0.0,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ActivationState {
