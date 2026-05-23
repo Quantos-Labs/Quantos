@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use crate::types::Address;
 
-pub const ACTIVATION_DEPOSIT: u64 = 10_000;
+pub const ACTIVATION_DEPOSIT: u64 = 100;
 pub const COOLDOWN_BLOCKS: u64 = 50_400;
 pub const MAX_ANCIENNETE_FACTOR: f64 = 3.0;
 
