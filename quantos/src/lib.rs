@@ -57,6 +57,7 @@ pub mod zk;
 pub mod performance;
 pub mod genesis;
 pub mod stacc;
+pub mod l0;
 
 /// Prelude module for convenient imports
 pub mod prelude {

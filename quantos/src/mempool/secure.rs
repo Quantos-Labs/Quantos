@@ -36,7 +36,7 @@ const IP_LIMITER_CLEANUP_THRESHOLD: u64 = 3600; // 1 hour
 use dashmap::DashMap;
 use parking_lot::RwLock;
 
-use crate::crypto::{verify_dilithium, DilithiumBatchVerifier};
+use crate::crypto::{verify_dilithium_batch, DilithiumBatchVerifier};
 use crate::state::StateManager;
 use crate::types::{Address, Amount, Hash, ShardId, SignedTransaction};
 
@@ -323,15 +323,12 @@ impl SecureMempool {
             return Err(MempoolError::DuplicateTransaction);
         }
 
-        // 4. Signature verification
-        let valid = verify_dilithium(
-            &tx.transaction.public_key,
-            &tx.transaction.signing_data(),
-            &tx.transaction.signature,
-        ).map_err(|e| {
-            self.metrics.write().rejected_invalid_sig += 1;
-            MempoolError::InvalidTransaction(e.to_string())
-        })?;
+        // 4. Signature verification via batched worker to reduce CPU
+        let valid = verify_dilithium_batch(
+            tx.transaction.public_key.clone(),
+            tx.transaction.signing_data(),
+            tx.transaction.signature.clone(),
+        );
 
         if !valid {
             self.metrics.write().rejected_invalid_sig += 1;
