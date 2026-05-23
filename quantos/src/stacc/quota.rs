@@ -2,6 +2,15 @@ use std::collections::HashMap;
 use crate::types::Address;
 use crate::stacc::StaccTier;
 
+// CU refill rates per tier (CU per second)
+pub const R_CHARGE_BASIC: u64 = 10; // Basic: 10 CU/s
+pub const R_CHARGE_BUILDER: u64 = 100; // Builder: 100 CU/s
+pub const R_CHARGE_ENTERPRISE: u64 = 1000; // Enterprise: 1000 CU/s
+
+// Burst and bucket sizing
+pub const BURST_FACTOR: u64 = 10; // allow short burst = R_charge * BURST_FACTOR
+pub const BUCKET_SECONDS: u64 = 3600; // bucket baseline in seconds (1 hour)
+
 pub const BASE_RATE: u64 = 50_000;
 pub const STAKE_BW_POOL: u64 = 50_000_000;
 pub const BUCKET_CAP_MULTIPLIER: u64 = 2;
@@ -60,11 +69,13 @@ pub struct QuotaManager<S: StakeProvider, A: AncienneteProvider> {
     stake: S,
     anciennete: A,
     buckets: HashMap<Address, Bucket>,
+    /// Track consecutive heavy-burn cycles per address: (count, last_burn_block)
+    burns: HashMap<Address, (u32, u64)>,
 }
 
 impl<S: StakeProvider, A: AncienneteProvider> QuotaManager<S, A> {
     pub fn new(stake: S, anciennete: A) -> Self {
-        Self { stake, anciennete, buckets: HashMap::new() }
+        Self { stake, anciennete, buckets: HashMap::new(), burns: HashMap::new() }
     }
 
     pub fn quota_base(&self, addr: &Address, now_block: u64) -> u64 {
@@ -83,11 +94,30 @@ impl<S: StakeProvider, A: AncienneteProvider> QuotaManager<S, A> {
         }
         let s = self.stake.stake_of(addr);
         // floor((s/total)*POOL)
-        ((s.saturating_mul(STAKE_BW_POOL as u128)) / total) as u64
+        // Apply diminishing returns: use log-like curve to reduce marginal gains
+        let stake_u128 = s;
+        if stake_u128 == 0 {
+            return 0;
+        }
+        // ln(1 + stake) / ln(1 + total) * POOL
+        let stake_f = (stake_u128 as f64).ln_1p();
+        let total_f = ((total as f64).ln_1p()).max(1.0);
+        let ratio = (stake_f / total_f).max(0.0);
+        ((ratio * (STAKE_BW_POOL as f64)).round() as u64).min(STAKE_BW_POOL)
     }
 
     pub fn quota_total(&self, addr: &Address, now_block: u64) -> u64 {
         self.quota_base(addr, now_block).saturating_add(self.quota_stake(addr))
+    }
+
+    /// Returns tier-specific per-transaction hard cap (CU)
+    pub fn cu_tx_max(&self, addr: &Address) -> u64 {
+        match StaccTier::from_stake(self.stake.stake_of(addr)) {
+            Some(StaccTier::Basic) => 10_000,
+            Some(StaccTier::Builder) => 100_000,
+            Some(StaccTier::Enterprise) => 1_000_000,
+            None => 10_000, // default conservative cap
+        }
     }
 
     pub fn priority_weight_boost(&self, addr: &Address) -> f64 {
@@ -96,7 +126,18 @@ impl<S: StakeProvider, A: AncienneteProvider> QuotaManager<S, A> {
     }
 
     pub fn bucket_capacity(&self, addr: &Address, now_block: u64) -> u64 {
-        self.quota_total(addr, now_block).saturating_mul(BUCKET_CAP_MULTIPLIER)
+        // Use refill rate based bucket sizing as primary source for burst capacity
+        let tier = StaccTier::from_stake(self.stake.stake_of(addr));
+        let r = match tier {
+            Some(t) => match t {
+                StaccTier::Basic => R_CHARGE_BASIC,
+                StaccTier::Builder => R_CHARGE_BUILDER,
+                StaccTier::Enterprise => R_CHARGE_ENTERPRISE,
+            },
+            None => R_CHARGE_BASIC,
+        };
+        let cap = 2_u128.saturating_mul(r as u128).saturating_mul(BUCKET_SECONDS as u128);
+        cap.min(u128::from(u64::MAX)) as u64
     }
 
     pub fn refill_block(&mut self, now_block: u64) {
@@ -106,8 +147,20 @@ impl<S: StakeProvider, A: AncienneteProvider> QuotaManager<S, A> {
         for addr in addrs {
             let refill = self.quota_total(&addr, now_block);
             let cap = self.bucket_capacity(&addr, now_block);
+            // Apply PAC speed multiplier based on recent consecutive burns
+            let (burns, last_burn_block) = self.burns.get(&addr).copied().unwrap_or((0u32, 0u64));
+            let m_speed = 1.0 / (1.0 + (burns as f64).powi(2));
+            let refill_effective = ((refill as f64) * m_speed).round() as u64;
             if let Some(b) = self.buckets.get_mut(&addr) {
-                b.refill_to(cap, refill, now_block);
+                b.refill_to(cap, refill_effective, now_block);
+            }
+            // Decay consecutive_burns slowly if there has been no recent burn
+            if burns > 0 {
+                if now_block.saturating_sub(last_burn_block) > BUCKET_SECONDS {
+                    let entry = self.burns.get_mut(&addr).unwrap();
+                    entry.0 = entry.0.saturating_sub(1);
+                    entry.1 = now_block;
+                }
             }
         }
     }
@@ -118,14 +171,28 @@ impl<S: StakeProvider, A: AncienneteProvider> QuotaManager<S, A> {
         }
         let cap = self.bucket_capacity(&addr, now_block);
         self.buckets.insert(addr, Bucket::new(cap, now_block));
+        // initialize burn tracking
+        self.burns.entry(addr).or_insert((0u32, 0u64));
     }
 
     pub fn try_consume(&mut self, addr: Address, cu: u64, now_block: u64) -> Result<(), QuotaError> {
         self.ensure_bucket(addr, now_block);
         let refill = self.quota_total(&addr, now_block);
         let cap = self.bucket_capacity(&addr, now_block);
+        // Reject transactions that exceed per-transaction hard cap
+        if cu > self.cu_tx_max(&addr) {
+            return Err(QuotaError::InsufficientQuota);
+        }
         if let Some(b) = self.buckets.get_mut(&addr) {
             b.refill_to(cap, refill, now_block);
+            // detect heavy burn before consumption
+            let threshold = (cap.saturating_mul(9)) / 10; // 90% of cap
+            if cu >= threshold {
+                // increment consecutive burns
+                let entry = self.burns.entry(addr).or_insert((0u32, now_block));
+                entry.0 = entry.0.saturating_add(1);
+                entry.1 = now_block;
+            }
             b.try_consume(cu)?;
         }
         Ok(())
@@ -164,13 +231,14 @@ mod tests {
         // At block 1, cap = 2*BASE_RATE, tokens = cap.
         qm.ensure_bucket(a, 1);
         let cap = qm.bucket_capacity(&a, 1);
-        assert_eq!(cap, 2 * BASE_RATE);
+        // expected cap = 2 * R_CHARGE_BASIC * BUCKET_SECONDS
+        assert_eq!(cap, 2 * R_CHARGE_BASIC * BUCKET_SECONDS);
 
-        // Consume some, then refill at next block by BASE_RATE, clamped to cap.
-        qm.try_consume(a, BASE_RATE, 1).unwrap();
+        // Consume some; since account has zero stake, quota_total==0, refill won't add tokens.
+        qm.try_consume(a, 1_000, 1).unwrap();
         qm.refill_block(2);
         let b = qm.buckets.get(&a).unwrap();
-        assert_eq!(b.tokens, cap); // should have refilled back to cap
+        assert_eq!(b.tokens, cap - 1_000); // no refill expected for zero-stake quota
     }
 
     #[test]
