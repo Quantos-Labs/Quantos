@@ -33,7 +33,8 @@ const MAX_VALIDATOR_INDEX: usize = 10_000;
 const DILITHIUM_SIG_SIZE: usize = 3293;
 
 use crate::types::{Address, Hash, ShardId, SignedTransaction, TransactionReceipt};
-use crate::crypto::{verify_dilithium, DilithiumKeypair};
+use crate::crypto::{verify_dilithium_batch, DilithiumKeypair};
+use crate::crypto::batch_verify::DilithiumBatchVerifier;
 use crate::compression::{CompressionEngine, CompressedBatch, CompressionConfig};
 
 /// Configuration for the batching system.
@@ -396,30 +397,28 @@ impl BatchingEngine {
             return false;
         }
         let message = tx.transaction.signing_data();
-        verify_dilithium(&tx.transaction.public_key, &message, sig)
-            .unwrap_or(false)
+        verify_dilithium_batch(tx.transaction.public_key.clone(), message, sig.clone())
     }
 
     /// Verifies a batch of arbitrary signatures.
     pub fn verify_signature_batch(&self, batch: &mut SignatureBatch) -> Result<bool, BatchingError> {
         let start = std::time::Instant::now();
         
+        let items: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)> = batch.entries.iter().map(|entry| {
+            (
+                entry.public_key.clone(),
+                entry.message.clone(),
+                entry.signature.clone(),
+            )
+        }).collect();
+
         let results: Vec<bool> = if self.config.parallel_verify {
-            batch.entries
-                .par_iter()
-                .map(|entry| {
-                    verify_dilithium(&entry.public_key, &entry.message, &entry.signature)
-                        .unwrap_or(false)
-                })
-                .collect()
+            let verifier = DilithiumBatchVerifier::new(items.len());
+            verifier.verify_batch(&items)
         } else {
-            batch.entries
-                .iter()
-                .map(|entry| {
-                    verify_dilithium(&entry.public_key, &entry.message, &entry.signature)
-                        .unwrap_or(false)
-                })
-                .collect()
+            items.iter().map(|(pubkey, message, signature)| {
+                verify_dilithium_batch(pubkey.clone(), message.clone(), signature.clone())
+            }).collect()
         };
         
         // Update entries with results
@@ -629,6 +628,7 @@ impl AggregatedSignature {
         
         // Verify each signature using stored validator_indices (insertion order)
         // This is the correct mapping — not the bitmap extraction order.
+        let mut items = Vec::with_capacity(self.signatures.len());
         for (sig, &validator_idx) in self.signatures.iter().zip(self.validator_indices.iter()) {
             if validator_idx >= validator_public_keys.len() {
                 return Err(BatchingError::ValidatorIndexOutOfBounds(
@@ -636,21 +636,23 @@ impl AggregatedSignature {
                     validator_public_keys.len(),
                 ));
             }
-            
             if sig.len() != DILITHIUM_SIG_SIZE {
                 return Err(BatchingError::VerificationFailed(
                     format!("Invalid signature size at index {}: {} (expected {})", validator_idx, sig.len(), DILITHIUM_SIG_SIZE),
                 ));
             }
-            
-            let valid = verify_dilithium(&validator_public_keys[validator_idx], message, sig)
-                .map_err(|e| BatchingError::VerificationFailed(e.to_string()))?;
-            
+            items.push((validator_public_keys[validator_idx].clone(), message.to_vec(), sig.clone()));
+        }
+
+        let verifier = DilithiumBatchVerifier::new(items.len());
+        let results = verifier.verify_batch(&items);
+
+        for valid in results {
             if !valid {
                 return Ok(false);
             }
         }
-        
+
         Ok(true)
     }
 

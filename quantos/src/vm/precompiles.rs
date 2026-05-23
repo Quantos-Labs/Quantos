@@ -42,9 +42,10 @@
 use sha3::Digest;
 
 use crate::crypto::{
-    verify_dilithium, verify_falcon, verify_sphincs,
+    verify_dilithium, verify_dilithium_batch, verify_falcon, verify_sphincs,
     sha3_256,
 };
+use crate::crypto::batch_verify::DilithiumBatchVerifier;
 use crate::types::{Address, address_to_qts, hash_data};
 
 /// Precompile address range: addresses with first 31 bytes = 0, last byte = ID
@@ -221,9 +222,10 @@ fn precompile_dilithium_verify(input: &[u8], available_cu: u64) -> Result<Precom
     
     let (pubkey, message, signature) = parse_verify_input(input)?;
     
-    let valid = match verify_dilithium(&pubkey, &message, &signature) {
-        Ok(v) => v,
-        Err(e) => return Err(PrecompileError::CryptoError(format!("Dilithium: {}", e))),
+    let valid = if verify_dilithium_batch(pubkey.clone(), message.clone(), signature.clone()) {
+        true
+    } else {
+        false
     };
     
     Ok(PrecompileResult {
@@ -439,6 +441,7 @@ fn precompile_batch_dilithium_verify(input: &[u8], available_cu: u64) -> Result<
     let mut results = Vec::with_capacity(4 + count);
     results.extend_from_slice(&(count as u32).to_le_bytes());
     
+    let mut items = Vec::with_capacity(count);
     for _ in 0..count {
         if offset + 4 > input.len() {
             return Err(PrecompileError::InvalidInput("Batch: truncated input".into()));
@@ -447,15 +450,19 @@ fn precompile_batch_dilithium_verify(input: &[u8], available_cu: u64) -> Result<
         // Parse each signature triplet from remaining input
         match parse_verify_input_at(&input[offset..]) {
             Ok((pubkey, message, signature, consumed)) => {
-                let valid = verify_dilithium(&pubkey, &message, &signature)
-                    .unwrap_or(false);
-                results.push(if valid { 0x01 } else { 0x00 });
+                items.push((pubkey, message, signature));
                 offset += consumed;
             }
             Err(e) => {
                 return Err(e);
             }
         }
+    }
+
+    let verifier = DilithiumBatchVerifier::new(items.len());
+    let batch_results = verifier.verify_batch(&items);
+    for valid in batch_results {
+        results.push(if valid { 0x01 } else { 0x00 });
     }
     
     Ok(PrecompileResult {

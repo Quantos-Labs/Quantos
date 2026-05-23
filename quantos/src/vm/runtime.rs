@@ -32,7 +32,7 @@ use wasmer::{
 };
 use wasmer_compiler_cranelift::Cranelift;
 
-use crate::crypto::verify_dilithium;
+use crate::crypto::{verify_dilithium, verify_dilithium_batch};
 use crate::types::{Address, Hash};
 use crate::vm::{VmError, VmResult};
 use crate::vm::solang_compat::{self, ContractType};
@@ -626,11 +626,11 @@ fn qnt_verify_dilithium(
         Err(_) => return 2,
     };
 
-    // Verify using Dilithium
-    match verify_dilithium(&pubkey, &message, &signature) {
-        Ok(true) => 1,  // Valid
-        Ok(false) => 0, // Invalid
-        Err(_) => 2,    // Error
+    // Verify using pooled batch verification worker
+    if verify_dilithium_batch(pubkey, message, signature) {
+        1
+    } else {
+        0
     }
 }
 

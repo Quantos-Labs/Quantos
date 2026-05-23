@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use crate::types::{Address, Hash, ShardId, SignedTransaction, hash_data};
-use crate::crypto::{verify_dilithium, with_domain, DOMAIN_VERTEX, DOMAIN_COMMITTEE_VOTE};
+use crate::crypto::{verify_dilithium_batch, with_domain, DOMAIN_VERTEX, DOMAIN_COMMITTEE_VOTE};
 
 /// Maximum transactions per vertex
 const MAX_TRANSACTIONS_PER_VERTEX: usize = 10000;
@@ -94,13 +94,11 @@ impl DAGVertex {
     pub fn set_signature(&mut self, signature: Vec<u8>, public_key: &[u8]) -> Result<(), String> {
         // CRITICAL: Verify signature before accepting
         let signing_data = self.signing_data();
-        match verify_dilithium(public_key, &signing_data, &signature) {
-            Ok(true) => {
-                self.signature = signature;
-                Ok(())
-            }
-            Ok(false) => Err("Invalid vertex signature".to_string()),
-            Err(e) => Err(format!("Signature verification error: {:?}", e)),
+        if verify_dilithium_batch(public_key.to_vec(), signing_data, signature.clone()) {
+            self.signature = signature;
+            Ok(())
+        } else {
+            Err("Invalid vertex signature".to_string())
         }
     }
     
@@ -190,13 +188,11 @@ impl CommitteeVote {
     pub fn set_signature(&mut self, signature: Vec<u8>, public_key: &[u8]) -> Result<(), String> {
         // CRITICAL: Verify signature before accepting
         let signing_data = self.signing_data();
-        match verify_dilithium(public_key, &signing_data, &signature) {
-            Ok(true) => {
-                self.signature = signature;
-                Ok(())
-            }
-            Ok(false) => Err("Invalid vote signature".to_string()),
-            Err(e) => Err(format!("Signature verification error: {:?}", e)),
+        if verify_dilithium_batch(public_key.to_vec(), signing_data, signature.clone()) {
+            self.signature = signature;
+            Ok(())
+        } else {
+            Err("Invalid vote signature".to_string())
         }
     }
 }

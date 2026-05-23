@@ -31,7 +31,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::types::{Hash, ShardId, Slot};
-use crate::crypto::verify_dilithium;
+use crate::crypto::{verify_dilithium, verify_dilithium_batch};
 use super::{SyncError, SyncResult};
 
 /// Maximum total memory for chunks (1GB)
@@ -607,19 +607,20 @@ impl SnapshotManager {
         let mut valid_signatures = 0;
         let mut total_stake = 0u64;
         
-        for sig in &manifest.signatures {
-            // Verify signature
-            match verify_dilithium(&sig.validator, &manifest_hash, &sig.signature) {
-                Ok(true) => {
-                    valid_signatures += 1;
-                    total_stake = total_stake.saturating_add(sig.stake_weight);
-                }
-                Ok(false) => {
-                    warn!("Invalid signature from validator {:?}", hex::encode(&sig.validator));
-                }
-                Err(e) => {
-                    warn!("Signature verification error: {:?}", e);
-                }
+        let batch: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)> = manifest.signatures.iter().map(|sig| {
+            (sig.validator.to_vec(), manifest_hash.to_vec(), sig.signature.clone())
+        }).collect();
+
+        let results = batch.iter().map(|(pubkey, message, signature)| {
+            verify_dilithium_batch(pubkey.clone(), message.clone(), signature.clone())
+        }).collect::<Vec<bool>>();
+
+        for (sig, valid) in manifest.signatures.iter().zip(results.iter()) {
+            if *valid {
+                valid_signatures += 1;
+                total_stake = total_stake.saturating_add(sig.stake_weight);
+            } else {
+                warn!("Invalid signature from validator {:?}", hex::encode(&sig.validator));
             }
         }
         

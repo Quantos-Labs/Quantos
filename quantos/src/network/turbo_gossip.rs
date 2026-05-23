@@ -162,6 +162,12 @@ pub struct GossipPeerInfo {
     pub is_committee_member: bool,
     /// Peer's shard assignments
     pub shards: Vec<u16>,
+    /// Reputation-based penalty factor; reduces score and increases backpressure.
+    pub penalty_score: f32,
+    /// Peer is explicitly whitelisted and bypasses rate backpressure.
+    pub is_whitelisted: bool,
+    /// Peer is explicitly blacklisted and must be rejected.
+    pub is_blacklisted: bool,
     /// Per-peer token bucket for rate limiting (bytes)
     pub token_bucket: Mutex<TokenBucket>,
 }
@@ -179,6 +185,9 @@ impl Clone for GossipPeerInfo {
             messages_received: self.messages_received,
             is_committee_member: self.is_committee_member,
             shards: self.shards.clone(),
+            penalty_score: self.penalty_score,
+            is_whitelisted: self.is_whitelisted,
+            is_blacklisted: self.is_blacklisted,
             token_bucket: Mutex::new(TokenBucket {
                 capacity: tb.capacity,
                 tokens: tb.tokens,
@@ -201,24 +210,82 @@ impl GossipPeerInfo {
             messages_received: 0,
             is_committee_member: false,
             shards: Vec::new(),
+            penalty_score: 0.0,
+            is_whitelisted: false,
+            is_blacklisted: false,
             token_bucket: Mutex::new(TokenBucket::new(10_000_000_f32, 1_000_000_f32)),
         }
     }
     
     /// Calculates peer score for selection (higher = better)
     pub fn score(&self) -> f32 {
+        if self.is_blacklisted {
+            return 0.0;
+        }
+
         let latency_score = 1.0 / (1.0 + self.latency_ms as f32 / 100.0);
         let success_score = self.success_rate;
         let freshness = 1.0 / (1.0 + self.last_seen.elapsed().as_secs() as f32 / 60.0);
         let committee_bonus = if self.is_committee_member { 1.5 } else { 1.0 };
+        let penalty_factor = (1.0 - self.penalty_score).max(0.1);
         
-        (latency_score * 0.4 + success_score * 0.4 + freshness * 0.2) * committee_bonus
+        (latency_score * 0.4 + success_score * 0.4 + freshness * 0.2) * committee_bonus * penalty_factor
     }
     
     /// Updates latency with exponential moving average
     pub fn update_latency(&mut self, new_latency_ms: u32) {
         const ALPHA: f32 = 0.3;
         self.latency_ms = (ALPHA * new_latency_ms as f32 + (1.0 - ALPHA) * self.latency_ms as f32) as u32;
+    }
+
+    /// Apply a penalty to this peer for misbehavior or rate pressure.
+    pub fn penalize(&mut self, amount: f32) {
+        self.penalty_score = (self.penalty_score + amount).min(0.9);
+    }
+
+    /// Reward a peer by reducing its penalty.
+    pub fn reward(&mut self, amount: f32) {
+        self.penalty_score = (self.penalty_score - amount).max(0.0);
+    }
+
+    /// Ban the peer from gossip.
+    pub fn ban(&mut self) {
+        self.is_blacklisted = true;
+    }
+
+    /// Unban the peer.
+    pub fn unban(&mut self) {
+        self.is_blacklisted = false;
+    }
+
+    /// Whitelist the peer, bypassing backpressure.
+    pub fn whitelist(&mut self) {
+        self.is_whitelisted = true;
+        self.is_blacklisted = false;
+    }
+
+    /// Checks whether this peer can receive a message of size `bytes`.
+    pub fn is_allowed(&self, bytes: usize) -> bool {
+        if self.is_blacklisted {
+            return false;
+        }
+        if self.is_whitelisted {
+            return true;
+        }
+        let mut bucket = self.token_bucket.lock();
+        bucket.can_consume(bytes)
+    }
+
+    /// Attempts to consume send tokens for this peer.
+    pub fn try_consume(&self, bytes: usize) -> bool {
+        if self.is_blacklisted {
+            return false;
+        }
+        if self.is_whitelisted {
+            return true;
+        }
+        let mut bucket = self.token_bucket.lock();
+        bucket.try_consume(bytes)
     }
 }
 
@@ -445,6 +512,41 @@ impl TurboGossipRouter {
             peer.last_seen = Instant::now();
         }
     }
+
+    /// Penalizes a peer for bad behavior or excessive load
+    pub fn penalize_peer(&self, peer_id: &PeerId, amount: f32) {
+        if let Some(peer) = self.peers.write().get_mut(peer_id) {
+            peer.penalize(amount);
+        }
+    }
+
+    /// Rewards a peer for good behavior and successful relays
+    pub fn reward_peer(&self, peer_id: &PeerId, amount: f32) {
+        if let Some(peer) = self.peers.write().get_mut(peer_id) {
+            peer.reward(amount);
+        }
+    }
+
+    /// Bans a peer from gossip entirely
+    pub fn ban_peer(&self, peer_id: &PeerId) {
+        if let Some(peer) = self.peers.write().get_mut(peer_id) {
+            peer.ban();
+        }
+    }
+
+    /// Unbans a peer so it can participate again
+    pub fn unban_peer(&self, peer_id: &PeerId) {
+        if let Some(peer) = self.peers.write().get_mut(peer_id) {
+            peer.unban();
+        }
+    }
+
+    /// Whitelists a peer, bypassing normal backpressure limits
+    pub fn whitelist_peer(&self, peer_id: &PeerId) {
+        if let Some(peer) = self.peers.write().get_mut(peer_id) {
+            peer.whitelist();
+        }
+    }
     
     /// Queues a message for gossip
     pub fn queue_message(&self, envelope: GossipEnvelope) -> bool {
@@ -515,11 +617,19 @@ impl TurboGossipRouter {
         let priority = envelope.priority();
         let base_fanout = priority.base_fanout();
         
-        // Sort peers by score
+        // Sort peers by score and apply per-peer backpressure limits.
+        let payload_bytes = envelope.payload.len();
         let mut scored_peers: Vec<_> = peers
             .values()
             .filter(|p| p.id != self.local_id && p.id != envelope.origin)
-            .map(|p| (p.id, p.score()))
+            .filter_map(|p| {
+                if p.is_allowed(payload_bytes) {
+                    let score = if p.is_whitelisted { f32::INFINITY } else { p.score() };
+                    Some((p.id, score))
+                } else {
+                    None
+                }
+            })
             .collect();
         
         scored_peers.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
@@ -552,14 +662,29 @@ impl TurboGossipRouter {
         let eager_peers: Vec<PeerId> = scored_peers
             .iter()
             .take(eager_count)
-            .map(|(id, _)| *id)
+            .filter_map(|(id, _)| {
+                if let Some(peer) = peers.get(id) {
+                    if peer.try_consume(payload_bytes) {
+                        return Some(*id);
+                    }
+                }
+                None
+            })
             .collect();
         
+        let ihave_cost = (payload_bytes / 8).max(32);
         let lazy_peers: Vec<PeerId> = scored_peers
             .iter()
             .skip(eager_count)
             .take(fanout - eager_count)
-            .map(|(id, _)| *id)
+            .filter_map(|(id, _)| {
+                if let Some(peer) = peers.get(id) {
+                    if peer.try_consume(ihave_cost) {
+                        return Some(*id);
+                    }
+                }
+                None
+            })
             .collect();
         
         GossipTargets { eager_peers, lazy_peers }
