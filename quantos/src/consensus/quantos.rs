@@ -58,6 +58,7 @@ impl QuantosConsensus {
             state_manager.clone(),
             config.num_shards as u16,
             100_000,
+            config.stacc_require_activation,
         ));
 
         let executor = Arc::new(OptimisticExecutor::new(

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::net::IpAddr;
+use std::sync::OnceLock;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -27,7 +28,18 @@ const BAN_THRESHOLD: usize = 500;
 /// Maximum cumulative contract storage per deployer (100MB)
 const MAX_STORAGE_PER_ACCOUNT: usize = 100 * 1024 * 1024;
 /// Maximum concurrent contract executions to prevent CPU exhaustion
-const MAX_CONCURRENT_EXECUTIONS: usize = 16;
+const DEFAULT_MAX_CONCURRENT_EXECUTIONS: usize = 128;
+
+fn max_concurrent_executions() -> usize {
+    static MAX_CONCURRENT_EXECUTIONS: OnceLock<usize> = OnceLock::new();
+    *MAX_CONCURRENT_EXECUTIONS.get_or_init(|| {
+        std::env::var("QUANTOS_MAX_CONCURRENT_EXECUTIONS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(DEFAULT_MAX_CONCURRENT_EXECUTIONS)
+    })
+}
 
 use crate::consensus::QuantosConsensus;
 use crate::state::StateManager;
@@ -173,7 +185,7 @@ impl RpcServer {
             rate_limiter: self.rate_limiter.clone(),
             chain_id: 1, // Default chain ID - should be configurable
             deployer_storage: Arc::new(RwLock::new(HashMap::new())),
-            exec_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_EXECUTIONS)),
+            exec_semaphore: Arc::new(tokio::sync::Semaphore::new(max_concurrent_executions())),
             start_time: Instant::now(),
             num_shards: self.config.num_shards,
         };

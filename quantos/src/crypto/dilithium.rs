@@ -1,6 +1,8 @@
 use pqcrypto_dilithium::dilithium3;
 use pqcrypto_traits::sign::{PublicKey as PQPublicKey, SecretKey as PQSecretKey, DetachedSignature};
 use crate::crypto::{CryptoError, CryptoResult};
+use crate::crypto::precomputed::VERIFY_CACHE;
+use sha3::{Digest, Sha3_256};
 use crate::types::{Address, hash_data};
 
 #[derive(Clone)]
@@ -95,16 +97,29 @@ pub fn sign_dilithium(secret_key: &[u8], message: &[u8]) -> CryptoResult<Vec<u8>
 }
 
 pub fn verify_dilithium(public_key: &[u8], message: &[u8], signature: &[u8]) -> CryptoResult<bool> {
-    let pk = dilithium3::PublicKey::from_bytes(public_key)
-        .map_err(|_| CryptoError::InvalidPublicKey)?;
-    
-    let sig = dilithium3::DetachedSignature::from_bytes(signature)
-        .map_err(|_| CryptoError::InvalidSignature)?;
-    
-    match dilithium3::verify_detached_signature(&sig, message, &pk) {
-        Ok(()) => Ok(true),
-        Err(_) => Ok(false),
-    }
+    // Compute a short key for caching: SHA3(pubkey || message || signature)
+    let mut hasher = Sha3_256::new();
+    hasher.update(public_key);
+    hasher.update(message);
+    hasher.update(signature);
+    let key = hasher.finalize().to_vec();
+
+    let cached = VERIFY_CACHE.get_or_compute(&key, || {
+        // If not cached, perform the expensive parse + verify
+        let pk = match dilithium3::PublicKey::from_bytes(public_key) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+
+        let sig = match dilithium3::DetachedSignature::from_bytes(signature) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+
+        dilithium3::verify_detached_signature(&sig, message, &pk).is_ok()
+    });
+
+    Ok(cached)
 }
 
 pub fn public_key_to_address(public_key: &[u8]) -> Address {

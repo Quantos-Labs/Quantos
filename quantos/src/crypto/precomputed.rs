@@ -13,6 +13,41 @@ use once_cell::sync::Lazy;
 use dashmap::DashMap;
 
 use crate::types::{Address, Hash, hash_data};
+use sha3::{Digest, Sha3_256};
+
+/// Signature verification cache: maps SHA3(pubkey|message|sig) -> bool
+pub struct VerifyCache {
+    cache: DashMap<Vec<u8>, bool>,
+    max_size: usize,
+}
+
+impl VerifyCache {
+    pub fn new(max_size: usize) -> Self {
+        Self { cache: DashMap::with_capacity(max_size), max_size }
+    }
+
+    /// Get cached result or compute and store it.
+    pub fn get_or_compute<F: FnOnce() -> bool>(&self, key: &[u8], compute: F) -> bool {
+        if let Some(v) = self.cache.get(key) {
+            return *v;
+        }
+
+        let res = compute();
+
+        if self.cache.len() >= self.max_size {
+            if let Some(k) = self.cache.iter().next().map(|e| e.key().clone()) {
+                self.cache.remove(&k);
+            }
+        }
+        self.cache.insert(key.to_vec(), res);
+        res
+    }
+
+    pub fn size(&self) -> usize { self.cache.len() }
+}
+
+/// Global verification cache instance.
+pub static VERIFY_CACHE: Lazy<VerifyCache> = Lazy::new(|| VerifyCache::new(200_000));
 
 /// Dilithium modulus q = 8380417
 pub const DILITHIUM_Q: i32 = 8380417;

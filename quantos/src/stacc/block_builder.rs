@@ -1,14 +1,14 @@
-use crate::stacc::cu_metering::BLOCK_CU_LIMIT;
+use crate::stacc::cu_metering::block_cu_limit;
 use crate::types::SignedTransaction;
 
 pub const SYSTEM_LANE_PCT: u64 = 5;
 
 pub fn system_lane_limit() -> u64 {
-    (BLOCK_CU_LIMIT * SYSTEM_LANE_PCT) / 100
+    (block_cu_limit() * SYSTEM_LANE_PCT) / 100
 }
 
 pub fn stacc_lane_limit() -> u64 {
-    BLOCK_CU_LIMIT.saturating_sub(system_lane_limit())
+    block_cu_limit().saturating_sub(system_lane_limit())
 }
 
 /// Classifies system transactions that bypass STACC ordering/quota.

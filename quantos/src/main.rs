@@ -430,12 +430,27 @@ pub struct NodeConfig {
     
     /// Maximum number of sidechains
     pub max_sidechains: usize,
+
+    /// Whether STACC requires sender activation before admission.
+    /// Mainnet defaults to true, testnet/devnet default to false.
+    pub stacc_require_activation: bool,
 }
 
 impl NodeConfig {
+    fn env_bool(name: &str) -> Option<bool> {
+        let raw = std::env::var(name).ok()?;
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        }
+    }
+
     /// Creates a new NodeConfig from CLI arguments and genesis config.
     pub fn from_cli(cli: &Cli, genesis: &GenesisConfig) -> Self {
         let network_name = genesis.network.name();
+        let stacc_require_activation = Self::env_bool("QUANTOS_STACC_REQUIRE_ACTIVATION")
+            .unwrap_or(matches!(genesis.network, NetworkId::Mainnet));
         Self {
             db_path: format!("{}/{}", cli.datadir, network_name),
             p2p_port: cli.p2p_port,
@@ -453,6 +468,7 @@ impl NodeConfig {
             max_shards: genesis.chain.max_shards as usize,
             sidechains_enabled: true,
             max_sidechains: 1000,
+            stacc_require_activation,
         }
     }
     
@@ -491,6 +507,7 @@ impl NodeConfig {
             max_shards: 10_000,
             sidechains_enabled: true,
             max_sidechains: 1000,
+            stacc_require_activation: Self::env_bool("QUANTOS_STACC_REQUIRE_ACTIVATION").unwrap_or(true),
         }
     }
 }

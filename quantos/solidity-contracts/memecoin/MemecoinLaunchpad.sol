@@ -34,7 +34,7 @@ contract MemecoinLaunchpad {
     uint256 public constant TRADE_FEE_BPS      = 50;   // 0.5 %
     uint256 public constant BPS_DENOM          = 10000;
 
-    uint256 public constant MIGRATION_TARGET   = 50000000000000000000; // 50 QTEST (testing)
+    uint256 public constant MIGRATION_TARGET   = 50000000000000000000000; // 50,000 QTEST
 
     uint256 public constant INITIAL_VIRTUAL_QTEST = 30000000000000000000; // 30 QTEST virtual (testing)
 

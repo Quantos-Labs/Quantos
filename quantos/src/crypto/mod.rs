@@ -51,6 +51,7 @@ mod simd;
 mod memory_pool;
 mod zero_copy;
 mod precomputed;
+mod verify_worker;
 mod threshold_qrvrf;
 pub mod batch_verify;
 pub mod signature_aggregation;
@@ -82,6 +83,7 @@ pub use simd::*;
 pub use memory_pool::*;
 pub use zero_copy::*;
 pub use precomputed::*;
+pub use verify_worker::*;
 
 use thiserror::Error;
 

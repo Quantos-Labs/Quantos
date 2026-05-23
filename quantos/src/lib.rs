@@ -136,6 +136,9 @@ pub struct NodeConfig {
     
     /// Maximum number of connected sidechains
     pub max_sidechains: usize,
+
+    /// Whether STACC requires sender activation before mempool admission.
+    pub stacc_require_activation: bool,
 }
 
 impl Default for NodeConfig {
@@ -157,6 +160,7 @@ impl Default for NodeConfig {
             execution_threads: num_cpus::get(),
             sidechains_enabled: true,
             max_sidechains: 1000,
+            stacc_require_activation: true,
         }
     }
 }

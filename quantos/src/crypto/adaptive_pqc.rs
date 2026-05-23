@@ -74,6 +74,17 @@ pub enum PQCStrategy {
     MLBased,
 }
 
+/// Preference for which algorithm to prefer when propagating messages
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PropagationPref {
+    PreferDilithium,
+    PreferFalcon,
+}
+
+impl Default for PropagationPref {
+    fn default() -> Self { PropagationPref::PreferDilithium }
+}
+
 /// Transaction context for algorithm selection
 #[derive(Debug, Clone)]
 pub struct TransactionContext {
@@ -186,6 +197,8 @@ pub struct AdaptivePQCSelector {
     
     /// Selection statistics
     stats: Arc<RwLock<SelectionStats>>,
+    /// Propagation preference (advisory)
+    propagation_pref: Arc<RwLock<PropagationPref>>,
 }
 
 /// Cost function weights for multi-objective optimization
@@ -392,7 +405,16 @@ impl AdaptivePQCSelector {
             ml_predictor: Arc::new(RwLock::new(None)),
             cost_weights: Arc::new(RwLock::new(CostWeights::default())),
             stats: Arc::new(RwLock::new(SelectionStats::default())),
+            propagation_pref: Arc::new(RwLock::new(PropagationPref::default())),
         }
+    }
+
+    pub fn set_propagation_pref(&self, p: PropagationPref) {
+        *self.propagation_pref.write() = p;
+    }
+
+    pub fn propagation_pref(&self) -> PropagationPref {
+        *self.propagation_pref.read()
     }
 
     /// Initialize ML predictor with neural network (called after sufficient training data)

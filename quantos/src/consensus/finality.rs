@@ -220,7 +220,35 @@ impl FinalityLayer {
         if let Some((_, pending)) = self.pending_checkpoints.remove(checkpoint_hash) {
             let mut checkpoint = pending.checkpoint;
             checkpoint.validators = pending.signatures.iter().map(|s| s.validator).collect();
-            
+
+            // Build aggregated signature and compact form for propagation/storage
+            let validator_set = self.committee_manager.get_validator_set();
+            let committee_size = validator_set.validators.len();
+
+            let mut signatures = Vec::new();
+            let mut public_keys = Vec::new();
+            let mut signer_indices = Vec::new();
+
+            for (i, v) in validator_set.validators.iter().enumerate() {
+                if pending.signers.contains(&v.address) {
+                    if let Some(sig) = pending.signatures.iter().find(|s| s.validator == v.address) {
+                        signatures.push(sig.signature.clone());
+                        public_keys.push(v.finality_public_key.clone());
+                        signer_indices.push(i);
+                    }
+                }
+            }
+
+            if !signatures.is_empty() {
+                let aggregator = crate::crypto::signature_aggregation::SignatureAggregator::new(validator_set.validators.len());
+                if let Ok(agg) = aggregator.aggregate(signatures, public_keys, &checkpoint.signing_data()) {
+                    let compact = aggregator.compact(&agg, committee_size, &signer_indices);
+                    if let Ok(bytes) = bincode::serialize(&compact) {
+                        checkpoint.signature = bytes;
+                    }
+                }
+            }
+
             self.storage.put_checkpoint(&checkpoint)
                 .map_err(|e| ConsensusError::StorageError(e.to_string()))?;
 

@@ -168,13 +168,12 @@ impl Mempool {
 
     fn validate_transaction(&self, tx: &SignedTransaction) -> MempoolResult<()> {
         let signing_data = tx.transaction.signing_data();
-        let valid = verify_dilithium(
-            &tx.transaction.public_key,
-            &signing_data,
-            &tx.transaction.signature,
-        ).map_err(|e| {
-            MempoolError::InvalidTransaction(e.to_string())
-        })?;
+        // Use batched verification worker to reduce per-tx overhead
+        let valid = crate::crypto::verify_dilithium_batch(
+            tx.transaction.public_key.clone(),
+            signing_data.clone(),
+            tx.transaction.signature.clone(),
+        );
 
         if !valid {
             tracing::error!("SIGCHECK: signature did not verify (valid=false)");
