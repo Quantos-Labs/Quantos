@@ -483,6 +483,34 @@ impl QuantosConsensus {
         self.committee_manager.add_validator(validator)
     }
 
+    /// Returns a ValidatorSetSnapshot for L0 finality proofs
+    pub fn get_validator_snapshot(&self) -> Option<ValidatorSetSnapshot> {
+        let validator_set = self.committee_manager.get_validator_set();
+        let active = validator_set.active_validators();
+        
+        if active.is_empty() {
+            return None;
+        }
+
+        use crate::l0::proof::ValidatorRecord;
+        
+        let validators: Vec<ValidatorRecord> = active
+            .iter()
+            .map(|v| ValidatorRecord {
+                address: v.address,
+                public_key: v.public_key.clone(),
+                stake: v.stake.0,
+            })
+            .collect();
+
+        let root = ValidatorSetSnapshot::compute_root(&validators);
+
+        Some(ValidatorSetSnapshot {
+            root,
+            validators,
+        })
+    }
+
     pub fn get_metrics(&self) -> ConsensusMetrics {
         ConsensusMetrics {
             current_slot: self.current_slot(),
