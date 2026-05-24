@@ -13,6 +13,7 @@ use sha3::{Digest, Sha3_256};
 use crate::crypto::{verify_dilithium_batch, verify_falcon};
 use crate::l0::config::L0Config;
 use crate::l0::error::{L0Error, L0Result};
+use crate::l0::external::{ExternalCheckpoint, VerificationResult, VerificationStrategy};
 use crate::l0::proof::{
     L0FinalityProof, L0ProofHeader, L0_PROOF_VERSION, PqcSignatureAlgo, ProofSignature,
     ValidatorRecord,
@@ -105,6 +106,11 @@ impl FinalityHub {
         self.config.read().enabled
     }
 
+    /// Returns a read handle to the current configuration.
+    pub fn config(&self) -> parking_lot::MappedRwLockReadGuard<'_, L0Config> {
+        parking_lot::RwLockReadGuard::map(self.config.read(), |c| c)
+    }
+
     /// Updates the live configuration. Used by admin endpoints.
     pub fn update_config(&self, config: L0Config) -> L0Result<()> {
         config.validate().map_err(L0Error::Config)?;
@@ -150,6 +156,7 @@ impl FinalityHub {
 
         let header = L0ProofHeader {
             version: L0_PROOF_VERSION,
+            external_chain: None, // Native Quantos checkpoint
             epoch: checkpoint.epoch,
             slot: checkpoint.slot,
             previous_proof_hash,
@@ -260,5 +267,149 @@ impl FinalityHub {
             .rev()
             .find(|p| &p.proof_hash() == hash)
             .cloned()
+    }
+
+    /// Builds a PQC finality proof for an external chain checkpoint.
+    ///
+    /// This enables external chains (Ethereum, Solana, NEAR, Aptos, etc.) to
+    /// anchor their finality on Quantos by submitting their checkpoints and
+    /// receiving PQC-signed proofs in return.
+    ///
+    /// # Arguments
+    ///
+    /// * `checkpoint` - The external chain checkpoint to certify
+    /// * `snapshot` - Quantos validator set that will sign the proof
+    /// * `contributions` - PQC signatures from Quantos validators
+    /// * `verification` - Result of verifying the external checkpoint
+    ///
+    /// # Returns
+    ///
+    /// An `L0FinalityProof` with `external_chain` set to the checkpoint's chain ID.
+    pub fn build_external_proof(
+        &self,
+        checkpoint: &ExternalCheckpoint,
+        snapshot: &ValidatorSetSnapshot,
+        contributions: &[SignatureContribution],
+        verification: &VerificationResult,
+    ) -> L0Result<L0FinalityProof> {
+        if !verification.valid {
+            return Err(L0Error::InvalidCheckpoint(
+                verification.reason.clone().unwrap_or_else(|| "Invalid external checkpoint".into()),
+            ));
+        }
+
+        if snapshot.validators.is_empty() {
+            return Err(L0Error::UnknownValidatorSet(
+                "snapshot has no validators".into(),
+            ));
+        }
+
+        let cfg = self.config.read().clone();
+        let total_stake = snapshot.total_stake();
+        let required = cfg.required_stake(total_stake);
+
+        let validator_set_root = snapshot.root;
+        let previous_proof_hash = *self.last_proof_hash.read();
+
+        let header = L0ProofHeader {
+            version: L0_PROOF_VERSION,
+            external_chain: Some(checkpoint.chain_id.clone()),
+            epoch: checkpoint.block_number,
+            slot: 0, // External chains don't have Quantos slots
+            previous_proof_hash,
+            state_root: checkpoint.state_root,
+            dag_root: checkpoint.block_hash, // Use block_hash as dag_root equivalent
+            validator_set_root,
+            total_stake,
+            stake_threshold: required,
+            emitted_at_ms: chrono::Utc::now().timestamp_millis() as u64,
+        };
+
+        // Build a draft proof so we can compute the signing digest
+        let mut proof = L0FinalityProof {
+            header,
+            validators: snapshot.validators.clone(),
+            signatures: Vec::with_capacity(contributions.len()),
+        };
+        let digest = proof.signing_digest();
+
+        // Verify and attach each contribution
+        let mut signed_stake: u128 = 0;
+        for contribution in contributions {
+            let Some(index) = snapshot.position_of(&contribution.validator) else {
+                continue;
+            };
+            let validator = &snapshot.validators[index];
+
+            let ok = match contribution.algo {
+                PqcSignatureAlgo::Falcon512 => verify_falcon(
+                    &validator.public_key,
+                    &digest,
+                    &contribution.signature,
+                )
+                .unwrap_or(false),
+                PqcSignatureAlgo::Dilithium3 => verify_dilithium_batch(
+                    validator.public_key.clone(),
+                    digest.to_vec(),
+                    contribution.signature.clone(),
+                ),
+            };
+
+            if !ok {
+                continue;
+            }
+
+            // Refuse duplicates
+            if proof
+                .signatures
+                .iter()
+                .any(|s| s.validator_index as usize == index)
+            {
+                continue;
+            }
+
+            proof.signatures.push(ProofSignature {
+                validator_index: index as u32,
+                algo: contribution.algo,
+                signature: contribution.signature.clone(),
+            });
+            signed_stake = signed_stake.saturating_add(validator.stake);
+
+            if signed_stake >= required {
+                break;
+            }
+        }
+
+        if signed_stake < required {
+            self.metrics.write().proofs_failed = self
+                .metrics
+                .read()
+                .proofs_failed
+                .saturating_add(1);
+            return Err(L0Error::InsufficientStake {
+                signed: signed_stake,
+                required,
+            });
+        }
+
+        let proof_hash = proof.proof_hash();
+        *self.last_proof_hash.write() = proof_hash;
+
+        if cfg.archive_proofs {
+            let mut archive = self.archive.write();
+            if archive.len() >= cfg.archive_capacity {
+                archive.pop_front();
+            }
+            archive.push_back(proof.clone());
+            self.metrics.write().archived_proofs = archive.len() as u64;
+        }
+
+        self.metrics.write().proofs_produced = self
+            .metrics
+            .read()
+            .proofs_produced
+            .saturating_add(1);
+
+        Ok(proof)
     }
 }

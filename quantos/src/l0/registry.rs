@@ -33,8 +33,18 @@ pub enum ChainFamily {
     Move,
     /// Cosmos-SDK / IBC chains.
     Cosmos,
+    /// NEAR Protocol.
+    Near,
+    /// TON (The Open Network).
+    Ton,
+    /// Bitcoin and Bitcoin-like chains.
+    Bitcoin,
+    /// Substrate-based chains (Polkadot, Kusama, …).
+    Substrate,
+    /// Cardano.
+    Cardano,
     /// Generic catch-all for non-EVM chains using a custom adapter.
-    Other,
+    Custom,
 }
 
 /// Stable, opaque identifier for a target chain.
@@ -172,27 +182,43 @@ impl ChainRegistry {
 
 fn default_adapters() -> Vec<ChainAdapter> {
     use ChainFamily::*;
-    let mk = |id: &str, family, magic, name: &str| ChainAdapter {
+    let mk = |id: &str, family, magic, name: &str, enabled: bool| ChainAdapter {
         id: TargetChainId::new(id),
         family,
         chain_magic: magic,
         display_name: name.to_string(),
         endpoint: String::new(),
         receiver_address: None,
-        enabled: false,
+        enabled,
     };
 
     vec![
-        mk("ethereum", Evm, 1, "Ethereum"),
-        mk("monad", Evm, 41_454, "Monad"),
-        mk("hyperliquid-evm", Evm, 999, "Hyperliquid EVM"),
-        mk("arbitrum", Evm, 42_161, "Arbitrum One"),
-        mk("base", Evm, 8_453, "Base"),
-        mk("solana", Svm, 0x534F_4C, "Solana"),
-        mk("tron", Tvm, 728_126_428, "Tron"),
-        mk("stellar", Stellar, 0x5354_4C, "Stellar"),
-        mk("aptos", Move, 0x4150_54, "Aptos"),
-        mk("sui", Move, 0x5355_49, "Sui"),
-        mk("cosmoshub", Cosmos, 0x434F_53, "Cosmos Hub"),
+        // EVM chains
+        mk("ethereum", Evm, 1, "Ethereum", false),
+        mk("monad", Evm, 41_454, "Monad", false),
+        mk("hyperliquid-evm", Evm, 999, "Hyperliquid EVM", false),
+        mk("arbitrum", Evm, 42_161, "Arbitrum One", false),
+        mk("base", Evm, 8_453, "Base", false),
+        // SVM (Solana) — production active
+        mk("solana", Svm, 0x534F_4C, "Solana", true),
+        // TVM (Tron) — production active
+        mk("tron", Tvm, 728_126_428, "Tron", true),
+        // Stellar — production active
+        mk("stellar", Stellar, 0x5354_4C, "Stellar", true),
+        // Move chains — production active (Aptos, Sui)
+        mk("aptos", Move, 0x4150_54, "Aptos", true),
+        mk("sui", Move, 0x5355_49, "Sui", true),
+        // Cosmos — production active
+        mk("cosmoshub", Cosmos, 0x434F_53, "Cosmos Hub", true),
+        // NEAR Protocol — production active
+        mk("near", Near, 0x4E45_41, "NEAR Protocol", true),
+        // Bitcoin L2 (Stacks) — production active
+        mk("bitcoin-stacks", Bitcoin, 0x4254_43, "Bitcoin (Stacks)", true),
+        // TON — production active
+        mk("ton", Ton, 0x544F_4E, "TON", true),
+        // Polkadot — production active
+        mk("polkadot", Substrate, 0x504F_4C, "Polkadot", true),
+        // Cardano — production active
+        mk("cardano", Cardano, 0x4341_52, "Cardano", true),
     ]
 }

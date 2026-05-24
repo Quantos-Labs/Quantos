@@ -14,6 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::Mutex;
+use reqwest::blocking::Client;
+use serde_json::json;
 
 use crate::l0::config::{L0Config, RelayBackoff};
 use crate::l0::encoding::{CanonicalEncoder, EncodedProof};
@@ -91,6 +93,60 @@ impl From<RelayTransportError> for L0Error {
             RelayTransportError::Transient(msg) => L0Error::Transport(msg),
             RelayTransportError::Permanent(msg) => L0Error::PermanentRelay(msg),
         }
+    }
+}
+
+/// HTTP relay transport for submitting proofs to remote operator endpoints.
+///
+/// This is a simple default transport implementation for target chains
+/// that expose a JSON acceptance endpoint.
+pub struct HttpRelayTransport {
+    client: Client,
+}
+
+impl HttpRelayTransport {
+    pub fn new() -> Self {
+        Self {
+            client: Client::new(),
+        }
+    }
+}
+
+impl RelayTransport for HttpRelayTransport {
+    fn submit(
+        &self,
+        adapter: &ChainAdapter,
+        payload: &EncodedProof,
+    ) -> Result<String, RelayTransportError> {
+        let body = json!({
+            "chain_id": adapter.id.as_str(),
+            "chain_family": format!("{:?}", adapter.family),
+            "receiver_address": adapter.receiver_address,
+            "proof_hash": hex::encode(payload.proof_hash),
+            "format": format!("{:?}", payload.format),
+            "payload": hex::encode(&payload.payload),
+        });
+
+        let response = self
+            .client
+            .post(&adapter.endpoint)
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+            .map_err(|e| RelayTransportError::Transient(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_else(|_| "<unreadable>".to_string());
+            return Err(RelayTransportError::Permanent(format!(
+                "remote rejected proof: {} - {}",
+                status, text
+            )));
+        }
+
+        response
+            .text()
+            .map_err(|e| RelayTransportError::Transient(e.to_string()))
     }
 }
 

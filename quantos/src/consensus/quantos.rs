@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -6,15 +7,19 @@ use parking_lot::RwLock;
 
 use crate::consensus::{
     ConsensusError, ConsensusResult, CommitteeManager, FastPath, FinalityLayer,
-    CrossShardAtomicProtocol, ShardOperation, AtomicResult, AtomicStatus,
+    FinalizedCheckpoint, CrossShardAtomicProtocol, ShardOperation, AtomicResult,
+    AtomicStatus,
 };
 use crate::crypto::{DilithiumKeypair, FalconKeypair, VRFKeypair};
 use crate::dag::DAGGraph;
+use crate::l0::{FinalityHub, HttpRelayTransport, RelayDispatcher, ChainRegistry, ValidatorSetSnapshot};
+use crate::l0::hub::SignatureContribution;
+use crate::l0::proof::PqcSignatureAlgo;
 use crate::mempool::ShardedMempool;
 use crate::state::{StateManager, OptimisticExecutor};
 use crate::storage::Storage;
 use crate::types::{
-    Address, Checkpoint, CommitteeVote, DAGVertex, Hash, 
+    Address, Checkpoint, CommitteeVote, DAGVertex, Hash,
     ShardId, SignedTransaction, Validator,
 };
 use crate::NodeConfig;
@@ -33,6 +38,10 @@ pub struct QuantosConsensus {
     validator_keys: Option<ValidatorKeys>,
     /// PRODUCTION: Cross-Shard Atomic Protocol
     csap: Arc<CrossShardAtomicProtocol>,
+    /// L0 finality hub (optional, enabled via config)
+    finality_hub: Option<Arc<FinalityHub>>,
+    /// L0 relay dispatcher (optional, enabled via config)
+    relay_dispatcher: Option<Arc<RelayDispatcher>>,
 }
 
 struct ValidatorKeys {
@@ -100,6 +109,31 @@ impl QuantosConsensus {
             csap_keypair,
         ));
 
+        // Initialize optional L0 finality hub and relay dispatcher
+        let (finality_hub, relay_dispatcher) = if config.l0_config.enabled {
+            let hub = match FinalityHub::new(config.l0_config.clone()) {
+                Ok(h) => Arc::new(h),
+                Err(e) => {
+                    tracing::warn!("L0 hub initialization failed: {}", e);
+                    return Err(ConsensusError::InvalidData(format!("L0 hub init: {}", e)));
+                }
+            };
+            let registry = ChainRegistry::with_defaults();
+            let mut transports = std::collections::HashMap::new();
+            for adapter in registry.live_targets() {
+                transports.insert(adapter.id.clone(), Arc::new(HttpRelayTransport::new()) as Arc<dyn crate::l0::relay::RelayTransport>);
+            }
+            let dispatcher = Arc::new(RelayDispatcher::new(
+                config.l0_config.clone(),
+                registry,
+                transports,
+            ));
+            tracing::info!("L0 finality hub and relay dispatcher initialized");
+            (Some(hub), Some(dispatcher))
+        } else {
+            (None, None)
+        };
+
         Ok(Self {
             config,
             storage,
@@ -113,6 +147,8 @@ impl QuantosConsensus {
             current_slot: Arc::new(RwLock::new(0)),
             validator_keys: None,
             csap,
+            finality_hub,
+            relay_dispatcher,
         })
     }
 
@@ -214,7 +250,7 @@ impl QuantosConsensus {
 
         if let Some(checkpoint) = self.finality.maybe_create_checkpoint(slot).await? {
             tracing::info!("Checkpoint created at slot {}", slot);
-            
+
             if let Some(ref keys) = self.validator_keys {
                 match self.finality.sign_checkpoint(
                     &checkpoint.hash(),
@@ -222,8 +258,9 @@ impl QuantosConsensus {
                     &keys.finality_key,
                 ).await {
                     Ok(sig) => {
-                        if let Err(e) = self.finality.receive_checkpoint_signature(&checkpoint.hash(), sig).await {
-                            tracing::debug!("Checkpoint signature not accepted: {}", e);
+                        if let Ok(Some(finalized)) = self.finality.receive_checkpoint_signature(&checkpoint.hash(), sig).await {
+                            tracing::info!("Checkpoint finalized at slot {}", slot);
+                            self.build_and_dispatch_l0_proof(&finalized).await;
                         }
                     }
                     Err(e) => {
@@ -234,6 +271,53 @@ impl QuantosConsensus {
         }
 
         Ok(())
+    }
+
+    async fn build_and_dispatch_l0_proof(&self, finalized: &FinalizedCheckpoint) {
+        let Some(hub) = &self.finality_hub else { return; };
+        let Some(dispatcher) = &self.relay_dispatcher else { return; };
+
+        let validator_set = self.committee_manager.get_validator_set();
+        let records: Vec<crate::l0::proof::ValidatorRecord> = validator_set.validators.iter().map(|v| crate::l0::proof::ValidatorRecord {
+            address: v.address,
+            public_key: v.finality_public_key.clone(),
+            stake: v.effective_stake(),
+        }).collect();
+
+        let snapshot = ValidatorSetSnapshot {
+            root: ValidatorSetSnapshot::compute_root(&records),
+            validators: records,
+        };
+
+        let contributions: Vec<SignatureContribution> = finalized.signatures.iter().map(|s| SignatureContribution {
+            validator: s.validator,
+            algo: PqcSignatureAlgo::Falcon512,
+            signature: s.signature.clone(),
+        }).collect();
+
+        match hub.build_proof(&finalized.checkpoint, &snapshot, &contributions) {
+            Ok(proof) => {
+                let proof_hash = hex::encode(proof.proof_hash());
+                tracing::info!("L0 proof built: hash={}", proof_hash);
+                let outcomes = dispatcher.dispatch(&proof);
+                for outcome in outcomes {
+                    match outcome.status {
+                        crate::l0::relay::RelayStatus::Delivered { receipt } => {
+                            tracing::info!("L0 proof delivered to {} | receipt={}", outcome.chain, receipt);
+                        }
+                        crate::l0::relay::RelayStatus::Failed { reason } => {
+                            tracing::warn!("L0 proof failed to {} | reason={}", outcome.chain, reason);
+                        }
+                        crate::l0::relay::RelayStatus::Pending { attempts } => {
+                            tracing::debug!("L0 proof pending to {} | attempts={}", outcome.chain, attempts);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("L0 proof build failed: {}", e);
+            }
+        }
     }
 
     async fn try_produce_vertices(&self, keys: &ValidatorKeys, slot: u64) -> ConsensusResult<()> {
@@ -410,6 +494,14 @@ impl QuantosConsensus {
             total_validators: self.committee_manager.get_validator_set().validators.len(),
         }
     }
+
+    pub fn l0_hub(&self) -> Option<Arc<FinalityHub>> {
+        self.finality_hub.clone()
+    }
+
+    pub fn l0_relay_dispatcher(&self) -> Option<Arc<RelayDispatcher>> {
+        self.relay_dispatcher.clone()
+    }
 }
 
 impl Clone for QuantosConsensus {
@@ -427,6 +519,8 @@ impl Clone for QuantosConsensus {
             current_slot: self.current_slot.clone(),
             validator_keys: None,
             csap: self.csap.clone(),
+            finality_hub: self.finality_hub.clone(),
+            relay_dispatcher: self.relay_dispatcher.clone(),
         }
     }
 }

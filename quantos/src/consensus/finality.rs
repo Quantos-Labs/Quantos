@@ -32,6 +32,12 @@ struct PendingCheckpoint {
     total_stake_signed: u128,
 }
 
+#[derive(Clone, Debug)]
+pub struct FinalizedCheckpoint {
+    pub checkpoint: Checkpoint,
+    pub signatures: Vec<ValidatorSignature>,
+}
+
 impl FinalityLayer {
     pub fn new(
         storage: Storage,
@@ -154,12 +160,12 @@ impl FinalityLayer {
         &self,
         checkpoint_hash: &Hash,
         signature: ValidatorSignature,
-    ) -> ConsensusResult<bool> {
+    ) -> ConsensusResult<Option<FinalizedCheckpoint>> {
         let mut finalized = false;
 
         if let Some(mut pending) = self.pending_checkpoints.get_mut(checkpoint_hash) {
             if pending.signers.contains(&signature.validator) {
-                return Ok(false);
+                return Ok(None);
             }
 
             let validator_set = self.committee_manager.get_validator_set();
@@ -210,38 +216,40 @@ impl FinalityLayer {
         }
 
         if finalized {
-            self.finalize_checkpoint(checkpoint_hash).await?;
+            let finalized_checkpoint = self.finalize_checkpoint(checkpoint_hash).await?;
+            return Ok(Some(finalized_checkpoint));
         }
 
-        Ok(finalized)
+        Ok(None)
     }
 
-    async fn finalize_checkpoint(&self, checkpoint_hash: &Hash) -> ConsensusResult<()> {
+    async fn finalize_checkpoint(&self, checkpoint_hash: &Hash) -> ConsensusResult<FinalizedCheckpoint> {
         if let Some((_, pending)) = self.pending_checkpoints.remove(checkpoint_hash) {
+            let signatures = pending.signatures.clone();
             let mut checkpoint = pending.checkpoint;
-            checkpoint.validators = pending.signatures.iter().map(|s| s.validator).collect();
+            checkpoint.validators = signatures.iter().map(|s| s.validator).collect();
 
             // Build aggregated signature and compact form for propagation/storage
             let validator_set = self.committee_manager.get_validator_set();
             let committee_size = validator_set.validators.len();
 
-            let mut signatures = Vec::new();
+            let mut raw_sigs = Vec::new();
             let mut public_keys = Vec::new();
             let mut signer_indices = Vec::new();
 
             for (i, v) in validator_set.validators.iter().enumerate() {
                 if pending.signers.contains(&v.address) {
                     if let Some(sig) = pending.signatures.iter().find(|s| s.validator == v.address) {
-                        signatures.push(sig.signature.clone());
+                        raw_sigs.push(sig.signature.clone());
                         public_keys.push(v.finality_public_key.clone());
                         signer_indices.push(i);
                     }
                 }
             }
 
-            if !signatures.is_empty() {
+            if !raw_sigs.is_empty() {
                 let aggregator = crate::crypto::signature_aggregation::SignatureAggregator::new(validator_set.validators.len());
-                if let Ok(agg) = aggregator.aggregate(signatures, public_keys, &checkpoint.signing_data()) {
+                if let Ok(agg) = aggregator.aggregate(raw_sigs, public_keys, &checkpoint.signing_data()) {
                     let compact = aggregator.compact(&agg, committee_size, &signer_indices);
                     if let Ok(bytes) = bincode::serialize(&compact) {
                         checkpoint.signature = bytes;
@@ -262,9 +270,14 @@ impl FinalityLayer {
                 checkpoint.slot,
                 checkpoint.vertex_count
             );
+
+            return Ok(FinalizedCheckpoint {
+                checkpoint,
+                signatures,
+            });
         }
 
-        Ok(())
+        Err(ConsensusError::InvalidData("pending checkpoint missing during finalization".to_string()))
     }
 
     async fn mark_vertices_finalized(

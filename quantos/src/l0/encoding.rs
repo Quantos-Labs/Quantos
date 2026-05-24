@@ -53,7 +53,12 @@ impl EncodingFormat {
             ChainFamily::Stellar => EncodingFormat::JsonStellar,
             ChainFamily::Move => EncodingFormat::JsonMove,
             ChainFamily::Cosmos => EncodingFormat::JsonCosmos,
-            ChainFamily::Other => EncodingFormat::JsonGeneric,
+            ChainFamily::Near => EncodingFormat::JsonGeneric,
+            ChainFamily::Ton => EncodingFormat::JsonGeneric,
+            ChainFamily::Bitcoin => EncodingFormat::JsonGeneric,
+            ChainFamily::Substrate => EncodingFormat::JsonGeneric,
+            ChainFamily::Cardano => EncodingFormat::JsonGeneric,
+            ChainFamily::Custom => EncodingFormat::JsonGeneric,
         }
     }
 }
@@ -132,7 +137,12 @@ fn family_tag(family: ChainFamily) -> &'static str {
         ChainFamily::Stellar => "stellar",
         ChainFamily::Move => "move",
         ChainFamily::Cosmos => "cosmos",
-        ChainFamily::Other => "other",
+        ChainFamily::Near => "near",
+        ChainFamily::Ton => "ton",
+        ChainFamily::Bitcoin => "bitcoin",
+        ChainFamily::Substrate => "substrate",
+        ChainFamily::Cardano => "cardano",
+        ChainFamily::Custom => "custom",
     }
 }
 

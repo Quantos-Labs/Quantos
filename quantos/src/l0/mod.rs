@@ -55,6 +55,7 @@
 pub mod config;
 pub mod encoding;
 pub mod error;
+pub mod external;
 pub mod hub;
 pub mod proof;
 pub mod registry;
@@ -64,10 +65,11 @@ pub mod verifier;
 pub use config::{L0Config, RelayBackoff, TargetChainConfig};
 pub use encoding::{CanonicalEncoder, EncodedProof, EncodingFormat};
 pub use error::{L0Error, L0Result};
+pub use external::{ChainId, ExternalCheckpoint, VerificationResult, VerificationStrategy};
 pub use hub::{FinalityHub, HubMetrics, ValidatorSetSnapshot};
 pub use proof::{
     L0FinalityProof, L0ProofHeader, L0_PROOF_VERSION, ProofSignature, ValidatorRecord,
 };
 pub use registry::{ChainAdapter, ChainFamily, ChainRegistry, TargetChainId};
-pub use relay::{RelayDispatcher, RelayJob, RelayOutcome, RelayStatus};
+pub use relay::{HttpRelayTransport, RelayDispatcher, RelayJob, RelayOutcome, RelayStatus};
 pub use verifier::{ExternalVerifier, VerificationReport};

@@ -19,6 +19,7 @@
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 
+use crate::l0::external::ChainId;
 use crate::types::Hash;
 
 /// Wire version emitted by the current implementation. Bumped any time
@@ -42,15 +43,24 @@ pub enum PqcSignatureAlgo {
 pub struct L0ProofHeader {
     /// Wire version, must equal [`L0_PROOF_VERSION`] on emission.
     pub version: u16,
-    /// Epoch the attested checkpoint belongs to.
+    
+    /// External chain ID (if this proof certifies an external checkpoint).
+    /// None means this is a native Quantos checkpoint.
+    pub external_chain: Option<ChainId>,
+    
+    /// Epoch the attested checkpoint belongs to (Quantos epoch for native,
+    /// or external block number for external checkpoints).
     pub epoch: u64,
-    /// Slot the attested checkpoint belongs to.
+    /// Slot the attested checkpoint belongs to (Quantos slot for native,
+    /// or 0 for external checkpoints).
     pub slot: u64,
     /// Hash of the previous L0 proof (chaining for replay-protection).
     pub previous_proof_hash: Hash,
-    /// State root committed by the L1 DAG at this checkpoint.
+    /// State root committed by the L1 DAG at this checkpoint (Quantos state_root
+    /// for native, or external chain state_root for external checkpoints).
     pub state_root: Hash,
-    /// Root of the L1 DAG at this checkpoint.
+    /// Root of the L1 DAG at this checkpoint (Quantos dag_root for native,
+    /// or external chain block_hash for external checkpoints).
     pub dag_root: Hash,
     /// Hash of the validator set snapshot used to sign this proof.
     pub validator_set_root: Hash,
@@ -103,6 +113,15 @@ impl L0FinalityProof {
     pub fn signing_digest(&self) -> Hash {
         let mut hasher = Sha3_256::new();
         hasher.update(&self.header.version.to_be_bytes());
+        
+        // Include external_chain if present
+        if let Some(ref chain) = self.header.external_chain {
+            hasher.update([1u8]); // marker for external
+            hasher.update(chain.as_str().as_bytes());
+        } else {
+            hasher.update([0u8]); // marker for native Quantos
+        }
+        
         hasher.update(&self.header.epoch.to_be_bytes());
         hasher.update(&self.header.slot.to_be_bytes());
         hasher.update(self.header.previous_proof_hash);

@@ -138,6 +138,9 @@ pub struct NodeConfig {
     /// Maximum number of connected sidechains
     pub max_sidechains: usize,
 
+    /// Optional L0 finality hub configuration.
+    pub l0_config: crate::l0::L0Config,
+
     /// Whether STACC requires sender activation before mempool admission.
     pub stacc_require_activation: bool,
 }
@@ -161,6 +164,10 @@ impl Default for NodeConfig {
             execution_threads: num_cpus::get(),
             sidechains_enabled: true,
             max_sidechains: 1000,
+            l0_config: crate::l0::L0Config {
+                enabled: true,
+                ..crate::l0::L0Config::default()
+            },
             stacc_require_activation: true,
         }
     }

@@ -41,6 +41,7 @@ mod vm;
 mod standards;
 mod stacc;
 mod genesis;
+pub mod l0;
 
 use std::time::Duration;
 use anyhow::Result;
@@ -431,6 +432,9 @@ pub struct NodeConfig {
     /// Maximum number of sidechains
     pub max_sidechains: usize,
 
+    /// Optional L0 finality hub configuration
+    pub l0_config: crate::l0::L0Config,
+
     /// Whether STACC requires sender activation before admission.
     /// Mainnet defaults to true, testnet/devnet default to false.
     pub stacc_require_activation: bool,
@@ -468,6 +472,10 @@ impl NodeConfig {
             max_shards: genesis.chain.max_shards as usize,
             sidechains_enabled: true,
             max_sidechains: 1000,
+            l0_config: crate::l0::L0Config {
+                enabled: true,
+                ..crate::l0::L0Config::default()
+            },
             stacc_require_activation,
         }
     }
@@ -507,6 +515,10 @@ impl NodeConfig {
             max_shards: 10_000,
             sidechains_enabled: true,
             max_sidechains: 1000,
+            l0_config: crate::l0::L0Config {
+                enabled: true,
+                ..crate::l0::L0Config::default()
+            },
             stacc_require_activation: Self::env_bool("QUANTOS_STACC_REQUIRE_ACTIVATION").unwrap_or(true),
         }
     }

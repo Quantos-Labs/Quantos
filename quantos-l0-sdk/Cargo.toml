@@ -1,0 +1,23 @@
+[package]
+name = "quantos-l0-sdk"
+version = "0.1.0"
+edition = "2021"
+authors = ["Quantos Labs"]
+description = "Quantos L0 SDK — verify, fetch, and register PQC finality proofs"
+license = "MIT"
+repository = "https://github.com/quantos-labs/quantos"
+keywords = ["blockchain", "post-quantum", "l0", "finality", "pqc"]
+categories = ["cryptography"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha3 = "0.10"
+hex = "0.4"
+thiserror = "1.0"
+
+pqcrypto-falcon = "0.3"
+pqcrypto-dilithium = "0.5"
+pqcrypto-traits = "0.3"
+
+reqwest = { version = "0.11", features = ["blocking", "json"] }

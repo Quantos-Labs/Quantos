@@ -354,6 +354,13 @@ pub trait QuantosRpc {
 
     #[method(name = "qnt_getReceiptsSinceSlot")]
     async fn get_receipts_since_slot(&self, since_slot: u64, limit: Option<usize>) -> Result<Vec<ConfirmedTransactionInfo>, jsonrpsee::types::ErrorObjectOwned>;
+
+    // ====================================================================
+    // L0 — Post-Quantum Finality Hub (external chain attestation)
+    // ====================================================================
+
+    #[method(name = "qnt_submitExternalCheckpoint")]
+    async fn submit_external_checkpoint(&self, request: ExternalCheckpointRequest) -> Result<ExternalCheckpointResponse, jsonrpsee::types::ErrorObjectOwned>;
 }
 
 pub struct QuantosRpcImpl {
@@ -995,6 +1002,101 @@ impl QuantosRpcServer for QuantosRpcImpl {
             .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, e.to_string(), None::<()>))?;
         Ok(receipts.iter().map(|r| self.build_confirmed_tx_info(r)).collect())
     }
+
+    // ====================================================================
+    // L0 — Post-Quantum Finality Hub (external chain attestation)
+    // ====================================================================
+
+    async fn submit_external_checkpoint(&self, request: ExternalCheckpointRequest) -> Result<ExternalCheckpointResponse, jsonrpsee::types::ErrorObjectOwned> {
+        self.check_rate_limit()?;
+
+        use crate::l0::ValidatorSetSnapshot;
+        use crate::l0::proof::PqcSignatureAlgo;
+        use crate::types::Checkpoint;
+
+        let hub = match self.consensus.l0_hub() {
+            Some(h) => h,
+            None => return Err(jsonrpsee::types::ErrorObject::owned(
+                -32000, "L0 finality hub is not enabled on this node", None::<()>
+            )),
+        };
+
+        let state_root = parse_hash(&request.state_root)?;
+        let dag_root = parse_hash(&request.dag_root)?;
+        let previous = parse_hash(&request.previous_checkpoint)?;
+        let validator_set_root = parse_hash(&request.validator_set_root)?;
+
+        let total_stake = request.total_stake.strip_prefix("QTS:").or_else(|| request.total_stake.strip_prefix("0x")).unwrap_or(&request.total_stake);
+        let total_stake = u128::from_str_radix(total_stake, 16)
+            .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid total_stake: {}", e), None::<()>))?;
+
+        let stake_threshold = request.stake_threshold.strip_prefix("QTS:").or_else(|| request.stake_threshold.strip_prefix("0x")).unwrap_or(&request.stake_threshold);
+        let stake_threshold = u128::from_str_radix(stake_threshold, 16)
+            .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid stake_threshold: {}", e), None::<()>))?;
+
+        let checkpoint = Checkpoint {
+            epoch: request.epoch,
+            slot: request.slot,
+            state_root,
+            dag_root,
+            vertex_count: 0,
+            transaction_count: 0,
+            validators: Vec::new(),
+            signature: Vec::new(),
+            timestamp: chrono::Utc::now().timestamp_millis() as u64,
+            previous_checkpoint: previous,
+        };
+
+        let mut records = Vec::new();
+        let mut contributions = Vec::new();
+        let mut signed_stake: u128 = 0;
+
+        for sig in &request.signatures {
+            let addr = parse_address(&sig.validator_address)?;
+            let stake = sig.stake.strip_prefix("QTS:").or_else(|| sig.stake.strip_prefix("0x")).unwrap_or(&sig.stake);
+            let stake = u128::from_str_radix(stake, 16)
+                .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid stake: {}", e), None::<()>))?;
+            let signature = hex::decode(sig.signature.strip_prefix("0x").unwrap_or(&sig.signature))
+                .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid signature hex: {}", e), None::<()>))?;
+            let algo = match sig.algo.as_str() {
+                "falcon512" => PqcSignatureAlgo::Falcon512,
+                "dilithium3" => PqcSignatureAlgo::Dilithium3,
+                _ => return Err(jsonrpsee::types::ErrorObject::owned(-32000, "Unknown signature algorithm", None::<()>)),
+            };
+            records.push(crate::l0::proof::ValidatorRecord {
+                address: addr,
+                public_key: Vec::new(),
+                stake,
+            });
+            contributions.push(crate::l0::hub::SignatureContribution {
+                validator: addr,
+                algo,
+                signature,
+            });
+            signed_stake = signed_stake.saturating_add(stake);
+        }
+
+        let snapshot = ValidatorSetSnapshot {
+            root: validator_set_root,
+            validators: records,
+        };
+
+        match hub.build_proof(&checkpoint, &snapshot, &contributions) {
+            Ok(proof) => {
+                let proof_hash = proof.proof_hash();
+                let required = hub.config().required_stake(total_stake);
+                Ok(ExternalCheckpointResponse {
+                    proof_hash: format!("QTS:{}", hex::encode(proof_hash)),
+                    status: "proof_built".to_string(),
+                    signed_stake: format!("QTS:{:x}", signed_stake),
+                    required_stake: format!("QTS:{:x}", required),
+                })
+            }
+            Err(e) => Err(jsonrpsee::types::ErrorObject::owned(
+                -32000, format!("L0 proof build failed: {}", e), None::<()>
+            )),
+        }
+    }
 }
 
 impl QuantosRpcImpl {
@@ -1356,6 +1458,37 @@ pub struct TxPoolStatusResponse {
 pub struct ShardPoolInfo {
     pub shard_id: u16,
     pub pending: usize,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ExternalCheckpointRequest {
+    pub chain_id: String,
+    pub checkpoint_hash: String,
+    pub state_root: String,
+    pub dag_root: String,
+    pub epoch: u64,
+    pub slot: u64,
+    pub previous_checkpoint: String,
+    pub validator_set_root: String,
+    pub total_stake: String,
+    pub stake_threshold: String,
+    pub signatures: Vec<ExternalCheckpointSignature>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ExternalCheckpointSignature {
+    pub validator_address: String,
+    pub signature: String,
+    pub algo: String,
+    pub stake: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ExternalCheckpointResponse {
+    pub proof_hash: String,
+    pub status: String,
+    pub signed_stake: String,
+    pub required_stake: String,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
