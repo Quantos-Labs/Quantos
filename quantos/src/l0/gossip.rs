@@ -216,7 +216,11 @@ mod tests {
             block_hash: [1u8; 32],
             state_root: [2u8; 32],
             timestamp_ms: 1000000,
-            native_finality_proof: vec![],
+            proof: crate::l0::external::ChainProof::Evm {
+                block_header_rlp: vec![],
+                sync_committee_signature: None,
+                execution_payload_hash: None,
+            },
             metadata: None,
         };
 

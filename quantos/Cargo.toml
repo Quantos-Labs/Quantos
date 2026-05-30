@@ -32,6 +32,11 @@ sha3 = "0.10"
 sha2 = "0.10"
 blake3 = "1.5"
 
+# Classical signatures for light client verification
+ed25519-dalek = { version = "2.1", features = ["batch"] }
+blst = "0.3"
+k256 = { version = "0.13", features = ["ecdsa"] }
+
 # Encryption (for bytecode protection)
 aes-gcm = "0.10"
 zeroize = { version = "1.7", features = ["derive"] }
