@@ -1,0 +1,17 @@
+{
+  "name": "@quantos/l0-sdk",
+  "version": "0.1.0",
+  "description": "Quantos L0 SDK — verify, fetch, and register PQC finality proofs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["quantos", "l0", "pqc", "finality", "post-quantum"],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

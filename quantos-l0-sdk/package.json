@@ -1,0 +1,55 @@
+{
+  "name": "@quantos/l0-sdk",
+  "version": "1.0.0",
+  "description": "Quantos L0 SDK — Post-Quantum Finality Proof client for all supported chains",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "lint": "eslint src/ --ext .ts"
+  },
+  "keywords": [
+    "quantos",
+    "l0",
+    "post-quantum",
+    "pqc",
+    "finality",
+    "bridge",
+    "cross-chain",
+    "dilithium",
+    "falcon",
+    "sphincs"
+  ],
+  "author": "Quantos Labs",
+  "license": "MIT",
+  "dependencies": {
+    "@solana/web3.js": "^1.91.0",
+    "@mysten/sui.js": "^0.52.0",
+    "aptos": "^1.21.0",
+    "near-api-js": "^3.0.0",
+    "ethers": "^6.11.0",
+    "@cosmjs/stargate": "^0.32.0",
+    "@polkadot/api": "^10.11.0",
+    "@stellar/stellar-sdk": "^11.2.0",
+    "ton": "^13.9.0",
+    "@stacks/transactions": "^6.12.0",
+    "axios": "^1.6.0",
+    "bs58": "^5.0.0",
+    "borsh": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/node": "^20.0.0",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0"
+  }
+}

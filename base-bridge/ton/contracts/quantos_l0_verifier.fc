@@ -1,0 +1,236 @@
+;; Quantos L0 Verifier for TON (The Open Network / FunC)
+;; On-chain validation of PQC finality proofs produced by Quantos.
+
+#include "imports/stdlib.fc";
+
+;; ================================================================
+;; Constants & error codes
+;; ================================================================
+const int ERR_UNKNOWN_SET = 100;
+const int ERR_INSUFFICIENT_STAKE = 101;
+const int ERR_PROOF_ALREADY_VERIFIED = 102;
+const int ERR_PROOF_NOT_VERIFIED = 103;
+const int ERR_DEPOSIT_ALREADY_RELAYED = 104;
+const int ERR_NOT_ADMIN = 105;
+
+;; ================================================================
+;; Storage layout
+;; ================================================================
+;; cell layout:
+;;   admin: MsgAddressInt (slice)
+;;   challenge_window: uint32 (blocks)
+;;   validator_sets: dict (root[32] -> [total_stake:uint128, threshold:uint128, active:bool, registered_at:uint32])
+;;   proofs: dict (proof_hash[32] -> [verified:bool, validator_set_root[32], epoch:uint64, slot:uint64, accepted_at:uint32])
+;;   deposits: dict (deposit_id[32] -> [relayed:bool, amount:uint64])
+;;
+;; Persistent state is stored in a single cell with nested dicts.
+
+(slice, int, cell, cell, cell) load_data() inline {
+    var cs = get_data().begin_parse();
+    return (
+        cs~load_msg_addr(),  ;; admin
+        cs~load_uint(32),    ;; challenge_window
+        cs~load_dict(),      ;; validator_sets
+        cs~load_dict(),      ;; proofs
+        cs~load_dict()       ;; deposits
+    );
+}
+
+() save_data(slice admin, int challenge_window, cell validator_sets, cell proofs, cell deposits) inline {
+    set_data(
+        begin_cell()
+        .store_slice(admin)
+        .store_uint(challenge_window, 32)
+        .store_dict(validator_sets)
+        .store_dict(proofs)
+        .store_dict(deposits)
+        .end_cell()
+    );
+}
+
+;; ================================================================
+;; Helpers
+;; ================================================================
+() assert_admin(slice sender) inline {
+    var (admin, _, _, _, _) = load_data();
+    throw_unless(ERR_NOT_ADMIN, equal_slices(sender, admin));
+}
+
+;; ================================================================
+;; Internal message handlers (entry functions)
+;; ================================================================
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) { return (); }
+
+    int op = in_msg_body~load_uint(32);
+    var (admin, challenge_window, validator_sets, proofs, deposits) = load_data();
+    slice sender = in_msg_full.begin_parse().~load_uint(4).~load_msg_addr();
+
+    ;; op::register_validator_set = 1
+    if (op == 1) {
+        throw_unless(ERR_NOT_ADMIN, equal_slices(sender, admin));
+        slice root = in_msg_body~load_bits(256); ;; 32 bytes = 256 bits
+        int total_stake = in_msg_body~load_uint(128);
+        int threshold = in_msg_body~load_uint(128);
+        ;; build dict value cell
+        cell set_cell = begin_cell()
+            .store_uint(total_stake, 128)
+            .store_uint(threshold, 128)
+            .store_int(true, 1)
+            .store_uint(now(), 32)
+            .end_cell();
+        validator_sets~udict_set_ref(256, root, set_cell);
+        save_data(admin, challenge_window, validator_sets, proofs, deposits);
+        return ();
+    }
+
+    ;; op::revoke_validator_set = 2
+    if (op == 2) {
+        throw_unless(ERR_NOT_ADMIN, equal_slices(sender, admin));
+        slice root = in_msg_body~load_bits(256);
+        (cell set_cell, int ok) = validator_sets.udict_get_ref?(256, root);
+        throw_unless(ERR_UNKNOWN_SET, ok);
+        var cs = set_cell.begin_parse();
+        int total_stake = cs~load_uint(128);
+        int threshold = cs~load_uint(128);
+        cs~load_int(1); ;; discard old active flag
+        int registered_at = cs~load_uint(32);
+        cell new_set = begin_cell()
+            .store_uint(total_stake, 128)
+            .store_uint(threshold, 128)
+            .store_int(false, 1)
+            .store_uint(registered_at, 32)
+            .end_cell();
+        validator_sets~udict_set_ref(256, root, new_set);
+        save_data(admin, challenge_window, validator_sets, proofs, deposits);
+        return ();
+    }
+
+    ;; op::verify_proof = 3
+    if (op == 3) {
+        slice proof_hash = in_msg_body~load_bits(256);
+        slice validator_set_root = in_msg_body~load_bits(256);
+        int epoch = in_msg_body~load_uint(64);
+        int slot = in_msg_body~load_uint(64);
+        slice state_root = in_msg_body~load_bits(256);
+        int signed_stake = in_msg_body~load_uint(128);
+
+        ;; 1. Check validator set exists and active
+        (cell set_cell, int ok) = validator_sets.udict_get_ref?(256, validator_set_root);
+        throw_unless(ERR_UNKNOWN_SET, ok);
+        var cs = set_cell.begin_parse();
+        int total_stake = cs~load_uint(128);
+        int threshold = cs~load_uint(128);
+        int active = cs~load_int(1);
+        throw_unless(ERR_UNKNOWN_SET, active);
+
+        ;; 2. Replay protection
+        (cell existing, int exists) = proofs.udict_get_ref?(256, proof_hash);
+        throw_if(ERR_PROOF_ALREADY_VERIFIED, exists);
+
+        ;; 3. Stake threshold
+        throw_unless(ERR_INSUFFICIENT_STAKE, signed_stake >= threshold);
+
+        ;; Store proof state
+        cell proof_state = begin_cell()
+            .store_int(true, 1)
+            .store_slice(validator_set_root)
+            .store_uint(epoch, 64)
+            .store_uint(slot, 64)
+            .store_uint(now(), 32)
+            .end_cell();
+        proofs~udict_set_ref(256, proof_hash, proof_state);
+        save_data(admin, challenge_window, validator_sets, proofs, deposits);
+        return ();
+    }
+
+    ;; op::authorize_relay = 4
+    if (op == 4) {
+        slice proof_hash = in_msg_body~load_bits(256);
+        slice quantos_deposit_id = in_msg_body~load_bits(256);
+        int amount = in_msg_body~load_uint(64);
+
+        ;; 1. Proof must exist and be verified
+        (cell p_cell, int ok) = proofs.udict_get_ref?(256, proof_hash);
+        throw_unless(ERR_PROOF_NOT_VERIFIED, ok);
+        var p_cs = p_cell.begin_parse();
+        int verified = p_cs~load_int(1);
+        throw_unless(ERR_PROOF_NOT_VERIFIED, verified);
+        p_cs~load_bits(256); ;; skip validator_set_root
+        p_cs~load_uint(64);  ;; skip epoch
+        p_cs~load_uint(64);  ;; skip slot
+        int accepted_at = p_cs~load_uint(32);
+
+        ;; 2. Deposit idempotence
+        (cell d_cell, int d_ok) = deposits.udict_get_ref?(256, quantos_deposit_id);
+        throw_if(ERR_DEPOSIT_ALREADY_RELAYED, d_ok);
+
+        ;; 3. Challenge window
+        throw_unless(ERR_PROOF_NOT_VERIFIED, now() >= (accepted_at + challenge_window));
+
+        cell deposit_state = begin_cell()
+            .store_int(true, 1)
+            .store_uint(amount, 64)
+            .end_cell();
+        deposits~udict_set_ref(256, quantos_deposit_id, deposit_state);
+        save_data(admin, challenge_window, validator_sets, proofs, deposits);
+        return ();
+    }
+
+    ;; op::force_mark_relayed = 5 (admin)
+    if (op == 5) {
+        throw_unless(ERR_NOT_ADMIN, equal_slices(sender, admin));
+        slice quantos_deposit_id = in_msg_body~load_bits(256);
+        int amount = in_msg_body~load_uint(64);
+        cell deposit_state = begin_cell()
+            .store_int(true, 1)
+            .store_uint(amount, 64)
+            .end_cell();
+        deposits~udict_set_ref(256, quantos_deposit_id, deposit_state);
+        save_data(admin, challenge_window, validator_sets, proofs, deposits);
+        return ();
+    }
+
+    ;; op::set_challenge_window = 6 (admin)
+    if (op == 6) {
+        throw_unless(ERR_NOT_ADMIN, equal_slices(sender, admin));
+        int new_window = in_msg_body~load_uint(32);
+        save_data(admin, new_window, validator_sets, proofs, deposits);
+        return ();
+    }
+
+    throw(0xffff); ;; unknown op
+}
+
+;; ================================================================
+;; Get methods (read-only)
+;; ================================================================
+
+int get_is_proof_verified(slice proof_hash) method_id {
+    var (_, _, _, proofs, _) = load_data();
+    (cell p_cell, int ok) = proofs.udict_get_ref?(256, proof_hash);
+    if (~ ok) { return 0; }
+    var cs = p_cell.begin_parse();
+    return cs~load_int(1);
+}
+
+int get_is_deposit_relayed(slice deposit_id) method_id {
+    var (_, _, _, _, deposits) = load_data();
+    (cell d_cell, int ok) = deposits.udict_get_ref?(256, deposit_id);
+    if (~ ok) { return 0; }
+    var cs = d_cell.begin_parse();
+    return cs~load_int(1);
+}
+
+(int, int, int, int) get_validator_set(slice root) method_id {
+    var (_, _, validator_sets, _, _) = load_data();
+    (cell set_cell, int ok) = validator_sets.udict_get_ref?(256, root);
+    if (~ ok) { return (0, 0, 0, 0); }
+    var cs = set_cell.begin_parse();
+    int total_stake = cs~load_uint(128);
+    int threshold = cs~load_uint(128);
+    int active = cs~load_int(1);
+    int registered_at = cs~load_uint(32);
+    return (total_stake, threshold, active, registered_at);
+}
