@@ -45,7 +45,12 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::types::{Hash, ShardId, hash_data};
+use crate::zk::{StateTransitionInputs, StateTransitionPublicInputs, StateTransitionAir};
 use super::CrossShardTransaction;
+
+use winterfell::Proof;
+use winterfell::crypto::{hashers::Blake3_256, DefaultRandomCoin};
+use winterfell::math::fields::f128::BaseElement;
 
 /// Maximum transactions per STARK batch
 const MAX_BATCH_SIZE: usize = 1000;
@@ -171,6 +176,8 @@ pub struct BatchStarkProof {
     pub generation_time_ms: u64,
     /// Proof size in bytes
     pub proof_size: usize,
+    /// STARK public inputs for cryptographic verification
+    pub state_inputs: StateTransitionInputs,
 }
 
 /// Performance metrics for STARK-accelerated sharding.
@@ -322,6 +329,17 @@ impl StarkShardCoordinator {
             public_inputs_data.extend_from_slice(&tx.nonce.to_le_bytes());
         }
         
+        // Build state transition inputs for later cryptographic verification
+        let tx_root = hash_data(&public_inputs_data);
+        let state_inputs = StateTransitionInputs {
+            prev_state_root: batch.source_state_root,
+            new_state_root: batch.dest_state_root,
+            tx_root,
+            tx_count: batch.transactions.len() as u64,
+            shard_id: batch.source_shard,
+            height: 0,
+        };
+        
         // Generate real STARK proof using Winterfell (CPU-intensive)
         let proof_data = tokio::task::spawn_blocking({
             let batch_id = batch.id;
@@ -460,6 +478,7 @@ impl StarkShardCoordinator {
             total_amount: batch.total_amount,
             generation_time_ms: generation_time,
             proof_size,
+            state_inputs,
         };
         
         // Update metrics
@@ -498,7 +517,11 @@ impl StarkShardCoordinator {
         Ok(batch_proof)
     }
 
-    /// Verifies a batch STARK proof.
+    /// Verifies a batch STARK proof cryptographically.
+    ///
+    /// Performs full Winterfell STARK verification: deserializes the proof,
+    /// rebuilds public inputs from stored state transition data, and runs
+    /// the algebraic constraint / FRI verification pipeline.
     pub fn verify_batch_proof(&self, proof: &BatchStarkProof) -> Result<bool, String> {
         let start = Instant::now();
         
@@ -517,16 +540,45 @@ impl StarkShardCoordinator {
             return Ok(false);
         }
         
+        // Extract Winterfell proof after header:
+        // header(4) + batch_id(32) + source_shard(4) + dest_shard(4) + tx_count(4) = 48 bytes
+        let winterfell_data = &proof.proof_data[48..];
+        if winterfell_data.is_empty() {
+            return Ok(false);
+        }
+        
+        // Deserialize Winterfell proof
+        let winterfell_proof = Proof::from_bytes(winterfell_data)
+            .map_err(|e| format!("Failed to deserialize Winterfell proof: {}", e))?;
+        
+        // Rebuild public inputs from stored state transition metadata
+        let pub_inputs = StateTransitionPublicInputs::from(&proof.state_inputs);
+        let min_security = winterfell::AcceptableOptions::MinConjecturedSecurity(96);
+        
+        // Run full Winterfell STARK verification
+        let valid = match winterfell::verify::<
+            StateTransitionAir,
+            Blake3_256<BaseElement>,
+            DefaultRandomCoin<Blake3_256<BaseElement>>,
+        >(winterfell_proof, pub_inputs, &min_security) {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::warn!("Batch STARK proof cryptographic verification failed: {}", e);
+                false
+            }
+        };
+        
         let verify_time = start.elapsed().as_millis();
         
         tracing::debug!(
-            "Verified batch proof {} ({} tx) in {}ms",
+            "Cryptographically verified batch proof {} ({} tx): {} in {}ms",
             hex::encode(&proof.batch_id[..8]),
             proof.tx_count,
+            if valid { "VALID" } else { "INVALID" },
             verify_time
         );
         
-        Ok(true)
+        Ok(valid)
     }
 
     /// Starts the batch proof generation worker.

@@ -370,6 +370,12 @@ pub trait QuantosRpc {
 
     #[method(name = "qnt_getL0Metrics")]
     async fn get_l0_metrics(&self) -> Result<L0MetricsInfo, jsonrpsee::types::ErrorObjectOwned>;
+
+    #[method(name = "qnt_registerSubnet")]
+    async fn register_subnet(&self, request: RegisterSubnetRequest) -> Result<bool, jsonrpsee::types::ErrorObjectOwned>;
+
+    #[method(name = "qnt_getSubnet")]
+    async fn get_subnet(&self, id: String) -> Result<Option<SubnetInfo>, jsonrpsee::types::ErrorObjectOwned>;
 }
 
 pub struct QuantosRpcImpl {
@@ -1084,36 +1090,149 @@ impl QuantosRpcServer for QuantosRpcImpl {
             metadata: request.metadata,
         };
 
-        // For now, use TrustSubmitter verification strategy (TODO: implement proper verification)
-        let verification = VerificationResult::valid();
+        // Get checkpoint pool
+        let pool = match self.consensus.checkpoint_pool() {
+            Some(p) => p,
+            None => return Err(jsonrpsee::types::ErrorObject::owned(
+                -32000, "Checkpoint pool not available", None::<()>
+            )),
+        };
 
-        // Get current validator set from consensus
-        let snapshot = match self.consensus.get_validator_snapshot() {
+        // Get light client registry for verification
+        let light_clients = match self.consensus.light_client_registry() {
+            Some(lc) => lc,
+            None => return Err(jsonrpsee::types::ErrorObject::owned(
+                -32000, "Light client registry not available", None::<()>
+            )),
+        };
+
+        // Verify checkpoint using light client or Subnet Manager if it's a sovereign subnet
+        let subnet_manager = self.consensus.subnet_manager();
+        let mut sovereign_subnet_config = None;
+        
+        if let ChainId::Custom(ref name) = checkpoint.chain_id {
+            if let Some(ref sm) = subnet_manager {
+                use crate::l0::subnet::SubnetId;
+                if let Some(config) = sm.get_subnet(&SubnetId(name.clone())) {
+                    // This is a registered sovereign subnet!
+                    if let Err(e) = sm.verify_subnet_checkpoint(&SubnetId(name.clone()), &checkpoint) {
+                        return Err(jsonrpsee::types::ErrorObject::owned(
+                            -32000, format!("Subnet checkpoint verification failed: {}", e), None::<()>
+                        ));
+                    }
+                    sovereign_subnet_config = Some(config);
+                }
+            }
+        }
+
+        // If it's not a custom subnet, verify via light client registry
+        if sovereign_subnet_config.is_none() {
+            let verification = match light_clients.verify_checkpoint(&checkpoint).await {
+                Ok(v) => v,
+                Err(e) => return Err(jsonrpsee::types::ErrorObject::owned(
+                    -32000, format!("Checkpoint verification failed: {}", e), None::<()>
+                )),
+            };
+
+            if !verification.valid {
+                return Err(jsonrpsee::types::ErrorObject::owned(
+                    -32000, format!("Invalid checkpoint: {}", verification.reason.unwrap_or_else(|| "Unknown reason".to_string())), None::<()>
+                ));
+            }
+        }
+
+        // Compute digest for this checkpoint
+        let digest = checkpoint.digest();
+
+        // Add checkpoint to pool
+        if let Err(e) = pool.add_checkpoint(checkpoint.clone(), digest) {
+            return Err(jsonrpsee::types::ErrorObject::owned(
+                -32000, format!("Failed to add checkpoint to pool: {}", e), None::<()>
+            ));
+        }
+
+        // Broadcast checkpoint to other validators via gossip
+        if let Some(gossip) = self.consensus.checkpoint_gossip() {
+            // Get list of peers (TODO: get from network layer)
+            let peers = vec![]; // Empty for now, will be populated by network layer
+            gossip.broadcast_checkpoint(digest, checkpoint.clone(), peers);
+        }
+
+        // Resolve validator set snapshot to use (custom subnet validators or default Quantos validators)
+        let mut snapshot = match self.consensus.get_validator_snapshot() {
             Some(s) => s,
             None => return Err(jsonrpsee::types::ErrorObject::owned(
                 -32000, "No active validators available", None::<()>
             )),
         };
 
-        // TODO: Collect validator signatures asynchronously
-        // For now, submit checkpoint without signatures - validators will sign via gossip
-        let contributions = Vec::new();
+        if let Some(ref subnet_config) = sovereign_subnet_config {
+            if let Some(ref custom_validators) = subnet_config.custom_validators {
+                // Construct a custom ValidatorSetSnapshot representing the subnet's own validator set
+                use crate::l0::proof::ValidatorRecord;
+                let validators: Vec<ValidatorRecord> = custom_validators
+                    .iter()
+                    .map(|v| ValidatorRecord {
+                        address: v.address,
+                        public_key: vec![], // Custom subnet validators do not need public keys on-chain if certified by L0
+                        stake: v.stake,
+                    })
+                    .collect();
+                let root = ValidatorSetSnapshot::compute_root(&validators);
+                snapshot = ValidatorSetSnapshot { root, validators };
+            }
+        }
 
-        match hub.build_external_proof(&checkpoint, &snapshot, &contributions, &verification) {
-            Ok(proof) => {
-                let proof_hash = proof.proof_hash();
-                let signed_stake = proof.signed_stake();
-                let required = proof.header.stake_threshold;
+        // If this node is a validator on the resolved set, sign immediately
+        if let Some(signature) = self.consensus.sign_external_checkpoint(&digest) {
+            if let Some(validator) = snapshot.validators.iter().find(|v| v.address == signature.validator) {
+                let stake = validator.stake;
+                let _ = pool.add_signature(&digest, signature.clone(), stake);
+                
+                // Broadcast signature to other validators
+                if let Some(gossip) = self.consensus.checkpoint_gossip() {
+                    let peers = vec![]; // Empty for now, will be populated by network layer
+                    gossip.broadcast_signature(digest, signature, stake, peers);
+                }
+            }
+        }
+
+        // Check if we have enough signatures to build proof
+        if let Some(pending) = pool.get(&digest) {
+            let required = snapshot.total_stake() * 2 / 3 + 1;
+            
+            if pending.signed_stake >= required {
+                // We have enough signatures, build the proof
+                let verification = VerificationResult::valid();
+                
+                match hub.build_external_proof(&pending.checkpoint, &snapshot, &pending.signatures, &verification) {
+                    Ok(proof) => {
+                        pool.mark_finalized(&digest);
+                        let proof_hash = proof.proof_hash();
+                        Ok(ExternalCheckpointResponse {
+                            proof_hash: format!("QTS:{}", hex::encode(proof_hash)),
+                            status: "finalized".to_string(),
+                            signed_stake: format!("QTS:{:x}", pending.signed_stake),
+                            required_stake: format!("QTS:{:x}", required),
+                        })
+                    }
+                    Err(e) => Err(jsonrpsee::types::ErrorObject::owned(
+                        -32000, format!("L0 proof build failed: {}", e), None::<()>
+                    )),
+                }
+            } else {
+                // Not enough signatures yet, return pending status
                 Ok(ExternalCheckpointResponse {
-                    proof_hash: format!("QTS:{}", hex::encode(proof_hash)),
-                    status: "checkpoint_submitted".to_string(),
-                    signed_stake: format!("QTS:{:x}", signed_stake),
+                    proof_hash: format!("QTS:{}", hex::encode(digest)),
+                    status: "pending_signatures".to_string(),
+                    signed_stake: format!("QTS:{:x}", pending.signed_stake),
                     required_stake: format!("QTS:{:x}", required),
                 })
             }
-            Err(e) => Err(jsonrpsee::types::ErrorObject::owned(
-                -32000, format!("L0 proof build failed: {}", e), None::<()>
-            )),
+        } else {
+            Err(jsonrpsee::types::ErrorObject::owned(
+                -32000, "Checkpoint not found in pool", None::<()>
+            ))
         }
     }
 
@@ -1182,6 +1301,90 @@ impl QuantosRpcServer for QuantosRpcImpl {
             proofs_failed: metrics.proofs_failed,
             archived_proofs: metrics.archived_proofs,
         })
+    }
+
+    async fn register_subnet(&self, request: RegisterSubnetRequest) -> Result<bool, jsonrpsee::types::ErrorObjectOwned> {
+        self.check_rate_limit()?;
+
+        let subnet_manager = match self.consensus.subnet_manager() {
+            Some(sm) => sm,
+            None => return Err(jsonrpsee::types::ErrorObject::owned(
+                -32000, "L0 subnet manager is not enabled on this node", None::<()>
+            )),
+        };
+
+        use crate::l0::subnet::{SubnetConfig, SubnetId, SubnetValidator};
+
+        let mut custom_validators = None;
+        if let Some(validators) = request.custom_validators {
+            let mut parsed_validators = Vec::new();
+            for v in validators {
+                let address_bytes = parse_hash(&v.address)?; // Parse address from hex
+                let stake = u128::from_str_radix(v.stake.trim_start_matches("0x").trim_start_matches("QTS:"), 16)
+                    .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid stake hex: {}", e), None::<()>))?;
+                let qts_double_stake = u128::from_str_radix(v.qts_double_stake.trim_start_matches("0x").trim_start_matches("QTS:"), 16)
+                    .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid qts_double_stake hex: {}", e), None::<()>))?;
+                
+                parsed_validators.push(SubnetValidator {
+                    address: address_bytes,
+                    stake,
+                    qts_double_stake,
+                });
+            }
+            custom_validators = Some(parsed_validators);
+        }
+
+        let stacc_collateral_leased = u128::from_str_radix(request.stacc_collateral_leased.trim_start_matches("0x").trim_start_matches("QTS:"), 16)
+            .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid stacc_collateral_leased hex: {}", e), None::<()>))?;
+
+        let min_double_stake_qts = u128::from_str_radix(request.min_double_stake_qts.trim_start_matches("0x").trim_start_matches("QTS:"), 16)
+            .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid min_double_stake_qts hex: {}", e), None::<()>))?;
+
+        let config = SubnetConfig {
+            name: request.name,
+            fee_token: request.fee_token,
+            custom_validators,
+            reward_multiplier: request.reward_multiplier,
+            stacc_collateral_leased,
+            min_double_stake_qts,
+        };
+
+        match subnet_manager.register_subnet(SubnetId(request.id), config) {
+            Ok(()) => Ok(true),
+            Err(e) => Err(jsonrpsee::types::ErrorObject::owned(-32000, e, None::<()>)),
+        }
+    }
+
+    async fn get_subnet(&self, id: String) -> Result<Option<SubnetInfo>, jsonrpsee::types::ErrorObjectOwned> {
+        let subnet_manager = match self.consensus.subnet_manager() {
+            Some(sm) => sm,
+            None => return Ok(None),
+        };
+
+        use crate::l0::subnet::SubnetId;
+
+        match subnet_manager.get_subnet(&SubnetId(id.clone())) {
+            Some(config) => {
+                let custom_validators = config.custom_validators.map(|validators| {
+                    validators.iter().map(|v| SubnetValidatorInfo {
+                        address: format!("QTS:{}", hex::encode(v.address)),
+                        stake: format!("QTS:{:x}", v.stake),
+                        qts_double_stake: format!("QTS:{:x}", v.qts_double_stake),
+                    }).collect()
+                });
+
+                Ok(Some(SubnetInfo {
+                    id,
+                    name: config.name,
+                    fee_token: config.fee_token,
+                    custom_validators,
+                    reward_multiplier: config.reward_multiplier,
+                    stacc_collateral_leased: format!("QTS:{:x}", config.stacc_collateral_leased),
+                    min_double_stake_qts: format!("QTS:{:x}", config.min_double_stake_qts),
+                }))
+            }
+            None => Ok(None),
+        }
     }
 }
 
@@ -1578,6 +1781,35 @@ pub struct L0MetricsInfo {
     pub proofs_produced: u64,
     pub proofs_failed: u64,
     pub archived_proofs: u64,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SubnetValidatorInfo {
+    pub address: String,
+    pub stake: String,
+    pub qts_double_stake: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct RegisterSubnetRequest {
+    pub id: String,
+    pub name: String,
+    pub fee_token: String,
+    pub custom_validators: Option<Vec<SubnetValidatorInfo>>,
+    pub reward_multiplier: u64,
+    pub stacc_collateral_leased: String,
+    pub min_double_stake_qts: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SubnetInfo {
+    pub id: String,
+    pub name: String,
+    pub fee_token: String,
+    pub custom_validators: Option<Vec<SubnetValidatorInfo>>,
+    pub reward_multiplier: u64,
+    pub stacc_collateral_leased: String,
+    pub min_double_stake_qts: String,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

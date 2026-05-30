@@ -28,6 +28,11 @@ pub enum ChainId {
     AvalancheFuji,
     BinanceSmartChain,
     BscTestnet,
+    Moonbeam,
+    Berachain,
+    Hyperliquid,
+    Monad,
+    Somnia,
     
     // Non-EVM chains
     Solana,
@@ -52,6 +57,8 @@ pub enum ChainId {
     CosmosTestnet,
     Cardano,
     CardanoTestnet,
+    Tezos,
+    TezosTestnet,
     
     /// Custom chain (for future extensibility)
     Custom(String),
@@ -75,6 +82,11 @@ impl ChainId {
             Self::AvalancheFuji => "avalanche-fuji",
             Self::BinanceSmartChain => "bsc",
             Self::BscTestnet => "bsc-testnet",
+            Self::Moonbeam => "moonbeam",
+            Self::Berachain => "berachain",
+            Self::Hyperliquid => "hyperliquid",
+            Self::Monad => "monad",
+            Self::Somnia => "somnia",
             Self::Solana => "solana",
             Self::SolanaDevnet => "solana-devnet",
             Self::Near => "near",
@@ -97,6 +109,8 @@ impl ChainId {
             Self::CosmosTestnet => "cosmos-testnet",
             Self::Cardano => "cardano",
             Self::CardanoTestnet => "cardano-testnet",
+            Self::Tezos => "tezos",
+            Self::TezosTestnet => "tezos-testnet",
             Self::Custom(s) => s,
         }
     }
@@ -110,7 +124,9 @@ impl ChainId {
             | Self::Optimism | Self::OptimismSepolia
             | Self::Polygon | Self::PolygonAmoy
             | Self::Avalanche | Self::AvalancheFuji
-            | Self::BinanceSmartChain | Self::BscTestnet => ChainFamily::Evm,
+            | Self::BinanceSmartChain | Self::BscTestnet
+            | Self::Moonbeam | Self::Berachain | Self::Hyperliquid
+            | Self::Monad | Self::Somnia => ChainFamily::Evm,
             
             Self::Solana | Self::SolanaDevnet => ChainFamily::Svm,
             
@@ -132,6 +148,8 @@ impl ChainId {
             Self::Cosmos | Self::CosmosTestnet => ChainFamily::Cosmos,
             
             Self::Cardano | Self::CardanoTestnet => ChainFamily::Cardano,
+            
+            Self::Tezos | Self::TezosTestnet => ChainFamily::Custom, // Tezos uses Michelson VM
             
             Self::Custom(_) => ChainFamily::Custom,
         }

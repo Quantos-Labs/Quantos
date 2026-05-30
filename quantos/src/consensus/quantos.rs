@@ -12,7 +12,7 @@ use crate::consensus::{
 };
 use crate::crypto::{DilithiumKeypair, FalconKeypair, VRFKeypair};
 use crate::dag::DAGGraph;
-use crate::l0::{FinalityHub, HttpRelayTransport, RelayDispatcher, ChainRegistry, ValidatorSetSnapshot};
+use crate::l0::{CheckpointGossip, CheckpointPool, FinalityHub, HttpRelayTransport, LightClientRegistry, RelayDispatcher, ChainRegistry, ValidatorSetSnapshot, SubnetManager, SubnetId, SubnetConfig};
 use crate::l0::hub::SignatureContribution;
 use crate::l0::proof::PqcSignatureAlgo;
 use crate::mempool::ShardedMempool;
@@ -42,6 +42,14 @@ pub struct QuantosConsensus {
     finality_hub: Option<Arc<FinalityHub>>,
     /// L0 relay dispatcher (optional, enabled via config)
     relay_dispatcher: Option<Arc<RelayDispatcher>>,
+    /// L0 checkpoint pool for external checkpoints
+    checkpoint_pool: Option<Arc<CheckpointPool>>,
+    /// L0 checkpoint gossip for propagating checkpoints
+    checkpoint_gossip: Option<Arc<CheckpointGossip>>,
+    /// L0 light client registry for verifying external checkpoints
+    light_client_registry: Option<Arc<LightClientRegistry>>,
+    /// L0 Sovereign Subnet manager
+    subnet_manager: Option<Arc<SubnetManager>>,
 }
 
 struct ValidatorKeys {
@@ -109,8 +117,8 @@ impl QuantosConsensus {
             csap_keypair,
         ));
 
-        // Initialize optional L0 finality hub and relay dispatcher
-        let (finality_hub, relay_dispatcher) = if config.l0_config.enabled {
+        // Initialize optional L0 finality hub, relay dispatcher, checkpoint pool, gossip, and light clients
+        let (finality_hub, relay_dispatcher, checkpoint_pool, checkpoint_gossip, light_client_registry, subnet_manager) = if config.l0_config.enabled {
             let hub = match FinalityHub::new(config.l0_config.clone()) {
                 Ok(h) => Arc::new(h),
                 Err(e) => {
@@ -128,10 +136,23 @@ impl QuantosConsensus {
                 registry,
                 transports,
             ));
-            tracing::info!("L0 finality hub and relay dispatcher initialized");
-            (Some(hub), Some(dispatcher))
+            // Initialize checkpoint pool: 1 hour max age, 1000 max pending
+            let pool = Arc::new(CheckpointPool::new(3600, 1000));
+            
+            // Initialize checkpoint gossip
+            let (gossip, _gossip_rx) = CheckpointGossip::new(pool.clone());
+            let gossip = Arc::new(gossip);
+            
+            // Initialize light client registry with default clients
+            let light_clients = Arc::new(LightClientRegistry::with_defaults());
+
+            // Initialize sovereign subnet manager
+            let subnets = Arc::new(SubnetManager::new());
+            
+            tracing::info!("L0 finality hub, relay dispatcher, checkpoint pool, gossip, light clients, and subnet manager initialized");
+            (Some(hub), Some(dispatcher), Some(pool), Some(gossip), Some(light_clients), Some(subnets))
         } else {
-            (None, None)
+            (None, None, None, None, None, None)
         };
 
         Ok(Self {
@@ -149,6 +170,10 @@ impl QuantosConsensus {
             csap,
             finality_hub,
             relay_dispatcher,
+            checkpoint_pool,
+            checkpoint_gossip,
+            light_client_registry,
+            subnet_manager,
         })
     }
 
@@ -511,6 +536,46 @@ impl QuantosConsensus {
         })
     }
 
+    /// Returns the checkpoint pool if L0 is enabled
+    pub fn checkpoint_pool(&self) -> Option<Arc<CheckpointPool>> {
+        self.checkpoint_pool.clone()
+    }
+
+    /// Returns the checkpoint gossip if L0 is enabled
+    pub fn checkpoint_gossip(&self) -> Option<Arc<CheckpointGossip>> {
+        self.checkpoint_gossip.clone()
+    }
+
+    /// Returns the light client registry if L0 is enabled
+    pub fn light_client_registry(&self) -> Option<Arc<LightClientRegistry>> {
+        self.light_client_registry.clone()
+    }
+
+    /// Returns the sovereign subnet manager if L0 is enabled
+    pub fn subnet_manager(&self) -> Option<Arc<SubnetManager>> {
+        self.subnet_manager.clone()
+    }
+
+    /// Sign an external checkpoint if this node is a validator
+    pub fn sign_external_checkpoint(&self, digest: &Hash) -> Option<SignatureContribution> {
+        let keys = self.validator_keys.as_ref()?;
+        
+        // Sign with Falcon (preferred) or Dilithium
+        let (algo, signature) = if let Ok(sig) = keys.finality_key.sign(digest) {
+            (PqcSignatureAlgo::Falcon512, sig)
+        } else if let Ok(sig) = keys.signing_key.sign(digest) {
+            (PqcSignatureAlgo::Dilithium3, sig)
+        } else {
+            return None;
+        };
+
+        Some(SignatureContribution {
+            validator: keys.address,
+            algo,
+            signature,
+        })
+    }
+
     pub fn get_metrics(&self) -> ConsensusMetrics {
         ConsensusMetrics {
             current_slot: self.current_slot(),
@@ -549,6 +614,10 @@ impl Clone for QuantosConsensus {
             csap: self.csap.clone(),
             finality_hub: self.finality_hub.clone(),
             relay_dispatcher: self.relay_dispatcher.clone(),
+            checkpoint_pool: self.checkpoint_pool.clone(),
+            checkpoint_gossip: self.checkpoint_gossip.clone(),
+            light_client_registry: self.light_client_registry.clone(),
+            subnet_manager: self.subnet_manager.clone(),
         }
     }
 }
