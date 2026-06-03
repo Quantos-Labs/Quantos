@@ -4,7 +4,7 @@
 //! turns them into [`L0FinalityProof`]s that can be relayed to any
 //! supported target chain.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -18,6 +18,7 @@ use crate::l0::proof::{
     L0FinalityProof, L0ProofHeader, L0_PROOF_VERSION, PqcSignatureAlgo, ProofSignature,
     ValidatorRecord,
 };
+use crate::l0::stark_prover::{BatchPublicInputs, SignerInput, prove_batch};
 use crate::types::{Checkpoint, Hash};
 
 /// Snapshot of the validator set used to sign a given proof.
@@ -81,12 +82,47 @@ pub struct SignatureContribution {
     pub signature: Vec<u8>,
 }
 
+/// Tracks validator equivocations: (validator_address, chain_epoch_key) → block_hash.
+/// A validator equivocates if they sign two different blocks for the same epoch/chain.
+#[derive(Clone, Debug, Default)]
+pub struct EquivocationTracker {
+    /// validator_address → (chain_id + epoch) → block_hash they signed
+    signed_blocks: HashMap<Hash, HashMap<String, Hash>>,
+    /// List of validators caught equivocating (for slashing)
+    offenders: Vec<Hash>,
+}
+
+impl EquivocationTracker {
+    /// Record that a validator signed a block. Returns true if this is an equivocation.
+    pub fn record(&mut self, validator: Hash, chain_epoch_key: String, block_hash: Hash) -> bool {
+        let entry = self.signed_blocks.entry(validator).or_default();
+        if let Some(existing) = entry.get(&chain_epoch_key) {
+            if existing != &block_hash {
+                if !self.offenders.contains(&validator) {
+                    self.offenders.push(validator);
+                }
+                return true; // Equivocation detected
+            }
+            return false; // Same block, already recorded
+        }
+        entry.insert(chain_epoch_key, block_hash);
+        false
+    }
+
+    pub fn is_offender(&self, validator: &Hash) -> bool {
+        self.offenders.contains(validator)
+    }
+}
+
 /// L0 finality hub.
 pub struct FinalityHub {
     config: Arc<RwLock<L0Config>>,
     metrics: Arc<RwLock<HubMetrics>>,
     last_proof_hash: Arc<RwLock<Hash>>,
     archive: Arc<RwLock<VecDeque<L0FinalityProof>>>,
+    equivocations: Arc<RwLock<EquivocationTracker>>,
+    /// Last known block hash per chain for parent continuity verification.
+    last_block_by_chain: Arc<RwLock<HashMap<String, Hash>>>,
 }
 
 impl FinalityHub {
@@ -98,6 +134,8 @@ impl FinalityHub {
             metrics: Arc::new(RwLock::new(HubMetrics::default())),
             last_proof_hash: Arc::new(RwLock::new([0u8; 32])),
             archive: Arc::new(RwLock::new(VecDeque::new())),
+            equivocations: Arc::new(RwLock::new(EquivocationTracker::default())),
+            last_block_by_chain: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -162,10 +200,13 @@ impl FinalityHub {
             previous_proof_hash,
             state_root: checkpoint.state_root,
             dag_root: checkpoint.dag_root,
+            parent_block_hash: checkpoint.previous_checkpoint,
+            chain_work: 0,
             validator_set_root,
             total_stake,
             stake_threshold: required,
             emitted_at_ms: chrono::Utc::now().timestamp_millis() as u64,
+            stark_commitment: [0u8; 32],
         };
 
         // Build a draft proof so we can compute the signing digest the
@@ -174,6 +215,7 @@ impl FinalityHub {
             header,
             validators: snapshot.validators.clone(),
             signatures: Vec::with_capacity(contributions.len()),
+            stark_proof: None,
         };
         let digest = proof.signing_digest();
 
@@ -308,6 +350,30 @@ impl FinalityHub {
         let total_stake = snapshot.total_stake();
         let required = cfg.required_stake(total_stake);
 
+        // Parent continuity check: new checkpoint must reference previous known block
+        let chain_key = checkpoint.chain_id.as_str().to_string();
+        let last_known = self.last_block_by_chain.read().get(&chain_key).cloned();
+        if let Some(last_hash) = last_known {
+            if checkpoint.parent_block_hash != last_hash {
+                return Err(L0Error::InvalidCheckpoint(
+                    format!("Parent continuity broken: expected {}, got {}",
+                        hex::encode(last_hash), hex::encode(checkpoint.parent_block_hash))
+                ));
+            }
+        }
+
+        // Chain work must advance (fork-choice rule)
+        if let Some(prev) = self.archive.read().back() {
+            if prev.header.external_chain.as_ref() == Some(&checkpoint.chain_id) {
+                if checkpoint.chain_work <= prev.header.chain_work {
+                    return Err(L0Error::InvalidCheckpoint(
+                        format!("Chain work did not advance: {} <= {}",
+                            checkpoint.chain_work, prev.header.chain_work)
+                    ));
+                }
+            }
+        }
+
         let validator_set_root = snapshot.root;
         let previous_proof_hash = *self.last_proof_hash.read();
 
@@ -318,11 +384,14 @@ impl FinalityHub {
             slot: 0, // External chains don't have Quantos slots
             previous_proof_hash,
             state_root: checkpoint.state_root,
-            dag_root: checkpoint.block_hash, // Use block_hash as dag_root equivalent
+            dag_root: checkpoint.block_hash,
+            parent_block_hash: checkpoint.parent_block_hash,
+            chain_work: checkpoint.chain_work,
             validator_set_root,
             total_stake,
             stake_threshold: required,
             emitted_at_ms: chrono::Utc::now().timestamp_millis() as u64,
+            stark_commitment: [0u8; 32], // filled after STARK proof generation
         };
 
         // Build a draft proof so we can compute the signing digest
@@ -330,16 +399,25 @@ impl FinalityHub {
             header,
             validators: snapshot.validators.clone(),
             signatures: Vec::with_capacity(contributions.len()),
+            stark_proof: None,
         };
         let digest = proof.signing_digest();
 
         // Verify and attach each contribution
         let mut signed_stake: u128 = 0;
+        let chain_epoch_key = format!("{}:{}", checkpoint.chain_id.as_str(), checkpoint.block_number);
+        let mut equivocators = Vec::new();
+
         for contribution in contributions {
             let Some(index) = snapshot.position_of(&contribution.validator) else {
                 continue;
             };
             let validator = &snapshot.validators[index];
+
+            // Slash condition: reject known equivocators
+            if self.equivocations.read().is_offender(&contribution.validator) {
+                continue;
+            }
 
             let ok = match contribution.algo {
                 PqcSignatureAlgo::Falcon512 => verify_falcon(
@@ -368,6 +446,17 @@ impl FinalityHub {
                 continue;
             }
 
+            // Detect equivocation: same validator signing different block for same epoch/chain
+            let is_equivocating = self.equivocations.write().record(
+                contribution.validator,
+                chain_epoch_key.clone(),
+                checkpoint.block_hash,
+            );
+            if is_equivocating {
+                equivocators.push(contribution.validator);
+                continue; // Do not count this signature
+            }
+
             proof.signatures.push(ProofSignature {
                 validator_index: index as u32,
                 algo: contribution.algo,
@@ -392,8 +481,44 @@ impl FinalityHub {
             });
         }
 
+        // Generate ZK-STARK batch proof aggregating all signature commitments.
+        let signer_inputs: Vec<SignerInput> = proof.signatures.iter().map(|sig| {
+            let v = &proof.validators[sig.validator_index as usize];
+            SignerInput {
+                validator_index: sig.validator_index,
+                stake: v.stake,
+                sig_commitment: SignerInput::build_commitment(
+                    &v.public_key,
+                    &digest,
+                    &sig.signature,
+                ),
+                is_signer: true,
+            }
+        }).collect();
+
+        let stark_pub = BatchPublicInputs {
+            validator_set_root,
+            message_hash: digest,
+            signed_stake,
+            stake_threshold: required,
+            signer_count: signer_inputs.len() as u32,
+        };
+
+        match prove_batch(&signer_inputs, stark_pub) {
+            Ok(stark) => {
+                proof.header.stark_commitment = stark.commitment;
+                proof.stark_proof = Some(stark);
+            }
+            Err(e) => {
+                tracing::warn!("STARK batch proof generation failed (non-fatal): {:?}", e);
+            }
+        }
+
         let proof_hash = proof.proof_hash();
         *self.last_proof_hash.write() = proof_hash;
+
+        // Update chain head for parent continuity verification
+        self.last_block_by_chain.write().insert(chain_key, checkpoint.block_hash);
 
         if cfg.archive_proofs {
             let mut archive = self.archive.write();

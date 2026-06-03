@@ -173,8 +173,8 @@ pub enum ChainProof {
     },
     /// Bitcoin proof: block header (80 bytes) + confirmation depth.
     Bitcoin {
-        /// Bitcoin block header (80 bytes).
-        block_header: [u8; 80],
+        /// Bitcoin block header (80 bytes), stored as Vec<u8> for serde compat.
+        block_header: Vec<u8>,
         /// Number of confirming blocks on top (depth).
         confirmations: u32,
         /// Optional: Merkle proof for a specific tx within this block.
@@ -274,6 +274,15 @@ pub enum ChainProof {
         /// Baker public keys (Ed25519, 32 bytes each).
         baker_pubkeys: Vec<Vec<u8>>,
     },
+    /// Generic proof for custom/future chain families.
+    Generic {
+        /// Raw proof bytes.
+        proof_bytes: Vec<u8>,
+        /// Signer public keys.
+        signer_pubkeys: Vec<Vec<u8>>,
+        /// Signatures over proof_bytes.
+        signatures: Vec<Vec<u8>>,
+    },
 }
 
 impl ChainProof {
@@ -292,6 +301,7 @@ impl ChainProof {
             Self::Polkadot { .. } => ChainFamily::Substrate,
             Self::Stellar { .. } => ChainFamily::Stellar,
             Self::Tezos { .. } => ChainFamily::Custom,
+            Self::Generic { .. } => ChainFamily::Custom,
         }
     }
 
@@ -314,6 +324,10 @@ pub struct ExternalCheckpoint {
     pub block_hash: Hash,
     /// State root or equivalent commitment (32 bytes).
     pub state_root: Hash,
+    /// Parent block hash — enforces canonical chain continuity.
+    pub parent_block_hash: Hash,
+    /// Chain work (PoW) or justification weight (PoS) — fork-choice tiebreaker.
+    pub chain_work: u128,
     /// Timestamp (milliseconds since epoch).
     pub timestamp_ms: u64,
     /// Cryptographic proof from the source chain, verified without RPC.
@@ -333,6 +347,8 @@ impl ExternalCheckpoint {
         hasher.update(self.block_number.to_be_bytes());
         hasher.update(self.block_hash);
         hasher.update(self.state_root);
+        hasher.update(self.parent_block_hash);
+        hasher.update(self.chain_work.to_be_bytes());
         hasher.update(self.timestamp_ms.to_be_bytes());
         hasher.update(&self.proof.to_bytes());
 

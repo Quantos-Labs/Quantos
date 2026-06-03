@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 
 use crate::l0::external::ChainId;
+use crate::l0::stark_prover::StarkBatchProof;
 use crate::types::Hash;
 
 /// Wire version emitted by the current implementation. Bumped any time
@@ -62,6 +63,10 @@ pub struct L0ProofHeader {
     /// Root of the L1 DAG at this checkpoint (Quantos dag_root for native,
     /// or external chain block_hash for external checkpoints).
     pub dag_root: Hash,
+    /// Parent block hash for canonical chain continuity verification.
+    pub parent_block_hash: Hash,
+    /// Chain work (PoW) or justification weight (PoS) for fork-choice.
+    pub chain_work: u128,
     /// Hash of the validator set snapshot used to sign this proof.
     pub validator_set_root: Hash,
     /// Total stake covered by the validator set snapshot.
@@ -70,6 +75,9 @@ pub struct L0ProofHeader {
     pub stake_threshold: u128,
     /// Timestamp (ms) the proof was emitted.
     pub emitted_at_ms: u64,
+    /// SHA3-256 commitment over the STARK batch proof (if one was generated).
+    /// 32 zero bytes means no STARK proof was attached.
+    pub stark_commitment: Hash,
 }
 
 /// Description of a single validator that signed the proof.
@@ -103,7 +111,13 @@ pub struct L0FinalityProof {
     /// Validator set referenced by `signatures`.
     pub validators: Vec<ValidatorRecord>,
     /// PQC signatures over [`L0FinalityProof::signing_digest`].
+    /// May be empty when a STARK batch proof is present (stark_proof.is_some()).
     pub signatures: Vec<ProofSignature>,
+    /// Optional ZK-STARK batch proof aggregating all validator signatures.
+    /// When present, individual `signatures` are redundant for verification
+    /// but kept for auditability.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub stark_proof: Option<StarkBatchProof>,
 }
 
 impl L0FinalityProof {
@@ -127,6 +141,13 @@ impl L0FinalityProof {
         hasher.update(self.header.previous_proof_hash);
         hasher.update(self.header.state_root);
         hasher.update(self.header.dag_root);
+        hasher.update(self.header.parent_block_hash);
+        hasher.update(self.header.chain_work.to_be_bytes());
+        // NOTE: stark_commitment is intentionally excluded from the signing digest.
+        // It is a derived field computed AFTER PQC signatures are collected, so it
+        // cannot be part of what validators sign (circular dependency). Its integrity
+        // is guaranteed by the STARK proof itself, which binds message_hash = digest
+        // as a public input — making it unforgeable without breaking SHA3-256.
         hasher.update(self.header.validator_set_root);
         hasher.update(self.header.total_stake.to_be_bytes());
         hasher.update(self.header.stake_threshold.to_be_bytes());
@@ -155,6 +176,10 @@ impl L0FinalityProof {
             hasher.update((sig.signature.len() as u32).to_be_bytes());
             hasher.update(&sig.signature);
         }
+        // Commit the STARK batch proof commitment here (post-signing derived field).
+        // Excluded from signing_digest() to avoid circular dependency, but included
+        // in proof_hash() so the full proof identity covers the STARK output.
+        hasher.update(self.header.stark_commitment);
         let mut out = [0u8; 32];
         out.copy_from_slice(&hasher.finalize());
         out

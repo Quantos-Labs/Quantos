@@ -63,6 +63,7 @@ pub mod light_client;
 pub mod proof;
 pub mod registry;
 pub mod relay;
+pub mod stark_prover;
 pub mod subnet;
 pub mod verifier;
 
@@ -74,13 +75,15 @@ pub use external::{ChainId, ExternalCheckpoint, VerificationResult, Verification
 pub use gossip::{CheckpointGossip, CheckpointGossipMessage};
 pub use hub::{FinalityHub, HubMetrics, ValidatorSetSnapshot};
 pub use light_client::{
-    AptosLightClient, BitcoinLightClient, CardanoLightClient, EVMLightClient, 
-    LightClient, LightClientRegistry, NEARLightClient, SolanaLightClient, 
-    StellarLightClient, SuiLightClient, TezosLightClient, TONLightClient, TronLightClient
+    BitcoinLightClient, CardanoLightClient, CosmosLightClient, EVMLightClient,
+    GenericLightClient, LightClient, LightClientRegistry, MoveLightClient,
+    NearLightClient, PolkadotLightClient, SolanaLightClient, StellarLightClient,
+    TezosLightClient, TonLightClient, TronLightClient,
 };
 pub use proof::{
     L0FinalityProof, L0ProofHeader, L0_PROOF_VERSION, ProofSignature, ValidatorRecord,
 };
+pub use stark_prover::{BatchPublicInputs, SignerInput, StarkBatchProof, prove_batch, verify_batch};
 pub use registry::{ChainAdapter, ChainFamily, ChainRegistry, TargetChainId};
 pub use relay::{HttpRelayTransport, RelayDispatcher, RelayJob, RelayOutcome, RelayStatus};
 pub use subnet::{SubnetConfig, SubnetId, SubnetManager, SubnetValidator};

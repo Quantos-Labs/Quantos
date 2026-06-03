@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::l0::error::{L0Error, L0Result};
-use crate::l0::external::{ChainFamily, ChainId, ChainProof, ExternalCheckpoint, VerificationResult};
+use crate::l0::external::{ChainId, ChainProof, ExternalCheckpoint, VerificationResult};
+use crate::l0::registry::ChainFamily;
 use crate::types::Hash;
 
 // ── Classical signature libs for verifying source-chain proofs ──
@@ -90,6 +91,15 @@ fn verify_evm(cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
     if sr.len() != 32 { return Ok(VerificationResult::invalid("EVM state_root len != 32")); }
     let mut arr = [0u8; 32]; arr.copy_from_slice(sr);
     if arr != cp.state_root { return Ok(VerificationResult::invalid("EVM state_root mismatch")); }
+
+    // Verify parent block hash continuity (item[0] in EVM header RLP)
+    let pr = &items[0];
+    if pr.len() != 32 { return Ok(VerificationResult::invalid("EVM parent_hash len != 32")); }
+    let mut parent_arr = [0u8; 32]; parent_arr.copy_from_slice(pr);
+    if parent_arr != cp.parent_block_hash {
+        return Ok(VerificationResult::invalid("EVM parent_hash mismatch"));
+    }
+
     Ok(VerificationResult::valid())
 }
 
@@ -473,7 +483,7 @@ fn verify_tron(
 fn verify_ecdsa(pubkey_bytes: &[u8], message: &[u8], sig_bytes: &[u8]) -> Result<(), String> {
     let vk = EcdsaVerifyingKey::from_sec1_bytes(pubkey_bytes)
         .map_err(|e| format!("ECDSA invalid pubkey: {:?}", e))?;
-    let sig = EcdsaSignature::from_bytes(sig_bytes)
+    let sig = EcdsaSignature::from_slice(sig_bytes)
         .map_err(|e| format!("ECDSA invalid signature: {:?}", e))?;
     vk.verify(message, &sig)
         .map_err(|e| format!("ECDSA verify failed: {:?}", e))
@@ -600,7 +610,7 @@ impl LightClient for BitcoinLightClient {
 }
 
 pub struct SolanaLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl SolanaLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Svm)); Self { chain, validator_set: registry.get(&chain).map(Arc::new) } } }
+impl SolanaLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Svm)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
 #[async_trait]
 impl LightClient for SolanaLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
@@ -611,7 +621,7 @@ impl LightClient for SolanaLightClient {
 }
 
 pub struct MoveLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl MoveLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Move)); Self { chain, validator_set: registry.get(&chain).map(Arc::new) } } }
+impl MoveLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Move)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
 #[async_trait]
 impl LightClient for MoveLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
@@ -622,7 +632,7 @@ impl LightClient for MoveLightClient {
 }
 
 pub struct NearLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl NearLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Near)); Self { chain, validator_set: registry.get(&chain).map(Arc::new) } } }
+impl NearLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Near)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
 #[async_trait]
 impl LightClient for NearLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
@@ -633,7 +643,7 @@ impl LightClient for NearLightClient {
 }
 
 pub struct CosmosLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl CosmosLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Cosmos)); Self { chain, validator_set: registry.get(&chain).map(Arc::new) } } }
+impl CosmosLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Cosmos)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
 #[async_trait]
 impl LightClient for CosmosLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
@@ -644,7 +654,7 @@ impl LightClient for CosmosLightClient {
 }
 
 pub struct CardanoLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl CardanoLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Cardano)); Self { chain, validator_set: registry.get(&chain).map(Arc::new) } } }
+impl CardanoLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Cardano)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
 #[async_trait]
 impl LightClient for CardanoLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
@@ -655,7 +665,7 @@ impl LightClient for CardanoLightClient {
 }
 
 pub struct TonLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl TonLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Ton)); Self { chain, validator_set: registry.get(&chain).map(Arc::new) } } }
+impl TonLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Ton)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
 #[async_trait]
 impl LightClient for TonLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
@@ -666,7 +676,7 @@ impl LightClient for TonLightClient {
 }
 
 pub struct TronLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl TronLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Tvm)); Self { chain, validator_set: registry.get(&chain).map(Arc::new) } } }
+impl TronLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Tvm)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
 #[async_trait]
 impl LightClient for TronLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
@@ -677,7 +687,7 @@ impl LightClient for TronLightClient {
 }
 
 pub struct PolkadotLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl PolkadotLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Substrate)); Self { chain, validator_set: registry.get(&chain).map(Arc::new) } } }
+impl PolkadotLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Substrate)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
 #[async_trait]
 impl LightClient for PolkadotLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
@@ -688,7 +698,7 @@ impl LightClient for PolkadotLightClient {
 }
 
 pub struct StellarLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl StellarLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Stellar)); Self { chain, validator_set: registry.get(&chain).map(Arc::new) } } }
+impl StellarLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Stellar)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
 #[async_trait]
 impl LightClient for StellarLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
@@ -699,7 +709,7 @@ impl LightClient for StellarLightClient {
 }
 
 pub struct TezosLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl TezosLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Custom)); Self { chain, validator_set: registry.get(&chain).map(Arc::new) } } }
+impl TezosLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Custom)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
 #[async_trait]
 impl LightClient for TezosLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {

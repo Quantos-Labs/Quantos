@@ -1026,6 +1026,7 @@ impl QuantosRpcServer for QuantosRpcImpl {
         self.check_rate_limit()?;
 
         use crate::l0::{ChainId, ExternalCheckpoint, ValidatorSetSnapshot, VerificationResult};
+        use crate::l0::external::ChainProof;
 
         let hub = match self.consensus.l0_hub() {
             Some(h) => h,
@@ -1077,16 +1078,18 @@ impl QuantosRpcServer for QuantosRpcImpl {
 
         let block_hash = parse_hash(&request.block_hash)?;
         let state_root = parse_hash(&request.state_root)?;
-        let native_finality_proof = hex::decode(request.native_finality_proof.strip_prefix("0x").unwrap_or(&request.native_finality_proof))
-            .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid native_finality_proof hex: {}", e), None::<()>))?;
+        let proof: ChainProof = serde_json::from_str(&request.proof_json)
+            .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid proof_json: {}", e), None::<()>))?;
 
         let checkpoint = ExternalCheckpoint {
             chain_id,
             block_number: request.block_number,
             block_hash,
             state_root,
+            parent_block_hash: [0u8; 32],
+            chain_work: 0,
             timestamp_ms: request.timestamp_ms,
-            native_finality_proof,
+            proof,
             metadata: request.metadata,
         };
 
@@ -1756,7 +1759,8 @@ pub struct ExternalCheckpointRequest {
     pub block_hash: String,
     pub state_root: String,
     pub timestamp_ms: u64,
-    pub native_finality_proof: String,
+    /// JSON-encoded ChainProof (required). No hex strings.
+    pub proof_json: String,
     pub metadata: Option<String>,
 }
 
