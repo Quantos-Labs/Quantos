@@ -43,6 +43,8 @@ pub enum ChainFamily {
     Substrate,
     /// Cardano.
     Cardano,
+    /// Tezos (Michelson VM, Ed25519 baker signatures).
+    Tezos,
     /// Generic catch-all for non-EVM chains using a custom adapter.
     Custom,
 }
@@ -220,5 +222,8 @@ fn default_adapters() -> Vec<ChainAdapter> {
         mk("polkadot", Substrate, 0x504F_4C, "Polkadot", true),
         // Cardano — production active
         mk("cardano", Cardano, 0x4341_52, "Cardano", true),
+        // Tezos — production active
+        mk("tezos", Tezos, 0x5458_5A, "Tezos", true),
+        mk("tezos-testnet", Tezos, 0x5458_5A, "Tezos Ghostnet", false),
     ]
 }

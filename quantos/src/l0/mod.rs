@@ -53,6 +53,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 pub mod checkpoint_pool;
+pub mod epoch_watcher;
 pub mod config;
 pub mod encoding;
 pub mod error;
@@ -84,6 +85,7 @@ pub use proof::{
     L0FinalityProof, L0ProofHeader, L0_PROOF_VERSION, ProofSignature, ValidatorRecord,
 };
 pub use stark_prover::{BatchPublicInputs, SignerInput, StarkBatchProof, prove_batch, verify_batch};
+pub use epoch_watcher::{ChainWatcherConfig, EpochWatcher};
 pub use registry::{ChainAdapter, ChainFamily, ChainRegistry, TargetChainId};
 pub use relay::{HttpRelayTransport, RelayDispatcher, RelayJob, RelayOutcome, RelayStatus};
 pub use subnet::{SubnetConfig, SubnetId, SubnetManager, SubnetValidator};

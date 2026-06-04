@@ -149,7 +149,7 @@ impl ChainId {
             
             Self::Cardano | Self::CardanoTestnet => ChainFamily::Cardano,
             
-            Self::Tezos | Self::TezosTestnet => ChainFamily::Custom, // Tezos uses Michelson VM
+            Self::Tezos | Self::TezosTestnet => ChainFamily::Tezos,
             
             Self::Custom(_) => ChainFamily::Custom,
         }
@@ -171,16 +171,20 @@ pub enum ChainProof {
         /// Optional: execution payload block hash for dual verification.
         execution_payload_hash: Option<Hash>,
     },
-    /// Bitcoin proof: block header (80 bytes) + confirmation depth.
+    /// Bitcoin proof: block header (80 bytes) + confirmation depth + optional SPV tx proof.
     Bitcoin {
         /// Bitcoin block header (80 bytes), stored as Vec<u8> for serde compat.
         block_header: Vec<u8>,
         /// Number of confirming blocks on top (depth).
         confirmations: u32,
-        /// Optional: Merkle proof for a specific tx within this block.
+        /// Optional: Merkle sibling hashes from leaf to root (SPV inclusion proof).
         tx_merkle_proof: Option<Vec<[u8; 32]>>,
         /// Block height at which this header was mined.
         block_height: u64,
+        /// Optional: transaction hash to prove inclusion for (txid, little-endian).
+        tx_hash: Option<[u8; 32]>,
+        /// Optional: 0-based position of the tx in the block (used for left/right proof direction).
+        tx_index: Option<u32>,
     },
     /// Solana proof: ledger entry with vote account signatures.
     Solana {
@@ -300,7 +304,7 @@ impl ChainProof {
             Self::Tron { .. } => ChainFamily::Tvm,
             Self::Polkadot { .. } => ChainFamily::Substrate,
             Self::Stellar { .. } => ChainFamily::Stellar,
-            Self::Tezos { .. } => ChainFamily::Custom,
+            Self::Tezos { .. } => ChainFamily::Tezos,
             Self::Generic { .. } => ChainFamily::Custom,
         }
     }

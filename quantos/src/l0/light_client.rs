@@ -8,6 +8,7 @@ use sha2::{Digest as Sha2Digest, Sha256};
 use sha3::{Digest as Sha3Digest, Keccak256};
 use std::collections::HashMap;
 use std::sync::Arc;
+use parking_lot::RwLock;
 
 use crate::l0::error::{L0Error, L0Result};
 use crate::l0::external::{ChainId, ChainProof, ExternalCheckpoint, VerificationResult};
@@ -104,21 +105,70 @@ fn verify_evm(cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
 }
 
 fn verify_bitcoin(cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
-    let ChainProof::Bitcoin { block_header, confirmations, block_height, .. } = &cp.proof else {
+    let ChainProof::Bitcoin {
+        block_header, confirmations, block_height,
+        tx_merkle_proof, tx_hash, tx_index,
+    } = &cp.proof else {
         return Ok(VerificationResult::invalid("Expected Bitcoin ChainProof"));
     };
+
+    // ── 1. Block header hash (double-SHA256, little-endian reversed) ──
+    if block_header.len() != 80 {
+        return Ok(VerificationResult::invalid(format!("Bitcoin header must be 80 bytes, got {}", block_header.len())));
+    }
     let computed = double_sha256(block_header);
     let mut rev = [0u8; 32];
     for i in 0..32 { rev[i] = computed[31 - i]; }
     if rev != cp.block_hash {
         return Ok(VerificationResult::invalid("Bitcoin header hash mismatch"));
     }
+
+    // ── 2. Confirmation depth ──
     if *confirmations < 6 {
         return Ok(VerificationResult::invalid(format!("Bitcoin confs {} < 6", confirmations)));
     }
+
+    // ── 3. Block height ──
     if *block_height != cp.block_number {
         return Ok(VerificationResult::invalid("Bitcoin height mismatch"));
     }
+
+    // ── 4. SPV Merkle inclusion proof (optional — only checked when present) ──
+    // Bitcoin block header layout:
+    //   [0..4]   version
+    //   [4..36]  prev_block_hash
+    //   [36..68] merkle_root
+    //   [68..72] time
+    //   [72..76] bits
+    //   [76..80] nonce
+    if let (Some(proof_nodes), Some(txid), Some(tx_pos)) = (tx_merkle_proof, tx_hash, tx_index) {
+        let mut merkle_root_bytes = [0u8; 32];
+        merkle_root_bytes.copy_from_slice(&block_header[36..68]);
+
+        // Walk from leaf to root: at each level, combine with sibling
+        // Direction: bit k of tx_index determines left (0) or right (1) sibling
+        let mut current = double_sha256(txid);
+        let mut idx = *tx_pos;
+        for sibling in proof_nodes {
+            let mut combined = [0u8; 64];
+            if idx & 1 == 0 {
+                combined[..32].copy_from_slice(&current);
+                combined[32..].copy_from_slice(sibling);
+            } else {
+                combined[..32].copy_from_slice(sibling);
+                combined[32..].copy_from_slice(&current);
+            }
+            current = double_sha256(&combined);
+            idx >>= 1;
+        }
+        // Reverse to match Bitcoin's internal byte order
+        let mut computed_root = [0u8; 32];
+        for i in 0..32 { computed_root[i] = current[31 - i]; }
+        if computed_root != merkle_root_bytes {
+            return Ok(VerificationResult::invalid("Bitcoin SPV Merkle proof invalid: computed root does not match header"));
+        }
+    }
+
     Ok(VerificationResult::valid())
 }
 
@@ -579,12 +629,18 @@ pub struct ValidatorSet {
 
 #[derive(Clone, Debug, Default)]
 pub struct ValidatorSetRegistry {
-    sets: HashMap<ChainId, ValidatorSet>,
+    sets: Arc<RwLock<HashMap<ChainId, ValidatorSet>>>,
 }
 impl ValidatorSetRegistry {
     pub fn new() -> Self { Self::default() }
-    pub fn insert(&mut self, chain_id: ChainId, set: ValidatorSet) { self.sets.insert(chain_id, set); }
-    pub fn get(&self, chain_id: &ChainId) -> Option<&ValidatorSet> { self.sets.get(chain_id) }
+    /// Insert or replace a validator set. Safe to call concurrently (e.g. from EpochWatcher).
+    pub fn insert(&self, chain_id: ChainId, set: ValidatorSet) { self.sets.write().insert(chain_id, set); }
+    /// Returns a cloned snapshot of the validator set for this chain (None if not registered).
+    pub fn get_cloned(&self, chain_id: &ChainId) -> Option<ValidatorSet> { self.sets.read().get(chain_id).cloned() }
+    /// Number of registered validator sets.
+    pub fn len(&self) -> usize { self.sets.read().len() }
+    /// Returns all registered chain IDs.
+    pub fn chain_ids(&self) -> Vec<ChainId> { self.sets.read().keys().cloned().collect() }
 }
 
 #[async_trait]
@@ -609,112 +665,112 @@ impl LightClient for BitcoinLightClient {
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
-pub struct SolanaLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl SolanaLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Svm)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
+pub struct SolanaLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl SolanaLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Svm)); Self { registry, chain } } }
 #[async_trait]
 impl LightClient for SolanaLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
-        let set_ref = self.validator_set.as_ref().map(|a| a.as_ref());
-        verify_solana_production(cp, set_ref)
+        let set = self.registry.get_cloned(&self.chain);
+        verify_solana_production(cp, set.as_ref())
     }
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
-pub struct MoveLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl MoveLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Move)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
+pub struct MoveLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl MoveLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Move)); Self { registry, chain } } }
 #[async_trait]
 impl LightClient for MoveLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
-        let set_ref = self.validator_set.as_ref().map(|a| a.as_ref());
-        verify_move_production(cp, set_ref)
+        let set = self.registry.get_cloned(&self.chain);
+        verify_move_production(cp, set.as_ref())
     }
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
-pub struct NearLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl NearLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Near)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
+pub struct NearLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl NearLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Near)); Self { registry, chain } } }
 #[async_trait]
 impl LightClient for NearLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
-        let set_ref = self.validator_set.as_ref().map(|a| a.as_ref());
-        verify_near_production(cp, set_ref)
+        let set = self.registry.get_cloned(&self.chain);
+        verify_near_production(cp, set.as_ref())
     }
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
-pub struct CosmosLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl CosmosLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Cosmos)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
+pub struct CosmosLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl CosmosLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Cosmos)); Self { registry, chain } } }
 #[async_trait]
 impl LightClient for CosmosLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
-        let set_ref = self.validator_set.as_ref().map(|a| a.as_ref());
-        verify_cosmos_production(cp, set_ref)
+        let set = self.registry.get_cloned(&self.chain);
+        verify_cosmos_production(cp, set.as_ref())
     }
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
-pub struct CardanoLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl CardanoLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Cardano)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
+pub struct CardanoLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl CardanoLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Cardano)); Self { registry, chain } } }
 #[async_trait]
 impl LightClient for CardanoLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
-        let set_ref = self.validator_set.as_ref().map(|a| a.as_ref());
-        verify_cardano_production(cp, set_ref)
+        let set = self.registry.get_cloned(&self.chain);
+        verify_cardano_production(cp, set.as_ref())
     }
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
-pub struct TonLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl TonLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Ton)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
+pub struct TonLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl TonLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Ton)); Self { registry, chain } } }
 #[async_trait]
 impl LightClient for TonLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
-        let set_ref = self.validator_set.as_ref().map(|a| a.as_ref());
-        verify_ton(cp, set_ref)
+        let set = self.registry.get_cloned(&self.chain);
+        verify_ton(cp, set.as_ref())
     }
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
-pub struct TronLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl TronLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Tvm)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
+pub struct TronLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl TronLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Tvm)); Self { registry, chain } } }
 #[async_trait]
 impl LightClient for TronLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
-        let set_ref = self.validator_set.as_ref().map(|a| a.as_ref());
-        verify_tron(cp, set_ref)
+        let set = self.registry.get_cloned(&self.chain);
+        verify_tron(cp, set.as_ref())
     }
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
-pub struct PolkadotLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl PolkadotLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Substrate)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
+pub struct PolkadotLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl PolkadotLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Substrate)); Self { registry, chain } } }
 #[async_trait]
 impl LightClient for PolkadotLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
-        let set_ref = self.validator_set.as_ref().map(|a| a.as_ref());
-        verify_polkadot(cp, set_ref)
+        let set = self.registry.get_cloned(&self.chain);
+        verify_polkadot(cp, set.as_ref())
     }
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
-pub struct StellarLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl StellarLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Stellar)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
+pub struct StellarLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl StellarLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Stellar)); Self { registry, chain } } }
 #[async_trait]
 impl LightClient for StellarLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
-        let set_ref = self.validator_set.as_ref().map(|a| a.as_ref());
-        verify_stellar(cp, set_ref)
+        let set = self.registry.get_cloned(&self.chain);
+        verify_stellar(cp, set.as_ref())
     }
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
-pub struct TezosLightClient { chain: ChainId, validator_set: Option<Arc<ValidatorSet>> }
-impl TezosLightClient { pub fn new(chain: ChainId, registry: &ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Custom)); Self { validator_set: registry.get(&chain).map(|vs| Arc::new(vs.clone())), chain } } }
+pub struct TezosLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl TezosLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Tezos)); Self { registry, chain } } }
 #[async_trait]
 impl LightClient for TezosLightClient {
     async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
-        let set_ref = self.validator_set.as_ref().map(|a| a.as_ref());
-        verify_tezos(cp, set_ref)
+        let set = self.registry.get_cloned(&self.chain);
+        verify_tezos(cp, set.as_ref())
     }
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
@@ -729,6 +785,9 @@ impl LightClient for GenericLightClient {
 
 pub struct LightClientRegistry {
     clients: HashMap<ChainId, Box<dyn LightClient>>,
+    /// Shared validator set registry — clones are shallow (Arc), all point to the same data.
+    /// EpochWatcher and operators call validator_registry.insert() to update validator sets
+    /// and all live light clients see the update immediately without restart.
     pub validator_registry: ValidatorSetRegistry,
 }
 
@@ -744,45 +803,62 @@ impl LightClientRegistry {
             None => return Ok(VerificationResult::invalid(format!("No light client for {:?}", cp.chain_id))),
         };
         if cp.proof.family() != cp.chain_id.family() {
-            return Ok(VerificationResult::invalid(format!("Proof family mismatch")));
+            return Ok(VerificationResult::invalid("Proof family mismatch".to_string()));
         }
         client.verify_checkpoint(cp).await
     }
 
     pub fn with_defaults() -> Self {
-        let mut r = Self::new();
+        // All validator-set-aware light clients share the SAME registry Arc.
+        // Calling validator_registry.insert() from an EpochWatcher updates all clients live.
+        let validator_registry = ValidatorSetRegistry::new();
+        let mut clients: HashMap<ChainId, Box<dyn LightClient>> = HashMap::new();
+
         for chain in [
             ChainId::Ethereum, ChainId::EthereumSepolia, ChainId::Base, ChainId::BaseSepolia,
             ChainId::Arbitrum, ChainId::ArbitrumSepolia, ChainId::Optimism, ChainId::OptimismSepolia,
             ChainId::Polygon, ChainId::PolygonAmoy, ChainId::Avalanche, ChainId::AvalancheFuji,
             ChainId::BinanceSmartChain, ChainId::BscTestnet, ChainId::Moonbeam, ChainId::Berachain,
             ChainId::Hyperliquid, ChainId::Monad, ChainId::Somnia,
-        ] { r.register(Box::new(EVMLightClient::new(chain))); }
-        r.register(Box::new(BitcoinLightClient::new(ChainId::Bitcoin)));
-        r.register(Box::new(BitcoinLightClient::new(ChainId::BitcoinTestnet)));
-        r.register(Box::new(SolanaLightClient::new(ChainId::Solana, &r.validator_registry)));
-        r.register(Box::new(SolanaLightClient::new(ChainId::SolanaDevnet, &r.validator_registry)));
-        r.register(Box::new(MoveLightClient::new(ChainId::Aptos, &r.validator_registry)));
-        r.register(Box::new(MoveLightClient::new(ChainId::AptosTestnet, &r.validator_registry)));
-        r.register(Box::new(MoveLightClient::new(ChainId::Sui, &r.validator_registry)));
-        r.register(Box::new(MoveLightClient::new(ChainId::SuiTestnet, &r.validator_registry)));
-        r.register(Box::new(NearLightClient::new(ChainId::Near, &r.validator_registry)));
-        r.register(Box::new(NearLightClient::new(ChainId::NearTestnet, &r.validator_registry)));
-        r.register(Box::new(CosmosLightClient::new(ChainId::Cosmos, &r.validator_registry)));
-        r.register(Box::new(CosmosLightClient::new(ChainId::CosmosTestnet, &r.validator_registry)));
-        r.register(Box::new(CardanoLightClient::new(ChainId::Cardano, &r.validator_registry)));
-        r.register(Box::new(CardanoLightClient::new(ChainId::CardanoTestnet, &r.validator_registry)));
-        r.register(Box::new(TonLightClient::new(ChainId::Ton, &r.validator_registry)));
-        r.register(Box::new(TonLightClient::new(ChainId::TonTestnet, &r.validator_registry)));
-        r.register(Box::new(TronLightClient::new(ChainId::Tron, &r.validator_registry)));
-        r.register(Box::new(TronLightClient::new(ChainId::TronShasta, &r.validator_registry)));
-        r.register(Box::new(PolkadotLightClient::new(ChainId::Polkadot, &r.validator_registry)));
-        r.register(Box::new(PolkadotLightClient::new(ChainId::PolkadotTestnet, &r.validator_registry)));
-        r.register(Box::new(StellarLightClient::new(ChainId::Stellar, &r.validator_registry)));
-        r.register(Box::new(StellarLightClient::new(ChainId::StellarTestnet, &r.validator_registry)));
-        r.register(Box::new(TezosLightClient::new(ChainId::Tezos, &r.validator_registry)));
-        r.register(Box::new(TezosLightClient::new(ChainId::TezosTestnet, &r.validator_registry)));
-        r
+        ] { clients.insert(chain.clone(), Box::new(EVMLightClient::new(chain))); }
+
+        for chain in [ChainId::Bitcoin, ChainId::BitcoinTestnet] {
+            clients.insert(chain.clone(), Box::new(BitcoinLightClient::new(chain)));
+        }
+
+        let vr = &validator_registry;
+        for chain in [ChainId::Solana, ChainId::SolanaDevnet] {
+            clients.insert(chain.clone(), Box::new(SolanaLightClient::new(chain, vr.clone())));
+        }
+        for chain in [ChainId::Aptos, ChainId::AptosTestnet, ChainId::Sui, ChainId::SuiTestnet] {
+            clients.insert(chain.clone(), Box::new(MoveLightClient::new(chain, vr.clone())));
+        }
+        for chain in [ChainId::Near, ChainId::NearTestnet] {
+            clients.insert(chain.clone(), Box::new(NearLightClient::new(chain, vr.clone())));
+        }
+        for chain in [ChainId::Cosmos, ChainId::CosmosTestnet] {
+            clients.insert(chain.clone(), Box::new(CosmosLightClient::new(chain, vr.clone())));
+        }
+        for chain in [ChainId::Cardano, ChainId::CardanoTestnet] {
+            clients.insert(chain.clone(), Box::new(CardanoLightClient::new(chain, vr.clone())));
+        }
+        for chain in [ChainId::Ton, ChainId::TonTestnet] {
+            clients.insert(chain.clone(), Box::new(TonLightClient::new(chain, vr.clone())));
+        }
+        for chain in [ChainId::Tron, ChainId::TronShasta] {
+            clients.insert(chain.clone(), Box::new(TronLightClient::new(chain, vr.clone())));
+        }
+        for chain in [ChainId::Polkadot, ChainId::PolkadotTestnet] {
+            clients.insert(chain.clone(), Box::new(PolkadotLightClient::new(chain, vr.clone())));
+        }
+        for chain in [ChainId::Stellar, ChainId::StellarTestnet] {
+            clients.insert(chain.clone(), Box::new(StellarLightClient::new(chain, vr.clone())));
+        }
+        for chain in [ChainId::Tezos, ChainId::TezosTestnet] {
+            clients.insert(chain.clone(), Box::new(TezosLightClient::new(chain, vr.clone())));
+        }
+
+        Self { clients, validator_registry }
     }
 }
 
@@ -822,6 +898,8 @@ mod tests {
             block_number: 0,
             block_hash: [0u8; 32],
             state_root: [0u8; 32],
+            parent_block_hash: [0u8; 32],
+            chain_work: 0,
             timestamp_ms: 0,
             proof: ChainProof::Evm { block_header_rlp: vec![], sync_committee_signature: None, execution_payload_hash: None },
             metadata: None,
@@ -830,5 +908,45 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(registry.verify_checkpoint(&cp)).unwrap();
         assert!(!result.valid);
+    }
+
+    #[test]
+    fn test_bitcoin_merkle_single_tx() {
+        // A block with a single tx: merkle root = double_sha256(txid)
+        // Build a valid 80-byte header with the correct merkle_root
+        let txid = [0x42u8; 32];
+        let leaf = double_sha256(&txid);
+        // No proof nodes needed for a single tx (leaf IS the root)
+        let mut header = [0u8; 80];
+        // Insert merkle root at bytes [36..68] (non-reversed, raw)
+        let mut root_rev = [0u8; 32];
+        for i in 0..32 { root_rev[i] = leaf[31 - i]; }
+        header[36..68].copy_from_slice(&root_rev);
+        let block_hash = {
+            let h = double_sha256(&header);
+            let mut rev = [0u8; 32];
+            for i in 0..32 { rev[i] = h[31 - i]; }
+            rev
+        };
+        let cp = ExternalCheckpoint {
+            chain_id: ChainId::Bitcoin,
+            block_number: 800_000,
+            block_hash,
+            state_root: [0u8; 32],
+            parent_block_hash: [0u8; 32],
+            chain_work: 0,
+            timestamp_ms: 0,
+            proof: ChainProof::Bitcoin {
+                block_header: header.to_vec(),
+                confirmations: 6,
+                block_height: 800_000,
+                tx_merkle_proof: Some(vec![]),  // no siblings for single tx
+                tx_hash: Some(txid),
+                tx_index: Some(0),
+            },
+            metadata: None,
+        };
+        let result = verify_bitcoin(&cp).unwrap();
+        assert!(result.valid, "single-tx Merkle proof should be valid");
     }
 }

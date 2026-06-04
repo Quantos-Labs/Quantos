@@ -58,6 +58,7 @@ impl EncodingFormat {
             ChainFamily::Bitcoin => EncodingFormat::JsonGeneric,
             ChainFamily::Substrate => EncodingFormat::JsonGeneric,
             ChainFamily::Cardano => EncodingFormat::JsonGeneric,
+            ChainFamily::Tezos => EncodingFormat::JsonGeneric,
             ChainFamily::Custom => EncodingFormat::JsonGeneric,
         }
     }
@@ -142,6 +143,7 @@ fn family_tag(family: ChainFamily) -> &'static str {
         ChainFamily::Bitcoin => "bitcoin",
         ChainFamily::Substrate => "substrate",
         ChainFamily::Cardano => "cardano",
+        ChainFamily::Tezos => "tezos",
         ChainFamily::Custom => "custom",
     }
 }
