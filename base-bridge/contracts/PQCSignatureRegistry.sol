@@ -26,6 +26,12 @@ contract PQCSignatureRegistry is Ownable2Step {
     /// @notice Number of blocks during which both old and new key are valid after rotation
     uint64 public constant ROTATION_GRACE_BLOCKS = 50_400; // ~7 days at 12s/block
 
+    /// @notice Minimum blocks between commit and reveal for PQC key registration.
+    /// Creates a ~20-minute observation window: if an attacker with a stolen ECDSA
+    /// key commits a malicious Falcon key, the legitimate user sees it on-chain
+    /// BEFORE it is finalized and can abort / trigger guardian recovery.
+    uint64 public constant MIGRATION_DELAY = 100; // ~20 min at 12s/block
+
     /// @notice EIP-712-style domain separator for cross-chain replay protection.
     /// Falcon signs: keccak256(DOMAIN_TYPEHASH || chainId || address(this) || payloadHash || nonce)
     bytes32 public immutable DOMAIN_SEPARATOR;
@@ -88,6 +94,11 @@ contract PQCSignatureRegistry is Ownable2Step {
     mapping(address => uint256) public nonces;
     /// @notice STARK commitments already used (prevent replay of batch proofs)
     mapping(bytes32 => bool) public usedStarkCommitments;
+
+    /// @notice Pending commit-reveal commitments: account => keccak256(publicKey || salt)
+    mapping(address => bytes32) public pendingCommitments;
+    /// @notice Block number at which each pending commitment was submitted
+    mapping(address => uint64) public commitmentBlock;
     /// @notice Minimum ETH bond a challenger must post (default 0.01 ETH)
     uint256 public challengeBond = 0.01 ether;
     /// @notice Active challenges: actionHash => challenger address
@@ -98,6 +109,11 @@ contract PQCSignatureRegistry is Ownable2Step {
     mapping(bytes32 => bool) public slashed;
     /// @notice Accumulated slash proceeds withdrawable by owner
     uint256 public slashProceeds;
+
+    /// @notice Emitted when a commit-reveal commitment is lodged
+    event PqcKeyCommitted(address indexed account, uint64 availableAt);
+    /// @notice Emitted when a pending commitment is cancelled by the account owner
+    event PqcKeyCommitmentCancelled(address indexed account);
 
     event ChallengeOpened(bytes32 indexed actionHash, address indexed challenger, uint256 bond);
     event ChallengeRejected(bytes32 indexed actionHash, address indexed challenger);
@@ -122,6 +138,11 @@ contract PQCSignatureRegistry is Ownable2Step {
     error ChallengeWindowExpired();
     error BondTransferFailed();
     error AlreadySlashed();
+    error CommitmentRequired();
+    error CommitmentMismatch();
+    error CommitmentDelayNotElapsed(uint64 availableAt);
+    error CommitmentNotFound();
+    error CommitmentAlreadyPending();
 
     constructor(address initialOwner) Ownable(initialOwner) {
         DOMAIN_SEPARATOR = keccak256(abi.encode(
@@ -133,12 +154,51 @@ contract PQCSignatureRegistry is Ownable2Step {
 
     // ── Identity Management ───────────────────────────────────────────────
 
-    /// @notice Register a PQC public key for the caller.
+    /// @notice Step 1 of commit-reveal: lodge a blinded commitment to a Falcon/Dilithium key.
+    /// @dev Commitment = keccak256(abi.encodePacked(publicKey, salt)).
+    /// After MIGRATION_DELAY blocks (~20 min), call registerPqcKey() to reveal.
+    /// If an attacker with a stolen ECDSA key commits a malicious key, the
+    /// legitimate owner sees it on-chain BEFORE finalization and can cancel.
+    /// @param commitment keccak256(abi.encodePacked(publicKey, salt))
+    function commitPqcKey(bytes32 commitment) external {
+        if (identities[msg.sender].active) revert IdentityAlreadyExists();
+        if (pendingCommitments[msg.sender] != bytes32(0)) revert CommitmentAlreadyPending();
+
+        pendingCommitments[msg.sender] = commitment;
+        commitmentBlock[msg.sender] = uint64(block.number);
+
+        uint64 availableAt = uint64(block.number) + MIGRATION_DELAY;
+        emit PqcKeyCommitted(msg.sender, availableAt);
+    }
+
+    /// @notice Cancel a pending commitment (e.g. if you detect an attacker committed).
+    /// Only callable by the account itself.
+    function cancelCommitment() external {
+        if (pendingCommitments[msg.sender] == bytes32(0)) revert CommitmentNotFound();
+        delete pendingCommitments[msg.sender];
+        delete commitmentBlock[msg.sender];
+        emit PqcKeyCommitmentCancelled(msg.sender);
+    }
+
+    /// @notice Step 2 of commit-reveal: register a PQC public key after MIGRATION_DELAY blocks.
     /// @param publicKey The raw PQC public key bytes (Falcon-512 or Dilithium-3)
     /// @param algo Which PQC algorithm this key uses
-    function registerPqcKey(bytes calldata publicKey, PqcAlgo algo) external {
+    /// @param salt Random bytes32 used when hashing the commitment — must match what was committed
+    function registerPqcKey(bytes calldata publicKey, PqcAlgo algo, bytes32 salt) external {
         if (publicKey.length == 0) revert InvalidSignatureLength();
         if (identities[msg.sender].active) revert IdentityAlreadyExists();
+
+        // ── Verify commitment ──
+        bytes32 expected = pendingCommitments[msg.sender];
+        if (expected == bytes32(0)) revert CommitmentRequired();
+        if (keccak256(abi.encodePacked(publicKey, salt)) != expected) revert CommitmentMismatch();
+
+        uint64 available = commitmentBlock[msg.sender] + MIGRATION_DELAY;
+        if (block.number < available) revert CommitmentDelayNotElapsed(available);
+
+        // ── Clear commitment ──
+        delete pendingCommitments[msg.sender];
+        delete commitmentBlock[msg.sender];
 
         identities[msg.sender] = PqcIdentity({
             publicKey: publicKey,
