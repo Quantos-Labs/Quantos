@@ -88,6 +88,20 @@ contract PQCSignatureRegistry is Ownable2Step {
     mapping(address => uint256) public nonces;
     /// @notice STARK commitments already used (prevent replay of batch proofs)
     mapping(bytes32 => bool) public usedStarkCommitments;
+    /// @notice Minimum ETH bond a challenger must post (default 0.01 ETH)
+    uint256 public challengeBond = 0.01 ether;
+    /// @notice Active challenges: actionHash => challenger address
+    mapping(bytes32 => address) public challengers;
+    /// @notice Bond amounts locked per actionHash
+    mapping(bytes32 => uint256) public challengeBonds;
+    /// @notice Whether a verifier has been slashed for a given action
+    mapping(bytes32 => bool) public slashed;
+    /// @notice Accumulated slash proceeds withdrawable by owner
+    uint256 public slashProceeds;
+
+    event ChallengeOpened(bytes32 indexed actionHash, address indexed challenger, uint256 bond);
+    event ChallengeRejected(bytes32 indexed actionHash, address indexed challenger);
+    event VerifierSlashed(bytes32 indexed actionHash, address indexed challenger, uint256 bond);
 
     error NoPqcIdentity();
     error IdentityAlreadyExists();
@@ -102,6 +116,12 @@ contract PQCSignatureRegistry is Ownable2Step {
     error RotationNotReady();
     error StarkCommitmentAlreadyUsed();
     error EmptyBatch();
+    error InsufficientBond();
+    error ChallengeAlreadyExists();
+    error ChallengeNotFound();
+    error ChallengeWindowExpired();
+    error BondTransferFailed();
+    error AlreadySlashed();
 
     constructor(address initialOwner) Ownable(initialOwner) {
         DOMAIN_SEPARATOR = keccak256(abi.encode(
@@ -190,6 +210,19 @@ contract PQCSignatureRegistry is Ownable2Step {
     /// @notice Update the optimistic challenge window. Only owner.
     function setChallengeWindow(uint256 seconds_) external onlyOwner {
         challengeWindowSeconds = seconds_;
+    }
+
+    /// @notice Update the minimum challenge bond. Only owner.
+    function setChallengeBond(uint256 bond) external onlyOwner {
+        challengeBond = bond;
+    }
+
+    /// @notice Owner withdraws accumulated slash proceeds.
+    function withdrawSlashProceeds() external onlyOwner {
+        uint256 amount = slashProceeds;
+        slashProceeds = 0;
+        (bool ok,) = payable(owner()).call{value: amount}("");
+        if (!ok) revert BondTransferFailed();
     }
 
     // ── Hybrid Action Submission ────────────────────────────────────────
@@ -305,21 +338,79 @@ contract PQCSignatureRegistry is Ownable2Step {
         emit BatchStarkConfirmed(starkCommitment, confirmed, msg.sender);
     }
 
-    // ── Optimistic Challenge ─────────────────────────────────────────────
+    // ── Optimistic Challenge ────────────────────────────────────────────
 
-    /// @notice Anyone can challenge a PQC verification during the challenge window.
-    /// In a full implementation this would slash the verifier stake if the
-    /// challenge proves the PQC signature was invalid.
-    function challengePqcVerification(bytes32 actionHash) external {
+    /// @notice Open a challenge against a PQC verification by posting a bond.
+    /// @dev Must be called within the challenge window (before submittedAt + challengeWindowSeconds).
+    /// The challenger asserts the verifier's Falcon/Dilithium attestation was fraudulent.
+    /// The owner (or a governance contract) reviews the off-chain proof and calls
+    /// slashVerifier() if the challenge is valid, or rejectChallenge() otherwise.
+    /// Bond is refunded if the challenge succeeds (slash), burned to owner if rejected.
+    function challengePqcVerification(bytes32 actionHash) external payable {
+        if (msg.value < challengeBond) revert InsufficientBond();
+        if (challengers[actionHash] != address(0)) revert ChallengeAlreadyExists();
+        if (slashed[actionHash]) revert AlreadySlashed();
+
         PendingAction storage action = pendingActions[actionHash];
         if (action.submittedAt == 0) revert ActionNotFound();
-        if (action.pqcVerified) revert ChallengeWindowActive();
 
         uint256 challengeDeadline = action.submittedAt + challengeWindowSeconds;
-        if (block.timestamp > challengeDeadline) revert ChallengeWindowActive();
+        if (block.timestamp > challengeDeadline) revert ChallengeWindowExpired();
 
-        // Placeholder: in production, this would trigger a verification game
-        // where challengers post a bond and verifiers must defend their attestation.
+        challengers[actionHash] = msg.sender;
+        challengeBonds[actionHash] = msg.value;
+
+        // Revert pqcVerified status while challenge is pending
+        if (action.pqcVerified) {
+            action.pqcVerified = false;
+            pqcSecured[actionHash] = false;
+        }
+
+        emit ChallengeOpened(actionHash, msg.sender, msg.value);
+    }
+
+    /// @notice Owner resolves a challenge as valid: the verifier attested a bad PQC sig.
+    /// The challenger receives their bond back. The action remains un-secured.
+    /// @dev In a future version, verifier stake could be slashed here via a staking contract.
+    function slashVerifier(bytes32 actionHash) external onlyOwner {
+        address challenger = challengers[actionHash];
+        if (challenger == address(0)) revert ChallengeNotFound();
+        if (slashed[actionHash]) revert AlreadySlashed();
+
+        uint256 bond = challengeBonds[actionHash];
+        slashed[actionHash] = true;
+        challengers[actionHash] = address(0);
+        challengeBonds[actionHash] = 0;
+
+        // Refund the challenger's bond — they were right
+        (bool ok,) = payable(challenger).call{value: bond}("");
+        if (!ok) revert BondTransferFailed();
+
+        emit VerifierSlashed(actionHash, challenger, bond);
+    }
+
+    /// @notice Owner rejects a challenge: the verifier's attestation was correct.
+    /// The challenger's bond is transferred to the contract owner as a penalty.
+    /// The action is re-marked as pqcSecured.
+    function rejectChallenge(bytes32 actionHash) external onlyOwner {
+        address challenger = challengers[actionHash];
+        if (challenger == address(0)) revert ChallengeNotFound();
+
+        uint256 bond = challengeBonds[actionHash];
+        challengers[actionHash] = address(0);
+        challengeBonds[actionHash] = 0;
+
+        // Re-secure the action — the challenge was frivolous
+        PendingAction storage action = pendingActions[actionHash];
+        if (action.submittedAt != 0 && !action.pqcVerified) {
+            action.pqcVerified = true;
+            pqcSecured[actionHash] = true;
+        }
+
+        // Bond goes to owner as penalty for frivolous challenge
+        slashProceeds += bond;
+
+        emit ChallengeRejected(actionHash, challenger);
     }
 
     // ── View Functions ──────────────────────────────────────────────────
