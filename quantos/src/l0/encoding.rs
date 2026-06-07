@@ -64,6 +64,20 @@ impl EncodingFormat {
     }
 }
 
+/// Pre-computed EVM calldata for on-chain submission.
+/// Allows the relay receiver to call both verifier contracts
+/// without re-parsing the full proof.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EvmCalldata {
+    /// Calldata for QuantosL0Verifier.verifyProof() or finalizeBlock().
+    pub l0_verifier_calldata: String,
+    /// Calldata for QuantosStarkVerifier.submitCommitment().
+    /// None if the proof has no STARK commitment.
+    pub stark_verifier_calldata: Option<String>,
+    /// 32-byte STARK commitment (hex) for reference.
+    pub stark_commitment: String,
+}
+
 /// Output of an encoding step, ready to ship to a target.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EncodedProof {
@@ -73,6 +87,9 @@ pub struct EncodedProof {
     pub payload: Vec<u8>,
     /// Encoding format used for the payload.
     pub format: EncodingFormat,
+    /// Pre-computed EVM calldata (EVM chains only).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub evm_calldata: Option<EvmCalldata>,
 }
 
 /// Stateless encoder that turns proofs into chain-flavored payloads.
@@ -93,21 +110,31 @@ impl CanonicalEncoder {
         adapter: &ChainAdapter,
     ) -> L0Result<EncodedProof> {
         let format = EncodingFormat::for_family(adapter.family);
+        let proof_hash = proof.proof_hash();
         let envelope = ProofEnvelope {
             family: family_tag(adapter.family).to_string(),
             chain_id: adapter.id.as_str().to_string(),
             chain_magic: adapter.chain_magic,
-            proof_hash: proof.proof_hash(),
+            proof_hash,
             proof: proof.clone(),
         };
 
         let payload = serde_json::to_vec(&envelope)
             .map_err(|e| L0Error::Encoding(format!("json: {e}")))?;
 
+        // For EVM chains, pre-compute calldata for both verifier contracts so
+        // the relay receiver can submit on-chain without re-parsing the proof.
+        let evm_calldata = if adapter.family == crate::l0::registry::ChainFamily::Evm {
+            Some(build_evm_calldata(proof, &proof_hash))
+        } else {
+            None
+        };
+
         Ok(EncodedProof {
-            proof_hash: envelope.proof_hash,
+            proof_hash,
             payload,
             format,
+            evm_calldata,
         })
     }
 
@@ -146,6 +173,90 @@ fn family_tag(family: ChainFamily) -> &'static str {
         ChainFamily::Tezos => "tezos",
         ChainFamily::Custom => "custom",
     }
+}
+
+/// Pre-compute EVM calldata for QuantosL0Verifier.verifyProof() and
+/// QuantosStarkVerifier.submitCommitment() from an L0FinalityProof.
+///
+/// Encoding: 4-byte Keccak selector (first 4 bytes of keccak256(signature))
+/// followed by ABI-packed arguments.  The relay receiver submits two txs:
+///   tx1 → l0_verifier_calldata  to QuantosL0Verifier
+///   tx2 → stark_verifier_calldata to QuantosStarkVerifier (if STARK present)
+fn build_evm_calldata(proof: &L0FinalityProof, proof_hash: &[u8; 32]) -> EvmCalldata {
+    use sha3::{Digest, Keccak256};
+
+    // ── verifyProof(bytes32,bytes32,uint128,uint64,uint64,bytes32,string,bytes32,uint128) ──
+    // selector = keccak256("verifyProof(bytes32,bytes32,uint128,uint64,uint64,bytes32,string,bytes32,uint128)")[0..4]
+    let l0_sig = b"verifyProof(bytes32,bytes32,uint128,uint64,uint64,bytes32,string,bytes32,uint128)";
+    let selector_l0: [u8; 4] = Keccak256::digest(l0_sig)[..4].try_into().unwrap_or([0u8; 4]);
+
+    // Pack args (simplified ABI encoding — all fixed-size except string chainId):
+    // proofHash(32) | validatorSetRoot(32) | signedStake(16, left-padded 32)
+    // | epoch(8, left-padded 32) | slot(8, left-padded 32)
+    // | stateRoot(32) | chainId_offset(32) | parentBlockHash(32)
+    // | chainWork(16, left-padded 32) | chainId_len(32) | chainId_bytes(padded)
+    let chain_id_bytes = proof.header.external_chain
+        .as_ref()
+        .map(|c| c.as_str().as_bytes().to_vec())
+        .unwrap_or_else(|| b"quantos".to_vec());
+
+    let signed_stake = proof.signed_stake();
+    let mut l0_data = selector_l0.to_vec();
+    l0_data.extend_from_slice(proof_hash);
+    l0_data.extend_from_slice(&proof.header.validator_set_root);
+    l0_data.extend_from_slice(&pad32_u128(signed_stake));
+    l0_data.extend_from_slice(&pad32_u64(proof.header.epoch));
+    l0_data.extend_from_slice(&pad32_u64(proof.header.slot));
+    l0_data.extend_from_slice(&proof.header.state_root);
+    // dynamic string offset (9 fixed params × 32 = 288 = 0x120)
+    l0_data.extend_from_slice(&pad32_u64(9 * 32));
+    l0_data.extend_from_slice(&proof.header.parent_block_hash);
+    l0_data.extend_from_slice(&pad32_u128(proof.header.chain_work));
+    // chain_id string: length then padded bytes
+    l0_data.extend_from_slice(&pad32_u64(chain_id_bytes.len() as u64));
+    let padded_len = ((chain_id_bytes.len() + 31) / 32) * 32;
+    let mut padded_chain = chain_id_bytes.clone();
+    padded_chain.resize(padded_len, 0);
+    l0_data.extend_from_slice(&padded_chain);
+
+    // ── submitCommitment(bytes32,bytes32,bytes32,uint128,uint128,uint32,bytes32) ──
+    let stark_calldata = if proof.header.stark_commitment != [0u8; 32] {
+        let sc_sig = b"submitCommitment(bytes32,bytes32,bytes32,uint128,uint128,uint32,bytes32)";
+        let selector_sc: [u8; 4] = Keccak256::digest(sc_sig)[..4].try_into().unwrap_or([0u8; 4]);
+
+        let signer_count = proof.signatures.len() as u32;
+        let digest = proof.signing_digest();
+
+        let mut sc_data = selector_sc.to_vec();
+        sc_data.extend_from_slice(&proof.header.stark_commitment);
+        sc_data.extend_from_slice(&proof.header.validator_set_root);
+        sc_data.extend_from_slice(&digest);
+        sc_data.extend_from_slice(&pad32_u128(signed_stake));
+        sc_data.extend_from_slice(&pad32_u128(proof.header.stake_threshold));
+        sc_data.extend_from_slice(&pad32_u64(signer_count as u64));
+        sc_data.extend_from_slice(proof_hash);
+        Some(hex::encode(sc_data))
+    } else {
+        None
+    };
+
+    EvmCalldata {
+        l0_verifier_calldata: hex::encode(l0_data),
+        stark_verifier_calldata: stark_calldata,
+        stark_commitment: hex::encode(proof.header.stark_commitment),
+    }
+}
+
+fn pad32_u64(v: u64) -> [u8; 32] {
+    let mut b = [0u8; 32];
+    b[24..].copy_from_slice(&v.to_be_bytes());
+    b
+}
+
+fn pad32_u128(v: u128) -> [u8; 32] {
+    let mut b = [0u8; 32];
+    b[16..].copy_from_slice(&v.to_be_bytes());
+    b
 }
 
 mod hex_array {

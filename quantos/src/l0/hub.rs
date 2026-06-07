@@ -219,6 +219,20 @@ impl FinalityHub {
         };
         let digest = proof.signing_digest();
 
+        // One STARK signer entry per validator (is_signer=false by default).
+        // Filled in below as signatures are verified.
+        let mut signer_inputs: Vec<crate::l0::stark_prover::SignerInput> = snapshot
+            .validators
+            .iter()
+            .enumerate()
+            .map(|(i, v)| crate::l0::stark_prover::SignerInput {
+                validator_index: i as u32,
+                stake: v.stake,
+                sig_commitment: [0u8; 32],
+                is_signer: false,
+            })
+            .collect();
+
         // Verify and attach each contribution. We do a stake tally on
         // the fly to short-circuit as soon as the threshold is met.
         let mut signed_stake: u128 = 0;
@@ -255,6 +269,16 @@ impl FinalityHub {
                 continue;
             }
 
+            // Mark this validator as a signer in the STARK circuit.
+            if let Some(si) = signer_inputs.get_mut(index) {
+                si.is_signer = true;
+                si.sig_commitment = crate::l0::stark_prover::SignerInput::build_commitment(
+                    &validator.public_key,
+                    &digest,
+                    &contribution.signature,
+                );
+            }
+
             proof.signatures.push(ProofSignature {
                 validator_index: index as u32,
                 algo: contribution.algo,
@@ -273,6 +297,37 @@ impl FinalityHub {
                 signed: signed_stake,
                 required,
             });
+        }
+
+        // ── ZK-STARK batch proof ────────────────────────────────────────────────
+        // Aggregate all PQC signature verifications into a single 32-byte
+        // commitment that can be cheaply stored on any target chain.
+        // Proven off-chain in <10 ms; the on-chain footprint is 32 bytes.
+        let stark_pub_inputs = crate::l0::stark_prover::BatchPublicInputs {
+            validator_set_root,
+            message_hash: digest,
+            signed_stake,
+            stake_threshold: required,
+            signer_count: proof.signatures.len() as u32,
+        };
+        match crate::l0::stark_prover::prove_batch(&signer_inputs, stark_pub_inputs) {
+            Ok(stark_proof) => {
+                tracing::info!(
+                    epoch = checkpoint.epoch,
+                    commitment = %hex::encode(&stark_proof.commitment[..8]),
+                    signers = proof.signatures.len(),
+                    "STARK batch proof generated"
+                );
+                proof.header.stark_commitment = stark_proof.commitment;
+                proof.stark_proof = Some(stark_proof);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    epoch = checkpoint.epoch,
+                    error = %e,
+                    "STARK batch proof failed — proof emitted without STARK commitment"
+                );
+            }
         }
 
         let proof_hash = proof.proof_hash();

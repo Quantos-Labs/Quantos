@@ -207,6 +207,14 @@ impl QuantosConsensus {
         // Authorize this validator to create vertices in the DAG
         self.dag.add_authorized_creator(address);
 
+        // Initialize Threshold QR-VRF with this validator's VRF public key.
+        // In a multi-validator network the full validator set public keys would
+        // be collected here; for single-node testnet we seed with one key.
+        let vrf_pubkey = vrf_key.public_key().to_vec();
+        if let Err(e) = self.committee_manager.initialize_threshold_vrf(vec![vrf_pubkey]) {
+            tracing::warn!("Threshold VRF init: {}", e);
+        }
+
         self.validator_keys = Some(ValidatorKeys {
             signing_key,
             vrf_key,
@@ -406,15 +414,44 @@ impl QuantosConsensus {
         Ok(())
     }
 
+    /// Computes per-epoch randomness used for committee selection.
+    ///
+    /// Uses the validator's QR-VRF key (SPHINCS+ PRF) when available, giving
+    /// post-quantum unpredictability and verifiable uniqueness.  Falls back to
+    /// plain SHA3-256 only at genesis (before validator keys are loaded).
     fn compute_epoch_randomness(&self, epoch: u64) -> Hash {
-        let mut data = Vec::new();
-        data.extend_from_slice(&epoch.to_le_bytes());
-        
+        // Canonical seed: epoch_bytes ++ prev_finalized_checkpoint_hash
+        let mut seed_data = Vec::new();
+        seed_data.extend_from_slice(&epoch.to_le_bytes());
         if let Some(checkpoint) = self.finality.get_latest_finalized_checkpoint() {
-            data.extend_from_slice(&checkpoint.hash());
+            seed_data.extend_from_slice(&checkpoint.hash());
         }
-        
-        crate::types::hash_data(&data)
+        let seed = crate::types::hash_data(&seed_data);
+
+        // QR-VRF path: SPHINCS+ PRF over the seed → deterministic, PQ-secure output
+        if let Some(ref keys) = self.validator_keys {
+            match keys.vrf_key.prove(&seed) {
+                Ok(proof) => {
+                    tracing::info!(
+                        epoch = epoch,
+                        output = %hex::encode(&proof.output[..8]),
+                        "QR-VRF epoch randomness generated (SPHINCS+ PRF)"
+                    );
+                    return proof.output;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        epoch = epoch,
+                        error = %e,
+                        "QR-VRF prove failed — falling back to plain hash randomness"
+                    );
+                }
+            }
+        }
+
+        // Fallback: genesis epoch or no validator key loaded yet
+        tracing::debug!(epoch, "Using plain hash randomness (no validator key)");
+        seed
     }
 
     pub async fn submit_transaction(&self, tx: SignedTransaction) -> ConsensusResult<Hash> {

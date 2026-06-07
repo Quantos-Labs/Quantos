@@ -87,8 +87,12 @@ pub struct ChainAdapter {
     pub display_name: String,
     /// Endpoint URL where the relayer should submit attestations.
     pub endpoint: String,
-    /// Optional contract / program address that owns the L0 receiver.
+    /// Optional contract / program address that owns the L0 receiver
+    /// (QuantosL0Verifier on EVM chains).
     pub receiver_address: Option<String>,
+    /// Optional QuantosStarkVerifier contract address on EVM chains.
+    /// When set, the relay payload includes STARK commitment calldata.
+    pub stark_verifier_address: Option<String>,
     /// Whether the adapter is enabled in the current deployment.
     pub enabled: bool,
 }
@@ -191,6 +195,7 @@ fn default_adapters() -> Vec<ChainAdapter> {
         display_name: name.to_string(),
         endpoint: String::new(),
         receiver_address: None,
+        stark_verifier_address: None,
         enabled,
     };
 
