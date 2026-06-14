@@ -26,10 +26,10 @@ module quantos::l0_verifier {
     // ================================================================
 
     /// Capability object used to register/revoke validator sets.
-    struct AdminCap has key, store { id: UID }
+    public struct AdminCap has key, store { id: UID }
 
     /// A trusted validator set root registered by the Quantos L0 hub.
-    struct ValidatorSet has key, store {
+    public struct ValidatorSet has key, store {
         id: UID,
         root: vector<u8>,   // 32 bytes
         total_stake: u128,
@@ -39,14 +39,14 @@ module quantos::l0_verifier {
     }
 
     /// Shared global registry of proof states and relayed deposits.
-    struct L0Registry has key {
+    public struct L0Registry has key {
         id: UID,
         proofs: Table<vector<u8>, ProofState>,    // key = proof_hash (32 bytes)
         deposits: Table<vector<u8>, DepositState>, // key = quantos_deposit_id (32 bytes)
     }
 
     /// Represents a verified L0 proof.
-    struct ProofState has store, copy, drop {
+    public struct ProofState has store, copy, drop {
         verified: bool,
         validator_set_root: vector<u8>,
         epoch: u64,
@@ -55,7 +55,7 @@ module quantos::l0_verifier {
     }
 
     /// Represents a single relayed deposit (idempotency).
-    struct DepositState has store, copy, drop {
+    public struct DepositState has store, copy, drop {
         relayed: bool,
         quantos_deposit_id: vector<u8>,
         amount: u64,
@@ -65,25 +65,25 @@ module quantos::l0_verifier {
     // Events
     // ================================================================
 
-    struct ValidatorSetRegistered has copy, drop {
+    public struct ValidatorSetRegistered has copy, drop {
         root: vector<u8>,
         total_stake: u128,
         threshold: u128,
         set_id: ID,
     }
 
-    struct ValidatorSetRevoked has copy, drop {
+    public struct ValidatorSetRevoked has copy, drop {
         set_id: ID,
     }
 
-    struct ProofVerified has copy, drop {
+    public struct ProofVerified has copy, drop {
         proof_hash: vector<u8>,
         validator_set_root: vector<u8>,
         epoch: u64,
         slot: u64,
     }
 
-    struct RelayAuthorized has copy, drop {
+    public struct RelayAuthorized has copy, drop {
         proof_hash: vector<u8>,
         quantos_deposit_id: vector<u8>,
         amount: u64,

@@ -64,19 +64,19 @@ module quantos::l0_verifier {
     // ================================================================
 
     #[event]
-    struct ValidatorSetRegistered {
+    struct ValidatorSetRegistered has drop, store {
         root: vector<u8>,
         total_stake: u128,
         threshold: u128,
     }
 
     #[event]
-    struct ValidatorSetRevoked {
+    struct ValidatorSetRevoked has drop, store {
         root: vector<u8>,
     }
 
     #[event]
-    struct ProofVerified {
+    struct ProofVerified has drop, store {
         proof_hash: vector<u8>,
         validator_set_root: vector<u8>,
         epoch: u64,
@@ -84,7 +84,7 @@ module quantos::l0_verifier {
     }
 
     #[event]
-    struct RelayAuthorized {
+    struct RelayAuthorized has drop, store {
         proof_hash: vector<u8>,
         quantos_deposit_id: vector<u8>,
         amount: u64,
