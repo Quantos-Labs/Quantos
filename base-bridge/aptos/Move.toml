@@ -1,0 +1,9 @@
+[package]
+name = "quantos_pqc_guard"
+version = "0.1.0"
+
+[addresses]
+quantos = "0xCAFE"
+
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework", rev = "mainnet" }

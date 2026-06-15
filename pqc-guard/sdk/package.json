@@ -1,0 +1,23 @@
+{
+  "name": "@quantos/pqc-guard-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TESTNET SDK for PQC-Guard: SLH-DSA migration + hash-based Winternitz attestations anchored on Quantos.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "demo": "tsx src/demo.ts"
+  },
+  "dependencies": {
+    "@noble/post-quantum": "^0.2.0",
+    "@noble/hashes": "^1.4.0",
+    "ethers": "^6.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}

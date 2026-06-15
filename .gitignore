@@ -9,3 +9,5 @@ dist/
 *.pid
 .e2e-node-data/
 quantos/data/
+.git.corrupted/
+.git.corrupted/

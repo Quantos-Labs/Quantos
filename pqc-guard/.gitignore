@@ -1,0 +1,18 @@
+# Foundry
+out/
+cache/
+broadcast/
+/lib/
+
+# Node / SDK
+node_modules/
+dist/
+*.log
+
+# Env
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
