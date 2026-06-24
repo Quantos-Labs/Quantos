@@ -11,13 +11,13 @@ Quantos is a revolutionary Layer 1 blockchain featuring ~100M TPS through parall
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Layer 3: Finality Anchor                  │
-│         Falcon-512 checkpoints every 1000 DAG vertices       │
+│       ML-DSA-65 checkpoints every 1000 DAG vertices          │
 │              Super-committee of 100 validators               │
 ├─────────────────────────────────────────────────────────────┤
 │                 Layer 2: Quantum Committees                  │
 │        1000 committees × 21 validators = 21,000 total        │
-│         VRF rotation (SPHINCS+) every 100ms                  │
-│              Dilithium aggregated signatures                 │
+│         Hash-based VRF (SHAKE256) rotation every 100ms       │
+│              ML-DSA-65 aggregated signatures                 │
 ├─────────────────────────────────────────────────────────────┤
 │                   Layer 1: Fast Path (DAG)                   │
 │          Parallel transaction inclusion & execution          │
@@ -30,9 +30,9 @@ Quantos is a revolutionary Layer 1 blockchain featuring ~100M TPS through parall
 
 | Algorithm | Usage | Security Level |
 |-----------|-------|----------------|
-| **Dilithium-3** | Transaction & vertex signatures | 128-bit post-quantum |
-| **SPHINCS+** | VRF for committee selection | Stateless, 128-bit |
-| **Falcon-512** | Checkpoint finality signatures | Compact, 128-bit |
+| **ML-DSA-65** | Transaction, vertex & checkpoint signatures | FIPS 204, NIST level 3 |
+| **ML-KEM-768** | Encrypted mempool, P2P handshake | FIPS 203, NIST level 3 |
+| **Hash-based VRF** | Committee selection randomness | SHAKE256, quantum-resistant |
 | **SHA3-256/SHAKE256** | Hashing | Quantum-resistant |
 
 ### Key Features
@@ -50,9 +50,9 @@ quantos/
 ├── src/
 │   ├── main.rs              # Entry point & node configuration
 │   ├── crypto/              # Post-quantum cryptography
-│   │   ├── dilithium.rs     # Dilithium-3 signatures
-│   │   ├── sphincs.rs       # SPHINCS+ for VRF
-│   │   ├── falcon.rs        # Falcon-512 for checkpoints
+│   │   ├── ml_dsa.rs        # ML-DSA-65 signatures (FIPS 204)
+│   │   ├── mlkem_core.rs    # ML-KEM-768 (FIPS 203)
+│   │   ├── vrf_hashbased.rs # Hash-based VRF (SHAKE256)
 │   │   ├── vrf.rs           # Verifiable Random Function
 │   │   ├── hash.rs          # SHA3, SHAKE256, Merkle trees
 │   │   └── keypair.rs       # Key management
@@ -212,7 +212,7 @@ cargo bench
 ## Roadmap
 
 - [x] Core types & structures
-- [x] Post-quantum cryptography (Dilithium, SPHINCS+, Falcon)
+- [x] Post-quantum cryptography (ML-DSA-65 FIPS 204, ML-KEM-768 FIPS 203, Hash-based VRF)
 - [x] RocksDB storage
 - [x] DAG structure & ordering
 - [x] Sharded mempool

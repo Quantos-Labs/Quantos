@@ -1,0 +1,6 @@
+{
+  "buildCommand": "cd whitepaper-site && npm install && npm run build",
+  "outputDirectory": "whitepaper-site/build",
+  "installCommand": "echo 'install handled by buildCommand'",
+  "framework": null
+}

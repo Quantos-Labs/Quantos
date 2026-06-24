@@ -11,6 +11,7 @@
 //! | Downtime | 0.1% per epoch | Missing blocks/votes |
 //! | Invalid Block | 10% stake | Block failing validation |
 //! | Equivocation | 5% stake | Conflicting committee votes |
+//! | Front-Running | 2% stake | Leader block order ≠ canonical fair order |
 //!
 //! ## Architecture
 //!
@@ -39,6 +40,7 @@ use crate::types::{Address, Hash, Slot};
 use crate::crypto::{
     verify_dilithium, with_domain,
     DOMAIN_SLASH_DOUBLE_SIGN, DOMAIN_SLASH_EQUIVOC, DOMAIN_SLASH_INVALID_BLOCK,
+    DOMAIN_SLASH_FRONT_RUN,
 };
 
 /// Slashing errors.
@@ -89,6 +91,8 @@ pub struct SlashingConfig {
     pub invalid_block_penalty_bps: u64,
     /// Equivocation penalty (basis points)
     pub equivocation_penalty_bps: u64,
+    /// Proven front-running penalty (basis points)
+    pub front_running_penalty_bps: u64,
     /// Maximum evidence age in slots
     pub max_evidence_age: u64,
     /// Jail duration in slots
@@ -115,6 +119,7 @@ impl Default for SlashingConfig {
             downtime_penalty_bps: 10,          // 0.1%
             invalid_block_penalty_bps: 1000,   // 10%
             equivocation_penalty_bps: 500,     // 5%
+            front_running_penalty_bps: 200,    // 2%
             max_evidence_age: 10000,           // ~10000 slots
             jail_duration: 50000,              // ~50000 slots
             min_stake_after_slash: 1000,       // Minimum stake to remain validator
@@ -140,6 +145,8 @@ pub enum OffenseType {
     InvalidBlock,
     /// Conflicting votes in same committee round
     Equivocation,
+    /// Leader proposed transaction order deviating from canonical fair order
+    FrontRunning,
     /// Custom offense type
     Custom(String),
 }
@@ -153,6 +160,7 @@ impl OffenseType {
             OffenseType::Downtime => config.downtime_penalty_bps,
             OffenseType::InvalidBlock => config.invalid_block_penalty_bps,
             OffenseType::Equivocation => config.equivocation_penalty_bps,
+            OffenseType::FrontRunning => config.front_running_penalty_bps,
             OffenseType::Custom(_) => 100, // 1% default for custom
         }
     }
@@ -165,6 +173,7 @@ impl OffenseType {
                 | OffenseType::SurroundVote
                 | OffenseType::InvalidBlock
                 | OffenseType::Equivocation
+                | OffenseType::FrontRunning
         )
     }
 }
@@ -222,6 +231,14 @@ pub enum EvidenceData {
         vote1: SignedVote,
         vote2: SignedVote,
         committee_round: u64,
+    },
+    /// Proven front-running: leader order ≠ canonical fair order
+    FrontRunning {
+        block: u64,
+        ordering_beacon: Hash,
+        canonical_order: Vec<Hash>,
+        proposed_order: Vec<Hash>,
+        leader_signature: Vec<u8>,
     },
 }
 
@@ -507,6 +524,22 @@ impl SlashingManager {
             }
             EvidenceData::Equivocation { vote1, vote2, .. } => {
                 self.validate_equivocation(evidence, vote1, vote2)?;
+            }
+            EvidenceData::FrontRunning {
+                block,
+                ordering_beacon,
+                canonical_order,
+                proposed_order,
+                leader_signature,
+            } => {
+                self.validate_front_running(
+                    evidence,
+                    *block,
+                    ordering_beacon,
+                    canonical_order,
+                    proposed_order,
+                    leader_signature,
+                )?;
             }
         }
 
@@ -864,6 +897,78 @@ impl SlashingManager {
         with_domain(DOMAIN_SLASH_INVALID_BLOCK, &msg)
     }
 
+    /// Validates proven front-running evidence (accountable leader order violation).
+    fn validate_front_running(
+        &self,
+        evidence: &SlashingEvidence,
+        block: u64,
+        ordering_beacon: &Hash,
+        canonical_order: &[Hash],
+        proposed_order: &[Hash],
+        leader_signature: &[u8],
+    ) -> SlashingResult<()> {
+        if canonical_order.is_empty() {
+            return Err(SlashingError::InvalidEvidence(
+                "empty canonical order".into(),
+            ));
+        }
+        if proposed_order.is_empty() {
+            return Err(SlashingError::InvalidEvidence(
+                "empty proposed order".into(),
+            ));
+        }
+        if canonical_order == proposed_order {
+            return Err(SlashingError::InvalidEvidence(
+                "orders match; not front-running".into(),
+            ));
+        }
+
+        if !self.verify_duty_assignment(
+            &evidence.validator,
+            block,
+            block / 32,
+            &DutyType::BlockProposal,
+        ) {
+            return Err(SlashingError::InvalidEvidence(
+                format!("validator was not block proposer for slot {}", block),
+            ));
+        }
+
+        let validator_pubkey = self.get_validator_pubkey(&evidence.validator).ok_or_else(|| {
+            SlashingError::InvalidEvidence(format!(
+                "validator public key not registered: {}",
+                hex::encode(&evidence.validator[..8])
+            ))
+        })?;
+
+        let signing_payload =
+            Self::front_run_order_signing_payload(block, ordering_beacon, proposed_order);
+
+        let valid = verify_dilithium(&validator_pubkey, &signing_payload, leader_signature)
+            .map_err(|e| {
+                SlashingError::InvalidEvidence(format!(
+                    "failed to verify leader order signature: {}",
+                    e
+                ))
+            })?;
+
+        if !valid {
+            return Err(SlashingError::SignatureVerificationFailed);
+        }
+
+        Ok(())
+    }
+
+    fn front_run_order_signing_payload(block: u64, beacon: &Hash, tx_order: &[Hash]) -> Vec<u8> {
+        let mut raw = Vec::with_capacity(8 + 32 + tx_order.len() * 32);
+        raw.extend_from_slice(&block.to_le_bytes());
+        raw.extend_from_slice(beacon);
+        for h in tx_order {
+            raw.extend_from_slice(h);
+        }
+        with_domain(DOMAIN_SLASH_FRONT_RUN, &raw)
+    }
+
     /// Validates equivocation evidence.
     fn validate_equivocation(
         &self,
@@ -1069,8 +1174,7 @@ impl SlashingManager {
     pub fn check_downtime(&self, validator: [u8; 32]) -> Option<SlashingEvidence> {
         let missed_duties = self.downtime_tracker.get(&validator)?;
         
-        // Check if enough missed duties to trigger slashing
-        // Simplified: if more than N missed duties in recent slots
+        // Trigger slashing when missed duties exceed the downtime threshold
         if missed_duties.len() < 100 {
             return None;
         }

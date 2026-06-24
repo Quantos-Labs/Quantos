@@ -1,17 +1,42 @@
-//! Hash-Based VRF with deterministic PRF + STARK proof-of-knowledge.
+//! Hash-Based VRF with deterministic PRF and a STARK proof-of-knowledge.
 //!
-//! Replaces the SPHINCS+-based VRF (audit finding S1.1).  SPHINCS+ lacks
-//! uniqueness because its randomizer R allows grinding.  This construction
-//! removes all randomness:
+//! ## Construction
 //!
-//! * KeyGen   : sk <- {0,1}^256 ,  pk = SHA3-256(sk)
-//! * Eval     : beta = SHA3-256(sk || input_e)   (purely deterministic)
-//! * Proof    : STARK attesting knowledge of sk consistent with pk and beta.
+//! * KeyGen : sk <- {0,1}^256 ,  pk = SHA3-256(sk)
+//! * Eval   : beta = SHA3-256(sk || input_e)        (purely deterministic)
+//! * Prove  : a Winterfell STARK attesting knowledge of sk such that
+//!            pk = SHA3-256(sk) AND beta = SHA3-256(sk || input_e).
 //!
-//! Anti-grinding safeguards:
-//! 1. pk is committed at staking time BEFORE input_e is known.
-//! 2. input_{e+1} derives from the previous epoch beacon output.
-//! 3. VALIDATOR_ACTIVATION_DELAY_EPOCHS between registration and eligibility.
+//! ## Formal relation proved by the circuit
+//!
+//! Public inputs: `(pk, input, beta)`.  Private witness: `sk`.
+//!
+//! ```text
+//! R(pk, input, beta; sk) :=  ( pk   == SHA3-256(sk) )
+//!                       AND  ( beta == SHA3-256(sk || input) )
+//! ```
+//!
+//! Soundness goal: for every fixed `(pk, input)` there exists **exactly one**
+//! `beta` for which a valid proof exists (uniqueness), with no residual witness
+//! freedom that lets the prover vary `beta`.
+//!
+//! ## Circuit status
+//!
+//! Enforcing `R` inside a STARK requires a SHA3/Keccak algebraic intermediate
+//! representation (AIR) sub-circuit. [`HashVrfAir`] is the initial circuit
+//! scaffold: it integrates the full Winterfell prover/verifier pipeline and
+//! maintains a consistent prove/verify roundtrip, but the SHA3 constraint
+//! system that binds the private witness `sk` to `(pk, beta)` is pending
+//! integration and independent audit. See [`STARK_PROVES_UNIQUENESS`].
+//!
+//! Until the Keccak AIR is integrated and audited, network-level anti-grinding
+//! is provided by the epoch beacon (see `consensus::beacon`):
+//!   1. The beacon aggregates ALL committee contributions, so a single honest
+//!      contribution randomises the output.
+//!   2. A VDF over the aggregated value prevents last-reveal grinding.
+//!   3. pk is committed at staking time BEFORE input_e is known.
+//!   4. input_{e+1} derives from the previous epoch beacon output.
+//!   5. VALIDATOR_ACTIVATION_DELAY_EPOCHS between registration and eligibility.
 
 use sha3::{Digest, Sha3_256};
 use serde::{Deserialize, Serialize};
@@ -35,6 +60,15 @@ use crate::types::Hash;
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+
+/// Whether [`HashVrfAir`] cryptographically enforces the VRF relation `R`
+/// (see module docs) and therefore provides output uniqueness / anti-grinding.
+///
+/// This is `false` until a real SHA3/Keccak sub-circuit is implemented and
+/// externally audited. Callers MUST NOT advertise VRF uniqueness while this is
+/// `false`; network anti-grinding currently relies on `consensus::beacon`
+/// (all-contribution aggregation + VDF), not on this proof.
+pub const STARK_PROVES_UNIQUENESS: bool = false;
 
 /// Epochs a validator must wait after registration before eligibility.
 pub const VALIDATOR_ACTIVATION_DELAY_EPOCHS: u64 = 2;
@@ -80,14 +114,19 @@ impl HashVrfKeypair {
     pub fn prove(&self, input: &[u8]) -> CryptoResult<VrfStarkProof> {
         let beta = self.evaluate(input);
 
-        let (sk_low, sk_high) = sk_to_fields(&self.secret_key);
-        let trace = build_vrf_trace(sk_low, sk_high);
-
         let pub_inputs = VrfPublicInputs {
             public_key: self.public_key,
             input: input.to_vec(),
             beta,
         };
+
+        // The trace is built from the same boundary value that the AIR asserts
+        // (`derive_sk_assertions`), keeping the prove→verify roundtrip consistent
+        // so that honest validator contributions pass beacon verification.
+        // Uniqueness enforcement awaits the Keccak AIR integration — see
+        // `STARK_PROVES_UNIQUENESS`.
+        let (seed_low, seed_high) = derive_sk_assertions(&pub_inputs);
+        let trace = build_vrf_trace(seed_low, seed_high);
 
         let options = ProofOptions::new(
             28,   // num_queries
@@ -101,8 +140,6 @@ impl HashVrfKeypair {
         let prover = HashVrfProver {
             options,
             pub_inputs: pub_inputs.clone(),
-            sk_low,
-            sk_high,
         };
 
         let proof = prover
@@ -238,6 +275,14 @@ impl Air for HashVrfAir {
     }
 }
 
+/// Derives the AIR boundary values from the public inputs `(pk, input, beta)`.
+///
+/// Both [`HashVrfKeypair::prove`] (to populate the trace) and [`HashVrfAir`]
+/// (to assert the boundary) call this single function, ensuring a consistent
+/// prove→verify roundtrip. Once the SHA3 constraint sub-circuit is integrated,
+/// this function will be replaced by a witness-driven assignment that takes `sk`
+/// as a private input and enforces `R` — at which point
+/// [`STARK_PROVES_UNIQUENESS`] may be set to `true`.
 fn derive_sk_assertions(pub_inputs: &VrfPublicInputs) -> (BaseElement, BaseElement) {
     let mut h = Sha3_256::new();
     h.update(&pub_inputs.public_key);
@@ -257,8 +302,6 @@ fn derive_sk_assertions(pub_inputs: &VrfPublicInputs) -> (BaseElement, BaseEleme
 struct HashVrfProver {
     options: ProofOptions,
     pub_inputs: VrfPublicInputs,
-    sk_low: BaseElement,
-    sk_high: BaseElement,
 }
 
 impl Prover for HashVrfProver {
@@ -303,23 +346,17 @@ impl Prover for HashVrfProver {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn sk_to_fields(sk: &[u8; VRF_SK_SIZE]) -> (BaseElement, BaseElement) {
-    let low = u128::from_le_bytes(sk[0..16].try_into().unwrap());
-    let high = u128::from_le_bytes(sk[16..32].try_into().unwrap());
-    (BaseElement::new(low), BaseElement::new(high))
-}
-
-fn build_vrf_trace(sk_low: BaseElement, sk_high: BaseElement) -> TraceTable<BaseElement> {
+fn build_vrf_trace(seed_low: BaseElement, seed_high: BaseElement) -> TraceTable<BaseElement> {
     let trace_length = 2usize;
     let mut trace = TraceTable::new(VRF_TRACE_WIDTH, trace_length);
     trace.fill(
         |state| {
-            state[0] = sk_low;
-            state[1] = sk_high;
+            state[0] = seed_low;
+            state[1] = seed_high;
         },
         |_, state| {
-            state[0] = sk_low;
-            state[1] = sk_high;
+            state[0] = seed_low;
+            state[1] = seed_high;
         },
     );
     trace
@@ -365,6 +402,39 @@ mod tests {
     fn test_pk_commitment() {
         let kp = HashVrfKeypair::generate().unwrap();
         assert_eq!(kp.public_key, HashVrfKeypair::hash_sk(&kp.secret_key));
+    }
+
+    /// Guards against silently re-claiming VRF uniqueness before the Keccak AIR
+    /// enforces relation `R` and is externally audited (audit finding V1).
+    /// If someone flips this flag, this test forces them to also deliver and
+    /// validate the real circuit (and update the acceptance test below).
+    #[test]
+    fn uniqueness_must_not_be_claimed_until_circuit_enforces_relation() {
+        assert!(
+            !STARK_PROVES_UNIQUENESS,
+            "Do not advertise VRF uniqueness until HashVrfAir enforces \
+             pk = SHA3(sk) AND beta = SHA3(sk || input) and is audited"
+        );
+    }
+
+    /// Acceptance test for the full SHA3-constrained circuit.
+    ///
+    /// Currently `#[ignore]`d pending Keccak AIR integration: `HashVrfAir` does
+    /// not yet bind `beta` to `(sk, input)`. Once the SHA3 AIR is integrated, a
+    /// proof whose `beta` differs from the honest evaluation MUST be rejected —
+    /// this is the property that makes the VRF unique and grinding-resistant.
+    #[test]
+    #[ignore = "pending Keccak AIR: circuit does not yet bind beta to (sk, input)"]
+    fn forged_beta_must_be_rejected() {
+        let kp = HashVrfKeypair::generate().unwrap();
+        let input = b"epoch_v1";
+        let mut proof = kp.prove(input).unwrap();
+        // Attacker replaces the honest output with a ground/chosen value.
+        proof.beta = [0xABu8; 32];
+        assert!(
+            !kp.verify(input, &proof).unwrap(),
+            "forged beta accepted: VRF uniqueness / anti-grinding is not enforced"
+        );
     }
 
     #[test]

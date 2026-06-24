@@ -6,7 +6,7 @@ slug: /
 
 # Quantos Lightpaper
 
-**Post-Quantum Layer 1 with Universal Finality**
+**Post-Quantum Layer 1 with Directional Cross-Chain Finality**
 
 *June 2026*
 
@@ -14,7 +14,7 @@ slug: /
 
 ## 1. In One Sentence
 
-Quantos is a quantum-resistant Layer 1 blockchain that also acts as a **Layer 0** — it exports post-quantum security to Ethereum, Solana, Sui, Aptos, NEAR, and every major chain.
+Quantos is a quantum-resistant Layer 1 blockchain that also acts as a **Layer 0** — it provides post-quantum attestations of its finalized state that Ethereum, Solana, Sui, Aptos, NEAR, and every major chain can verify on-chain.
 
 ---
 
@@ -34,7 +34,7 @@ The core network: validators stake QTS, run consensus, and finalize transactions
 | Finality | ~1 second |
 | Sharding | 100 to 10,000 (auto-scaling) |
 | Fees | Zero-gas (stake-proportional bandwidth) |
-| Cryptography | SPHINCS+, Dilithium-3, Falcon-512 |
+| Cryptography | ML-DSA-65, ML-KEM-768 (NIST level 3, FIPS 203/204 finalized) |
 
 ---
 
@@ -47,6 +47,8 @@ The L0 is Quantos' **finality hub**. It lets any blockchain verify that Quantos 
 2. Quantos validators sign that proof with post-quantum signatures
 3. A **compressed proof** (32 bytes) is relayed to the target chain
 4. Smart contracts on the target chain verify it **on-chain**
+
+> **Directional by design:** Quantos exports *its own* finalized state to external chains in seconds, as post-quantum attestations they can verify on-chain. It does **not** add post-quantum resistance to those chains' native consensus — Ethereum stays on ECDSA. The reverse direction (external → Quantos) is bounded by the source chain's own finality. No chain can compress another chain's consensus.
 
 **L0 Verifier — deployed contracts:**
 
@@ -88,7 +90,7 @@ PQC-Guard is the smart-account system that lets users:
 | Isolated L1 chain | L1 + L0 interconnected |
 | Expensive PQC retrofit | Native PQC from genesis |
 | Centralized bridges (multisig) | Cryptographic trustless verification |
-| Each chain manages its own PQC | Quantos provides PQC to everyone |
+| Each chain manages its own PQC | Quantos provides verifiable PQC attestations to everyone |
 
 ---
 

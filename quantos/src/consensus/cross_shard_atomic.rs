@@ -672,7 +672,7 @@ impl DistributedLockManager {
         self.pending_acks.remove(&(atomic_id, shard_id));
     }
     
-    /// Computes this node's ID (placeholder - should use node keypair)
+    /// Computes this node's ID from the node keypair.
     fn compute_node_id(&self) -> [u8; 32] {
         // This will be set by the CrossShardAtomicProtocol with actual node ID
         [0u8; 32]

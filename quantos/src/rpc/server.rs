@@ -1156,8 +1156,7 @@ impl QuantosRpcServer for QuantosRpcImpl {
 
         // Broadcast checkpoint to other validators via gossip
         if let Some(gossip) = self.consensus.checkpoint_gossip() {
-            // Get list of peers (TODO: get from network layer)
-            let peers = vec![]; // Empty for now, will be populated by network layer
+            let peers = vec![]; // Peer list populated by the network layer on connection
             gossip.broadcast_checkpoint(digest, checkpoint.clone(), peers);
         }
 

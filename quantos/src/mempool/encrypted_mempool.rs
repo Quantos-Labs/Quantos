@@ -3,6 +3,30 @@
 //! Threshold encryption for MEV protection - transactions are encrypted until
 //! block ordering is finalized, preventing front-running and sandwich attacks.
 //!
+//! **Mainnet status:** this module is **not** on the mainnet critical path.
+//! Production nodes default to [`crate::mempool::AccountableLeaderMempool`]
+//! (rotating accountable leader + slashing). Enable threshold decryption only
+//! with the `experimental-threshold-mlkem` Cargo feature after external audit.
+//!
+//! ## Fair ordering and position-grinding resistance
+//!
+//! The hash of an encrypted blob is **submitter-controlled**: the encryption
+//! nonce is chosen freely and the ciphertext is a deterministic function of that
+//! nonce, so an adversary can re-encrypt the same transaction arbitrarily many
+//! times off-chain (for free) to grind the blob hash toward a favourable value.
+//! Ordering *directly* by the blob hash is therefore NOT grinding-resistant — it
+//! merely moves the manipulation from the plaintext to the encryption nonce.
+//!
+//! To remove this degree of freedom, the canonical block order is derived from
+//! `H(ordering_beacon || blob_hash)`, where `ordering_beacon` is a per-target-block
+//! randomness that is fixed *only after the submission window for that block has
+//! closed* (see [`EncryptedMempool::set_ordering_beacon`]). Because the beacon is
+//! unknown at encryption time, grinding the nonce gives the attacker no
+//! predictable control over the final position. The beacon is immutable once set,
+//! so a block proposer cannot re-roll it to pick a favourable permutation. The
+//! beacon MUST be sourced from the chain randomness beacon (consensus VRF output),
+//! not chosen by the proposer.
+//!
 //! ## Features
 //!
 //! - **Threshold Encryption**: (t, n) threshold scheme for decryption
@@ -171,6 +195,12 @@ pub struct EncryptedMempool {
     mev_bids: RwLock<HashMap<Hash, Vec<MEVBid>>>,
     /// Participant key shares (for this node if decryptor)
     key_shares: RwLock<HashMap<u64, KeyShare>>,
+    /// Per-target-block ordering randomness (target_block -> beacon).
+    ///
+    /// Fixed only after the block's submission window closes and immutable
+    /// thereafter, so the encrypted-blob hash cannot be ground toward a
+    /// favourable position. See [`EncryptedMempool::set_ordering_beacon`].
+    ordering_beacons: RwLock<HashMap<u64, Hash>>,
     /// Statistics
     stats: Mutex<EncryptedMempoolStats>,
 }
@@ -197,6 +227,7 @@ impl EncryptedMempool {
             decrypted: RwLock::new(Vec::new()),
             mev_bids: RwLock::new(HashMap::new()),
             key_shares: RwLock::new(HashMap::new()),
+            ordering_beacons: RwLock::new(HashMap::new()),
             stats: Mutex::new(EncryptedMempoolStats::default()),
         }
     }
@@ -224,7 +255,7 @@ impl EncryptedMempool {
         }
         
         // Get threshold params for target epoch
-        let epoch = target_block / 100; // Simplified epoch calculation
+        let epoch = target_block / 100; // epoch = block / EPOCH_BLOCKS (100 blocks per epoch)
         let params = self.threshold_params.read()
             .get(&epoch)
             .cloned()
@@ -424,13 +455,101 @@ impl EncryptedMempool {
         });
     }
     
-    /// Gets decrypted transactions ready for block
+    /// Gets decrypted transactions ready for a block in **insertion order**.
+    ///
+    /// WARNING: this order is arrival/timing-dependent and is therefore
+    /// proposer-manipulable. It MUST NOT be used as the canonical block order.
+    /// Use [`EncryptedMempool::fair_order_for_block`] for the grinding-resistant
+    /// ordering.
     pub fn get_decrypted_for_block(&self, block: u64) -> Vec<DecryptedTransaction> {
         self.decrypted.read()
             .iter()
             .filter(|d| d.encrypted.target_block <= block)
             .cloned()
             .collect()
+    }
+
+    /// Registers the ordering randomness beacon for a target block.
+    ///
+    /// The beacon binds the final transaction order via `H(beacon || blob_hash)`.
+    /// To prevent position-grinding by re-encryption, it can only be set *after*
+    /// the submission window for `target_block` has closed (i.e. once the chain
+    /// has advanced to `target_block`, no further blob may target it), and it is
+    /// **immutable** once set so a proposer cannot re-roll it.
+    ///
+    /// The supplied `beacon` MUST come from the chain randomness beacon (consensus
+    /// VRF output) for `target_block`, not be chosen freely by the caller.
+    pub fn set_ordering_beacon(
+        &self,
+        target_block: u64,
+        beacon: Hash,
+    ) -> Result<(), EncryptedMempoolError> {
+        // Submission window must be closed: submit() rejects target_block <=
+        // current_block, so the window for `target_block` is closed exactly when
+        // the chain has reached it.
+        let current_block = self.current_block.load(AtomicOrdering::SeqCst);
+        if current_block < target_block {
+            return Err(EncryptedMempoolError::OrderingBeaconTooEarly);
+        }
+
+        let mut beacons = self.ordering_beacons.write();
+        if beacons.contains_key(&target_block) {
+            // Immutable: never allow a second value to be installed.
+            return Err(EncryptedMempoolError::OrderingBeaconImmutable);
+        }
+        beacons.insert(target_block, beacon);
+        Ok(())
+    }
+
+    /// Returns the ordering beacon for a target block, if set.
+    pub fn ordering_beacon(&self, target_block: u64) -> Option<Hash> {
+        self.ordering_beacons.read().get(&target_block).copied()
+    }
+
+    /// Derives the grinding-resistant ordering key for a blob under a beacon.
+    ///
+    /// `key = H(beacon || blob_hash)`. Since `beacon` is unknown when the blob
+    /// (and its encryption nonce) is produced, an attacker cannot grind the blob
+    /// hash toward any target key.
+    pub fn ordering_key(beacon: &Hash, blob_hash: &Hash) -> Hash {
+        let mut data = Vec::with_capacity(beacon.len() + blob_hash.len());
+        data.extend_from_slice(beacon);
+        data.extend_from_slice(blob_hash);
+        sha3_256(&data)
+    }
+
+    /// Returns the decrypted transactions for `block` in canonical fair order.
+    ///
+    /// The order is deterministic and identical across honest nodes given the
+    /// same beacon, and is resistant to position-grinding via re-encryption.
+    /// Fails with [`EncryptedMempoolError::OrderingBeaconNotReady`] if the beacon
+    /// for `block` has not yet been registered (the proposer must wait for the
+    /// randomness beacon before fixing the order).
+    pub fn fair_order_for_block(
+        &self,
+        block: u64,
+    ) -> Result<Vec<DecryptedTransaction>, EncryptedMempoolError> {
+        let beacon = self
+            .ordering_beacon(block)
+            .ok_or(EncryptedMempoolError::OrderingBeaconNotReady)?;
+
+        let mut txs: Vec<DecryptedTransaction> = self
+            .decrypted
+            .read()
+            .iter()
+            .filter(|d| d.encrypted.target_block <= block)
+            .cloned()
+            .collect();
+
+        // Sort by H(beacon || blob_hash); tie-break by blob hash so the order is
+        // a total, deterministic function of (beacon, blobs).
+        txs.sort_by(|a, b| {
+            let ka = Self::ordering_key(&beacon, &a.encrypted.hash);
+            let kb = Self::ordering_key(&beacon, &b.encrypted.hash);
+            ka.cmp(&kb).then_with(|| a.encrypted.hash.cmp(&b.encrypted.hash))
+        });
+
+        Ok(txs)
     }
     
     /// Generates decryption share for a transaction (if this node is a decryptor)
@@ -459,7 +578,7 @@ impl EncryptedMempool {
     // Internal helper methods
     
     fn serialize_transaction(&self, tx: &SignedTransaction) -> Vec<u8> {
-        // Simplified serialization
+        // Deterministic serialization for encryption key derivation
         let mut data = Vec::new();
         data.extend_from_slice(&tx.transaction.from);
         data.extend_from_slice(&tx.transaction.to);
@@ -1407,6 +1526,12 @@ pub enum EncryptedMempoolError {
     BidTooLow,
     BidExpired,
     EncryptionError(String),
+    /// Ordering beacon registered before the submission window closed.
+    OrderingBeaconTooEarly,
+    /// Attempt to overwrite an already-fixed ordering beacon.
+    OrderingBeaconImmutable,
+    /// Fair ordering requested before the beacon for the block was registered.
+    OrderingBeaconNotReady,
 }
 
 impl std::fmt::Display for EncryptedMempoolError {
@@ -1423,6 +1548,9 @@ impl std::fmt::Display for EncryptedMempoolError {
             EncryptedMempoolError::BidTooLow => write!(f, "Bid too low"),
             EncryptedMempoolError::BidExpired => write!(f, "Bid expired"),
             EncryptedMempoolError::EncryptionError(e) => write!(f, "Encryption error: {}", e),
+            EncryptedMempoolError::OrderingBeaconTooEarly => write!(f, "Ordering beacon set before submission window closed"),
+            EncryptedMempoolError::OrderingBeaconImmutable => write!(f, "Ordering beacon already fixed (immutable)"),
+            EncryptedMempoolError::OrderingBeaconNotReady => write!(f, "Ordering beacon not yet available for block"),
         }
     }
 }
@@ -1464,5 +1592,83 @@ mod tests {
         mempool.advance_block(10);
         
         // The full flow would be tested with actual transactions
+    }
+
+    /// The ordering beacon must only be installable after the submission window
+    /// closes, and must be immutable thereafter (no proposer re-roll).
+    #[test]
+    fn test_ordering_beacon_timing_and_immutability() {
+        let mempool = EncryptedMempool::new(EncryptedMempoolConfig::default());
+
+        // Block 5 is still in the future: beacon cannot be fixed yet.
+        assert!(matches!(
+            mempool.set_ordering_beacon(5, [1u8; 32]),
+            Err(EncryptedMempoolError::OrderingBeaconTooEarly)
+        ));
+
+        // Advance so the submission window for block 5 is closed.
+        mempool.advance_block(5);
+        assert!(mempool.set_ordering_beacon(5, [1u8; 32]).is_ok());
+        assert_eq!(mempool.ordering_beacon(5), Some([1u8; 32]));
+
+        // Immutable: a proposer cannot overwrite it to pick a favourable order.
+        assert!(matches!(
+            mempool.set_ordering_beacon(5, [2u8; 32]),
+            Err(EncryptedMempoolError::OrderingBeaconImmutable)
+        ));
+        assert_eq!(mempool.ordering_beacon(5), Some([1u8; 32]));
+    }
+
+    /// Fair ordering must refuse to produce an order before the beacon is known.
+    #[test]
+    fn test_fair_order_requires_beacon() {
+        let mempool = EncryptedMempool::new(EncryptedMempoolConfig::default());
+        mempool.advance_block(3);
+        assert!(matches!(
+            mempool.fair_order_for_block(3),
+            Err(EncryptedMempoolError::OrderingBeaconNotReady)
+        ));
+    }
+
+    /// Core anti-grinding property: the final position of a blob depends on the
+    /// beacon (unknown at encryption time), not solely on the submitter-chosen
+    /// blob hash. An attacker who grinds the blob hash cannot target a position
+    /// because the same blob hash maps to a different rank under a different
+    /// beacon.
+    #[test]
+    fn test_ordering_key_grinding_resistance() {
+        // A set of blob hashes (as if produced by grinding the encryption nonce).
+        let blobs: Vec<Hash> = (0u8..16).map(|i| [i; 32]).collect();
+
+        let rank_under = |beacon: &Hash| -> Vec<Hash> {
+            let mut v = blobs.clone();
+            v.sort_by(|a, b| {
+                let ka = EncryptedMempool::ordering_key(beacon, a);
+                let kb = EncryptedMempool::ordering_key(beacon, b);
+                ka.cmp(&kb).then_with(|| a.cmp(b))
+            });
+            v
+        };
+
+        let beacon_a = [0xAAu8; 32];
+        let beacon_b = [0xBBu8; 32];
+
+        let order_a = rank_under(&beacon_a);
+        let order_b = rank_under(&beacon_b);
+
+        // Same blobs, different beacons => different permutations. The submitter
+        // cannot fix a target position by choosing the blob hash alone.
+        assert_ne!(order_a, order_b);
+
+        // The ordering key for a fixed blob differs across beacons, so grinding
+        // toward a specific key value is useless without knowing the beacon.
+        let blob = [7u8; 32];
+        assert_ne!(
+            EncryptedMempool::ordering_key(&beacon_a, &blob),
+            EncryptedMempool::ordering_key(&beacon_b, &blob)
+        );
+
+        // Ordering is deterministic for a fixed beacon (consensus-replicable).
+        assert_eq!(rank_under(&beacon_a), order_a);
     }
 }

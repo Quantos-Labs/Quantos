@@ -17,7 +17,7 @@ export class SuiAdapter {
         target: `${this.config.verifierAddress}::l0_verifier::verify_proof`,
         arguments: [
           txb.object(this.config.verifierAddress), // registry
-          txb.pure(proof.header.stateRoot),          // set_root placeholder
+          txb.pure(proof.header.stateRoot),          // state_root
           txb.pure(Array.from(Buffer.from(proof.header.checkpointHash, 'hex'))),
           txb.pure(proof.header.epoch),
           txb.pure(proof.header.slot),

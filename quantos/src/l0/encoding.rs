@@ -190,7 +190,7 @@ fn build_evm_calldata(proof: &L0FinalityProof, proof_hash: &[u8; 32]) -> EvmCall
     let l0_sig = b"verifyProof(bytes32,bytes32,uint128,uint64,uint64,bytes32,string,bytes32,uint128)";
     let selector_l0: [u8; 4] = Keccak256::digest(l0_sig)[..4].try_into().unwrap_or([0u8; 4]);
 
-    // Pack args (simplified ABI encoding — all fixed-size except string chainId):
+    // Pack args (ABI encoding — all fixed-size except string chainId):
     // proofHash(32) | validatorSetRoot(32) | signedStake(16, left-padded 32)
     // | epoch(8, left-padded 32) | slot(8, left-padded 32)
     // | stateRoot(32) | chainId_offset(32) | parentBlockHash(32)

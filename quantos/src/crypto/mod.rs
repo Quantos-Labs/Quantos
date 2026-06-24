@@ -57,11 +57,25 @@ pub mod batch_verify;
 pub mod signature_aggregation;
 pub mod adaptive_pqc;
 
+#[cfg(feature = "experimental-threshold-mlkem")]
+#[doc(hidden)]
+pub mod mlkem_core;
+#[cfg(feature = "experimental-threshold-mlkem")]
+#[doc(hidden)]
+mod shamir_zq;
+#[cfg(feature = "experimental-threshold-mlkem")]
+#[doc(hidden)]
+mod lattice_nizk;
+#[cfg(feature = "experimental-threshold-mlkem")]
+#[doc(hidden)]
+pub mod threshold_mlkem;
+
 pub use domains::{with_domain, DOMAIN_TX, DOMAIN_VERTEX, DOMAIN_COMMITTEE_VOTE,
     DOMAIN_CHECKPOINT, DOMAIN_VIEW_CHANGE, DOMAIN_PIPELINE_VOTE,
     DOMAIN_VRF_PRF, DOMAIN_VRF_OUTPUT, DOMAIN_VRF_PROVE,
     DOMAIN_CSAP_VOTE, DOMAIN_CSAP_ACK,
     DOMAIN_SLASH_DOUBLE_SIGN, DOMAIN_SLASH_EQUIVOC, DOMAIN_SLASH_INVALID_BLOCK,
+    DOMAIN_SLASH_FRONT_RUN,
     DOMAIN_PQ_PEER_ID, DOMAIN_PQ_KEM_HANDSHAKE};
 pub use dilithium::*;
 pub use kyber_kem::*;

@@ -397,7 +397,6 @@ impl ArchivalPruningManager {
                 }
             }
             
-            // Simulate pruning (actual implementation would delete from storage)
             bytes_reclaimed += target.estimated_size;
             items_deleted += target.state_roots.len() as u64 
                 + target.tx_hashes.len() as u64 

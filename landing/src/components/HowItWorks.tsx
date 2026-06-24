@@ -47,7 +47,7 @@ export default function HowItWorks() {
             style={{ fontSize: 'clamp(36px, 5vw, 64px)', lineHeight: 1.02 }}
           >
             L1 DAG settlement,{' '}
-            <span className="text-shimmer italic font-light">L0 universal finality.</span>
+            <span className="text-shimmer italic font-light">L0 cross-chain finality.</span>
           </h2>
           <p className="text-[#8893AC] text-[17px] leading-[1.55] max-w-xl">
             Quantos is both a Layer 1 DAG for high-throughput settlement and a Layer 0 hub

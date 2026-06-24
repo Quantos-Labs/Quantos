@@ -416,9 +416,14 @@ impl QuantosConsensus {
 
     /// Computes per-epoch randomness used for committee selection.
     ///
-    /// Uses the validator's QR-VRF key (SPHINCS+ PRF) when available, giving
-    /// post-quantum unpredictability and verifiable uniqueness.  Falls back to
-    /// plain SHA3-256 only at genesis (before validator keys are loaded).
+    /// Uses the validator's QR-VRF key (SPHINCS+ PRF) when available. The PRF
+    /// output is deterministic and reproducible for a given (key, seed), but
+    /// note that *cryptographic* output-uniqueness is NOT enforced here: a
+    /// signature-based VRF admits multiple valid signatures, so this path does
+    /// not by itself prevent grinding (see `crypto::vrf_hashbased`, finding V1).
+    /// Network anti-grinding relies on beacon aggregation + VDF, not on this
+    /// per-validator output. Falls back to plain SHA3-256 only at genesis
+    /// (before validator keys are loaded).
     fn compute_epoch_randomness(&self, epoch: u64) -> Hash {
         // Canonical seed: epoch_bytes ++ prev_finalized_checkpoint_hash
         let mut seed_data = Vec::new();

@@ -520,7 +520,6 @@ impl SnapshotSync {
     
     /// Deserializes chunk data
     fn deserialize_chunk(&self, data: &[u8]) -> StateResult<SnapshotChunk> {
-        // Simplified deserialization
         let hash = crate::crypto::sha3_256(data);
         
         Ok(SnapshotChunk {

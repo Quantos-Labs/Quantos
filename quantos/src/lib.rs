@@ -58,6 +58,7 @@ pub mod performance;
 pub mod genesis;
 pub mod stacc;
 pub mod l0;
+pub mod privacy;
 
 /// Prelude module for convenient imports
 pub mod prelude {
@@ -143,6 +144,10 @@ pub struct NodeConfig {
 
     /// Whether STACC requires sender activation before mempool admission.
     pub stacc_require_activation: bool,
+
+    /// Optional confidential-mode (privacy) configuration. Disabled by default.
+    #[serde(default)]
+    pub privacy_config: crate::privacy::PrivacyConfig,
 }
 
 impl Default for NodeConfig {
@@ -169,6 +174,7 @@ impl Default for NodeConfig {
                 ..crate::l0::L0Config::default()
             },
             stacc_require_activation: true,
+            privacy_config: crate::privacy::PrivacyConfig::default(),
         }
     }
 }

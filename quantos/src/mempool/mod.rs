@@ -2,6 +2,8 @@ mod secure;
 mod adaptive_routing;
 pub mod fair_ordering;
 pub mod encrypted_mempool;
+pub mod accountable_leader;
+pub mod mempool_policy;
 pub mod pbs;
 pub mod blob_transactions;
 
@@ -9,6 +11,8 @@ pub use secure::*;
 pub use adaptive_routing::*;
 pub use fair_ordering::*;
 pub use encrypted_mempool::*;
+pub use accountable_leader::*;
+pub use mempool_policy::*;
 pub use pbs::*;
 pub use blob_transactions::*;
 

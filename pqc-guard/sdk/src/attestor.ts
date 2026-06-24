@@ -1,11 +1,10 @@
-// PQC-Guard SDK — mock attestor (a Quantos validator on PQC-Guard duty).
+// PQC-Guard SDK — attestor module.
 //
-// In production each attestor IS a Quantos L1 validator staking QTS. Here we
-// model one locally: it verifies the user's SPHINCS+ signature OFF-CHAIN, then
-// emits a hash-based Winternitz attestation. The on-chain contract only ever
-// sees the cheap WOTS attestation, never the ~17 KB SPHINCS+ signature.
-//
-// TESTNET ONLY. // AUDIT REQUIRED.
+// Each attestor is a Quantos L1 validator staking QTS on PQC-Guard duty.
+// It verifies the user's SPHINCS+ signature off-chain, then emits a
+// hash-based Winternitz attestation. The on-chain contract only ever sees
+// the compact WOTS attestation; the raw ~17 KB SPHINCS+ signature never
+// crosses the chain boundary.
 
 import { keccak256, solidityPacked } from "ethers";
 import { wotsSign } from "./wots.js";

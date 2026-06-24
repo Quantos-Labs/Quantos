@@ -404,7 +404,7 @@ impl TurnClient {
         
         // Build Allocate request with REQUESTED-TRANSPORT (UDP = 17)
         let mut request = Vec::new();
-        // STUN header: type=0x0003 (Allocate), length placeholder
+        // STUN header: type=0x0003 (Allocate), message length field
         request.extend_from_slice(&[0x00, 0x03]); // Allocate method
         request.extend_from_slice(&[0x00, 0x08]); // Length: 8 bytes (one attribute)
         request.extend_from_slice(&0x2112A442u32.to_be_bytes()); // Magic cookie

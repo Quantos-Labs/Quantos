@@ -438,6 +438,9 @@ pub struct NodeConfig {
     /// Whether STACC requires sender activation before admission.
     /// Mainnet defaults to true, testnet/devnet default to false.
     pub stacc_require_activation: bool,
+
+    /// Optional confidential-mode (privacy) configuration. Disabled by default.
+    pub privacy_config: crate::privacy::PrivacyConfig,
 }
 
 impl NodeConfig {
@@ -477,6 +480,17 @@ impl NodeConfig {
                 ..crate::l0::L0Config::default()
             },
             stacc_require_activation,
+            privacy_config: Self::privacy_from_env(),
+        }
+    }
+
+    /// Builds the optional privacy config from environment variables.
+    /// Confidential mode is disabled unless `QUANTOS_PRIVACY_ENABLED` is set.
+    fn privacy_from_env() -> crate::privacy::PrivacyConfig {
+        if Self::env_bool("QUANTOS_PRIVACY_ENABLED").unwrap_or(false) {
+            crate::privacy::PrivacyConfig::all_enabled()
+        } else {
+            crate::privacy::PrivacyConfig::default()
         }
     }
     
@@ -520,6 +534,7 @@ impl NodeConfig {
                 ..crate::l0::L0Config::default()
             },
             stacc_require_activation: Self::env_bool("QUANTOS_STACC_REQUIRE_ACTIVATION").unwrap_or(true),
+            privacy_config: Self::privacy_from_env(),
         }
     }
 }

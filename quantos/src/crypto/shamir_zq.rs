@@ -1,6 +1,6 @@
 //! Shamir Secret Sharing over Z_q (q = 3329)
 //!
-//! Every scalar secret is split into `n` shares with threshold `t`.
+//! **Experimental only** (`experimental-threshold-mlkem` feature). Not on mainnet path.
 //! Reconstruction requires any `t` shares via Lagrange interpolation.
 
 use crate::crypto::mlkem_core::{mod_q, mul_mod, add_mod, sub_mod, mod_inverse, Q};

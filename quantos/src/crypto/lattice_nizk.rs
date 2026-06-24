@@ -1,6 +1,7 @@
 //! # Lattice NIZK — Fiat-Shamir Proof of Knowledge for Inner-Products
 //!
-//! Production zero-knowledge proof that a participant computed
+//! **Experimental only** (`experimental-threshold-mlkem` feature). Custom NIZK;
+//! requires external audit before any production use.
 //! `partial = ⟨s_i, u⟩` honestly, without revealing the secret share `s_i`.
 //!
 //! ## Construction (Schnorr over R_q modules)

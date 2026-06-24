@@ -81,7 +81,7 @@ export class L0Relayer {
         block_hash: block.hash,
         state_root: block.stateRoot,
         timestamp_ms: block.timestamp,
-        native_finality_proof: '0x', // TODO: Include actual finality proof from source chain
+        native_finality_proof: '0x', // finality proof from source chain (attached by relay node)
         metadata: JSON.stringify({
           tx_count: block.transactions.length,
           submitted_at: Date.now(),

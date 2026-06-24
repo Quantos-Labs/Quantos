@@ -80,9 +80,10 @@ export default function L0Section() {
             <span className="text-shimmer italic font-light">finality hub.</span>
           </h2>
           <p className="text-[#8893AC] text-[17px] leading-[1.55] max-w-xl">
-            Quantos L0 is a post-quantum DAG interoperability layer that finalizes external
-            chains instead of competing with them. Through quantum-safe proofs, sovereign subnets,
-            and native light clients, Quantos acts as a trust anchor for the multi-chain economy.
+            Quantos L0 is a post-quantum DAG interoperability layer that anchors its finalized
+            state to external chains instead of competing with them. Through quantum-safe proofs,
+            sovereign subnets, and native light clients, Quantos acts as a trust anchor for the
+            multi-chain economy — without altering those chains' own consensus.
           </p>
         </motion.div>
 

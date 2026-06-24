@@ -134,7 +134,7 @@ impl BeaconAggregator {
 }
 
 // ---------------------------------------------------------------------------
-// VDF (iterated hashing — production placeholder)
+// VDF (iterated hashing)
 // ---------------------------------------------------------------------------
 
 /// A Verifiable Delay Function evaluator.

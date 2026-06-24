@@ -1,16 +1,30 @@
 # Audit Scope
 
+## Priority 1 — Threshold ML-KEM (before consensus)
+
+The following **must be audited first**, before consensus or execution-layer review:
+
+| Component | Path | Risk |
+|-----------|------|------|
+| Threshold ML-KEM-768 decapsulation | `quantos/src/crypto/threshold_mlkem.rs` | Shamir over Z_q may not preserve ML-KEM correctness under noise |
+| Coefficient-wise Shamir sharing | `quantos/src/crypto/shamir_zq.rs` | Research-grade; no cited academic construction |
+| Lattice NIZK (Fiat-Shamir) | `quantos/src/crypto/lattice_nizk.rs` | Custom NIZK; high historical break rate |
+
+These modules compile **only** with the Cargo feature `experimental-threshold-mlkem` and are **out of the mainnet critical path**. Mainnet uses accountable-leader front-running protection (`quantos/src/mempool/accountable_leader.rs`) until this audit completes.
+
 ## In Scope
 
 - Quantos blockchain core implementation.
 - Consensus and networking logic.
 - Execution layer and deterministic WASM runtime.
 - Post-quantum signature integration and related cryptographic assumptions.
+- Accountable-leader mempool policy and front-running slashing evidence.
 - Resource-based mainnet contract architecture and invariants.
 - Wallet/key-management core if explicitly confirmed in the audit engagement.
 
 ## Conditional / Optional Scope
 
+- Threshold ML-KEM encrypted mempool (only if `experimental-threshold-mlkem` is enabled for the engagement).
 - Bridge components only if explicitly included in the CertiK engagement.
 - Testnet Solidity prototypes only for context, not as production mainnet contract targets.
 

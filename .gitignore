@@ -5,9 +5,11 @@ dist/
 .DS_Store
 .env
 .env.*
+.env.local
 *.log
 *.pid
 .e2e-node-data/
 quantos/data/
 .git.corrupted/
-.git.corrupted/
+**/.vercel/
+

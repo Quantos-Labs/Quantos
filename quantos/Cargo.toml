@@ -134,6 +134,11 @@ harness = false
 name = "pqc_bloat"
 harness = false
 
+[features]
+default = []
+# Research-only threshold ML-KEM mempool crypto. NOT enabled on mainnet builds.
+experimental-threshold-mlkem = []
+
 [profile.release]
 opt-level = 3
 lto = true

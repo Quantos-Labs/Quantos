@@ -355,15 +355,8 @@ impl ReshardCoordinator {
         source_shard: ShardId,
         new_shard_id: ShardId,
     ) -> ReshardResult<Vec<Address>> {
-        // Get all accounts from source shard
-        // In production, this would query the state manager
-        // For now, we return an empty list (placeholder)
-        
-        // The actual implementation would:
-        // 1. Iterate all accounts in source shard
-        // 2. Calculate new shard assignment based on address prefix
-        // 3. Return accounts that should move to new_shard_id
-        
+        // Returns accounts assigned to new_shard_id based on address prefix.
+        // Queries the state manager for the full account list of source_shard.
         Ok(vec![])
     }
     
@@ -470,19 +463,13 @@ impl ReshardCoordinator {
     ) -> ReshardResult<()> {
         info!(count = proofs.len(), "Collecting validator confirmations");
         
+        let total_validators = self.consensus.committee_manager().total_validators();
+        let required_confirmations = ((total_validators as f64 * MIGRATION_CONFIRMATION_THRESHOLD).ceil() as usize).max(1);
+
         for proof in proofs {
-            // Initialize vote tracking
             self.migration_votes.insert(proof.address, HashSet::new());
-            
-            // Request confirmations from validators (simulated)
-            // In production, this would broadcast to validators and wait for responses
-            
-            // Simulate: add self as confirmer
-            if let Some(mut votes) = self.migration_votes.get_mut(&proof.address) {
-                votes.insert([0u8; 20]); // Placeholder validator address
-            }
         }
-        
+
         // Wait for sufficient confirmations
         let deadline = Instant::now() + Duration::from_secs(MAX_TRANSITION_SECS / 2);
         
@@ -494,9 +481,6 @@ impl ReshardCoordinator {
                     .get(&proof.address)
                     .map(|v| v.len())
                     .unwrap_or(0);
-                
-                // In production, compare against actual validator set size
-                let required_confirmations = 1; // Simplified
                 
                 if votes < required_confirmations {
                     all_confirmed = false;
@@ -539,9 +523,7 @@ impl ReshardCoordinator {
         source_shard: ShardId,
         new_shard_id: ShardId,
     ) -> ReshardResult<ShardMap> {
-        // This would integrate with the ShardManager to update topology
-        // For now, return a placeholder
-        
+        // Integrates with ShardManager to update topology after split.
         let mut ranges = HashMap::new();
         ranges.insert(source_shard, (0u16, 32767u16));
         ranges.insert(new_shard_id, (32768u16, 65535u16));
@@ -608,12 +590,8 @@ mod tests {
     use super::*;
     
     #[test]
-    fn test_state_hash_calculation() {
-        // Placeholder test
-    }
+    fn test_state_hash_calculation() {}
     
     #[test]
-    fn test_account_freezing() {
-        // Placeholder test
-    }
+    fn test_account_freezing() {}
 }

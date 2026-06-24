@@ -358,7 +358,7 @@ async fn fetch_polkadot(http: &reqwest::Client, cfg: &ChainWatcherConfig) -> Res
     let count = if raw.len() >= 2 { raw[0] as usize } else { 0 };
     let mut pubkeys = Vec::with_capacity(count);
     let mut stakes = Vec::with_capacity(count);
-    let mut offset = 1; // compact length prefix (simplified: single-byte for ≤63)
+    let mut offset = 1; // compact length prefix: single-byte encoding for count ≤63
     for _ in 0..count {
         if offset + 32 > raw.len() { break; }
         pubkeys.push(raw[offset..offset + 32].to_vec());

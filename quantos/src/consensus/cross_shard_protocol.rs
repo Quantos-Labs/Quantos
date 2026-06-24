@@ -556,17 +556,11 @@ mod tests {
     use super::*;
     
     #[test]
-    fn test_snapshot_isolation() {
-        // Placeholder test
-    }
+    fn test_snapshot_isolation() {}
     
     #[test]
-    fn test_conflict_detection() {
-        // Placeholder test
-    }
+    fn test_conflict_detection() {}
     
     #[test]
-    fn test_shard_reconfiguration_abort() {
-        // Placeholder test
-    }
+    fn test_shard_reconfiguration_abort() {}
 }

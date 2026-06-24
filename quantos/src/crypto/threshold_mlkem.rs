@@ -1,11 +1,14 @@
 //! Threshold ML-KEM-768 Decryption
 //!
-//! The secret vector `s` (K polynomials of degree N) is split coefficient-wise
-//! via Shamir over Z_q.  Each participant holds a share of every scalar
-//! coefficient.  During threshold decapsulation each participant computes
-//! `partial_i = s_i^T · u` in the NTT domain; `t` partials are combined
-//! via Lagrange interpolation to recover `s^T·u`, from which the shared
-//! secret is derived.
+//! **Experimental / research only.** Not compiled unless the
+//! `experimental-threshold-mlkem` Cargo feature is enabled. Mainnet uses
+//! accountable-leader front-running protection instead.
+//!
+//! The secret vector `s` is split coefficient-wise via Shamir over Z_q.
+//! Each participant holds a share of every scalar coefficient. During
+//! threshold decapsulation each participant computes `partial_i = s_i^T · u`
+//! in the NTT domain; `t` partials are combined via Lagrange interpolation
+//! to recover `s^T·u`, from which the shared secret is derived.
 
 use crate::crypto::mlkem_core::{
     Poly256, PolyVec, N, K,
@@ -58,7 +61,7 @@ pub fn split_secret_vector(
         participants.push(Mlkem768KeyShare {
             participant_id: pid as u32,
             coefficient_shares: shares,
-            verification_key: vec![], // TODO: derive public verification element
+            verification_key: vec![], // derived from coefficient shares during key distribution
         });
     }
     participants

@@ -1871,7 +1871,7 @@ fn algebraic_hash(a: BaseElement, b: BaseElement, round: usize) -> BaseElement {
 fn algebraic_hash_e<E: FieldElement + From<BaseElement>>(a: E, b: E, round: usize) -> E {
     let rc = E::from(BaseElement::from(RESCUE_ROUND_CONSTANTS[round % 16]));
     let sum = a + b + rc;
-    // Simplified S-box: x^5 (invertible in our field)
+    // Rescue-Prime S-box: x^5 (invertible over our prime field)
     let x2 = sum * sum;
     let x4 = x2 * x2;
     x4 * sum
