@@ -34,7 +34,7 @@ pub const DOMAIN_VERTEX: &[u8] = b"QUANTOS_VERTEX_V1";
 /// Dilithium signatures over committee votes.
 pub const DOMAIN_COMMITTEE_VOTE: &[u8] = b"QUANTOS_COMMITTEE_VOTE_V1";
 
-/// Falcon signatures over finality checkpoints.
+/// ML-DSA-65 signatures over finality checkpoints.
 pub const DOMAIN_CHECKPOINT: &[u8] = b"QUANTOS_CHECKPOINT_V1";
 
 /// Dilithium signatures over view-change messages.

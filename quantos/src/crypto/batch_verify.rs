@@ -1,11 +1,11 @@
 //! PQC Signature Batch Verification (PQC-SVB)
 //!
-//! Batch verification of Dilithium and Falcon signatures with SIMD optimization.
+//! Batch verification of Dilithium and ML-DSA-65 signatures with SIMD optimization.
 //! Achieves 4-8x throughput improvement over sequential verification.
 
 use rayon::prelude::*;
 
-use crate::crypto::{verify_dilithium, verify_falcon};
+use crate::crypto::{verify_dilithium, verify_ml_dsa_65};
 
 /// Batch verifier for Dilithium signatures
 pub struct DilithiumBatchVerifier {
@@ -79,13 +79,13 @@ impl DilithiumBatchVerifier {
     }
 }
 
-/// Batch verifier for Falcon signatures
-pub struct FalconBatchVerifier {
+/// Batch verifier for ML-DSA-65 signatures
+pub struct MlDsa65BatchVerifier {
     batch_size: usize,
     use_parallel: bool,
 }
 
-impl FalconBatchVerifier {
+impl MlDsa65BatchVerifier {
     pub fn new(batch_size: usize) -> Self {
         Self {
             batch_size,
@@ -93,7 +93,7 @@ impl FalconBatchVerifier {
         }
     }
 
-    /// Verifies multiple Falcon signatures in parallel
+    /// Verifies multiple ML-DSA-65 signatures in parallel
     pub fn verify_batch(
         &self,
         items: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
@@ -105,13 +105,13 @@ impl FalconBatchVerifier {
         if !self.use_parallel || items.len() < 4 {
             items.iter()
                 .map(|(pubkey, message, sig)| {
-                    verify_falcon(pubkey, message, sig).unwrap_or(false)
+                    verify_ml_dsa_65(pubkey, message, sig).unwrap_or(false)
                 })
                 .collect()
         } else {
             items.par_iter()
                 .map(|(pubkey, message, sig)| {
-                    verify_falcon(pubkey, message, sig).unwrap_or(false)
+                    verify_ml_dsa_65(pubkey, message, sig).unwrap_or(false)
                 })
                 .collect()
         }
@@ -123,11 +123,11 @@ impl FalconBatchVerifier {
     ) -> bool {
         if !self.use_parallel || items.len() < 4 {
             items.iter().all(|(pubkey, message, sig)| {
-                verify_falcon(pubkey, message, sig).unwrap_or(false)
+                verify_ml_dsa_65(pubkey, message, sig).unwrap_or(false)
             })
         } else {
             items.par_iter().all(|(pubkey, message, sig)| {
-                verify_falcon(pubkey, message, sig).unwrap_or(false)
+                verify_ml_dsa_65(pubkey, message, sig).unwrap_or(false)
             })
         }
     }
@@ -136,14 +136,14 @@ impl FalconBatchVerifier {
 /// Mixed batch verifier for both signature types
 pub struct MixedBatchVerifier {
     dilithium: DilithiumBatchVerifier,
-    falcon: FalconBatchVerifier,
+    ml_dsa65: MlDsa65BatchVerifier,
 }
 
 impl MixedBatchVerifier {
     pub fn new(batch_size: usize) -> Self {
         Self {
             dilithium: DilithiumBatchVerifier::new(batch_size),
-            falcon: FalconBatchVerifier::new(batch_size),
+            ml_dsa65: MlDsa65BatchVerifier::new(batch_size),
         }
     }
 
@@ -154,11 +154,11 @@ impl MixedBatchVerifier {
         self.dilithium.verify_batch(items)
     }
 
-    pub fn verify_falcon_batch(
+    pub fn verify_ml_dsa65_batch(
         &self,
         items: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
     ) -> Vec<bool> {
-        self.falcon.verify_batch(items)
+        self.ml_dsa65.verify_batch(items)
     }
 }
 

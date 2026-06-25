@@ -116,7 +116,7 @@ impl Account {
 pub struct Validator {
     pub address: Address,
     pub public_key: Vec<u8>,
-    /// Falcon public key used for checkpoint/finality signatures.
+    /// ML-DSA-65 public key used for checkpoint/finality signatures.
     #[serde(default)]
     pub finality_public_key: Vec<u8>,
     pub stake: Amount,

@@ -8,7 +8,7 @@
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────┐
 //! │              Layer 3: Finality Anchor                        │
-//! │  Falcon-512 checkpoints every 1000 DAG vertices (~1 second) │
+//! │  ML-DSA-65 checkpoints every 1000 DAG vertices (~1 second) │
 //! │  Super-committee of 100 validators for deterministic finality│
 //! ├─────────────────────────────────────────────────────────────┤
 //! │              Layer 2: Quantum Committees                     │
@@ -28,7 +28,7 @@
 //! 1. **Inclusion (0-10ms)**: TX signed with Dilithium-3, propagated via QUIC
 //! 2. **Pre-consensus (10-50ms)**: Committee votes with 14/21 threshold
 //! 3. **Ordering (50-100ms)**: Topological sort of DAG, conflict resolution
-//! 4. **Finality (~1s)**: Checkpoint with Falcon-512 signatures
+//! 4. **Finality (~1s)**: Checkpoint with ML-DSA-65 signatures
 
 mod committee;
 mod fast_path;

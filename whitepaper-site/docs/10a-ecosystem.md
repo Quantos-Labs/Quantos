@@ -43,7 +43,7 @@ The PQC-Guard smart account (PQC-Guard section) ships with a TypeScript SDK (`pq
 
 Post-quantum keys are larger and structurally different from ECDSA keys, so the wallet stack is purpose-built rather than retrofitted:
 
-- **`quantos-wallet-core` (Rust)** — the core key-management and signing library, compiled to WASM (`falcon-wasm` and related artifacts) for use in browser and mobile contexts.
+- **`quantos-wallet-core` (Rust)** — the core key-management and signing library, compiled to WASM (`ml-dsa-wasm` and related artifacts) for use in browser and mobile contexts.
 - **`quantos-wallet-extension`** — a browser extension wallet that manages ML-DSA-65 keys, signs transactions, and speaks the node's JSON-RPC interface.
 - **`quantos-wallet-server`** — supporting server-side wallet services.
 

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use sha3::{Digest, Sha3_256};
 
-use crate::crypto::{verify_dilithium_batch, verify_falcon};
+use crate::crypto::{verify_dilithium_batch, verify_ml_dsa_65};
 use crate::l0::config::L0Config;
 use crate::l0::error::{L0Error, L0Result};
 use crate::l0::external::{ExternalCheckpoint, VerificationResult, VerificationStrategy};
@@ -243,7 +243,7 @@ impl FinalityHub {
             let validator = &snapshot.validators[index];
 
             let ok = match contribution.algo {
-                PqcSignatureAlgo::Falcon512 => verify_falcon(
+                PqcSignatureAlgo::MlDsa65 => verify_ml_dsa_65(
                     &validator.public_key,
                     &digest,
                     &contribution.signature,
@@ -475,7 +475,7 @@ impl FinalityHub {
             }
 
             let ok = match contribution.algo {
-                PqcSignatureAlgo::Falcon512 => verify_falcon(
+                PqcSignatureAlgo::MlDsa65 => verify_ml_dsa_65(
                     &validator.public_key,
                     &digest,
                     &contribution.signature,

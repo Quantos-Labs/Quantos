@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "description": "Quantos public bootstrap nodes. Each entry is a multiaddr-like string compatible with the native post-quantum P2P stack: /ip4/<IP>/tcp/<PORT>/p2p/<Dilithium-derived PeerId>.",
+  "networks": {
+    "mainnet": {
+      "chain_id": 1,
+      "comment": "Mainnet bootnodes. To be populated at genesis.",
+      "peers": []
+    },
+    "testnet": {
+      "chain_id": 2,
+      "comment": "Testnet bootnodes. Public seed validators.",
+      "peers": [
+        {
+          "addr": "/ip4/127.0.0.1/tcp/30303/p2p/12D3KooQTestnetBootstrap1Quantos",
+          "region": "local",
+          "operator": "quantos-labs"
+        },
+        {
+          "addr": "/ip4/127.0.0.1/tcp/30304/p2p/12D3KooQTestnetBootstrap2Quantos",
+          "region": "local",
+          "operator": "quantos-labs"
+        },
+        {
+          "addr": "/ip4/127.0.0.1/tcp/30305/p2p/12D3KooQTestnetBootstrap3Quantos",
+          "region": "local",
+          "operator": "quantos-labs"
+        }
+      ]
+    },
+    "devnet": {
+      "chain_id": 3,
+      "comment": "Local devnet bootnodes. Default 3-node loopback setup.",
+      "peers": [
+        {
+          "addr": "/ip4/127.0.0.1/tcp/30303/p2p/12D3KooQDevnetBootstrap1Quantos",
+          "region": "local",
+          "operator": "local"
+        },
+        {
+          "addr": "/ip4/127.0.0.1/tcp/30304/p2p/12D3KooQDevnetBootstrap2Quantos",
+          "region": "local",
+          "operator": "local"
+        },
+        {
+          "addr": "/ip4/127.0.0.1/tcp/30305/p2p/12D3KooQDevnetBootstrap3Quantos",
+          "region": "local",
+          "operator": "local"
+        }
+      ]
+    }
+  }
+}

@@ -10,7 +10,7 @@
 //! | `0x01` | SHA3-256 Hash | 100 + 1/byte |
 //! | `0x02` | Blake3 Hash | 80 + 1/byte |
 //! | `0x03` | Dilithium-3 Verify | 50,000 |
-//! | `0x04` | Falcon-512 Verify | 30,000 |
+//! | `0x04` | ML-DSA-65 Verify | 30,000 |
 //! | `0x05` | SPHINCS+ Verify | 80,000 |
 //! | `0x06` | QR-VRF Verify | 60,000 |
 //! | `0x07` | Merkle Proof Verify | 5,000 + 500/level |
@@ -27,7 +27,7 @@
 //! │       │                                                     │
 //! │       ▼                                                     │
 //! │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-//! │  │ SHA3-256 │  │ Blake3   │  │Dilithium │  │ Falcon   │  │
+//! │  │ SHA3-256 │  │ Blake3   │  │Dilithium │  │ ML-DSA   │  │
 //! │  │  (native)│  │  (native)│  │  (native)│  │  (native)│  │
 //! │  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │
 //! │                                                             │
@@ -42,7 +42,7 @@
 use sha3::Digest;
 
 use crate::crypto::{
-    verify_dilithium, verify_dilithium_batch, verify_falcon, verify_sphincs,
+    verify_dilithium, verify_dilithium_batch, verify_ml_dsa_65, verify_sphincs,
     sha3_256,
 };
 use crate::crypto::batch_verify::DilithiumBatchVerifier;
@@ -57,7 +57,7 @@ const CU_SHA3_PER_BYTE: u64 = 1;
 const CU_BLAKE3_BASE: u64 = 80;
 const CU_BLAKE3_PER_BYTE: u64 = 1;
 const CU_DILITHIUM_VERIFY: u64 = 50_000;
-const CU_FALCON_VERIFY: u64 = 30_000;
+const CU_MLDSA65_VERIFY: u64 = 30_000;
 const CU_SPHINCS_VERIFY: u64 = 80_000;
 const CU_VRF_VERIFY: u64 = 60_000;
 const CU_MERKLE_BASE: u64 = 5_000;
@@ -146,7 +146,7 @@ pub fn execute_precompile(
         0x01 => precompile_sha3(input, available_cu),
         0x02 => precompile_blake3(input, available_cu),
         0x03 => precompile_dilithium_verify(input, available_cu),
-        0x04 => precompile_falcon_verify(input, available_cu),
+        0x04 => precompile_mldsa65_verify(input, available_cu),
         0x05 => precompile_sphincs_verify(input, available_cu),
         0x06 => precompile_vrf_verify(input, available_cu),
         0x07 => precompile_merkle_verify(input, available_cu),
@@ -162,7 +162,7 @@ pub fn precompile_name(id: u8) -> &'static str {
         0x01 => "SHA3-256",
         0x02 => "Blake3",
         0x03 => "Dilithium-3 Verify",
-        0x04 => "Falcon-512 Verify",
+        0x04 => "ML-DSA-65 Verify",
         0x05 => "SPHINCS+ Verify",
         0x06 => "QR-VRF Verify",
         0x07 => "Merkle Proof Verify",
@@ -235,24 +235,24 @@ fn precompile_dilithium_verify(input: &[u8], available_cu: u64) -> Result<Precom
     })
 }
 
-/// 0x04: Falcon-512 Signature Verification
+/// 0x04: ML-DSA-65 Signature Verification
 /// Input: [pubkey_len: u32][pubkey][msg_len: u32][msg][sig_len: u32][sig]
 /// Output: [0x01] if valid, [0x00] if invalid
-fn precompile_falcon_verify(input: &[u8], available_cu: u64) -> Result<PrecompileResult, PrecompileError> {
-    if available_cu < CU_FALCON_VERIFY {
+fn precompile_mldsa65_verify(input: &[u8], available_cu: u64) -> Result<PrecompileResult, PrecompileError> {
+    if available_cu < CU_MLDSA65_VERIFY {
         return Err(PrecompileError::InsufficientCU);
     }
     
     let (pubkey, message, signature) = parse_verify_input(input)?;
-    
-    let valid = match verify_falcon(&pubkey, &message, &signature) {
+
+    let valid = match verify_ml_dsa_65(&pubkey, &message, &signature) {
         Ok(v) => v,
-        Err(e) => return Err(PrecompileError::CryptoError(format!("Falcon: {}", e))),
+        Err(e) => return Err(PrecompileError::CryptoError(format!("ML-DSA-65: {}", e))),
     };
     
     Ok(PrecompileResult {
         output: vec![if valid { 0x01 } else { 0x00 }],
-        cu_used: CU_FALCON_VERIFY,
+        cu_used: CU_MLDSA65_VERIFY,
         success: true,
     })
 }

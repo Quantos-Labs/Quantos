@@ -37,7 +37,7 @@ use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 use crate::types::{Address, Amount, Hash, ShardId, Slot};
-use crate::crypto::verify_falcon;
+use crate::crypto::verify_ml_dsa_65;
 
 /// Maximum headers in a single batch
 const MAX_BATCH_HEADERS: usize = 1000;
@@ -436,7 +436,7 @@ impl LightClient {
         let mut invalid_count = 0usize;
         for sig in &checkpoint.signatures {
             if let Some(stake) = committee.get_stake(&sig.validator) {
-                match verify_falcon(&sig.validator, &message, &sig.signature) {
+                match verify_ml_dsa_65(&sig.validator, &message, &sig.signature) {
                     Ok(true) => {
                         verified_stake = verified_stake.checked_add(stake)
                             .ok_or_else(|| LightClientError::VerificationFailed(
@@ -599,8 +599,8 @@ impl LightClient {
         let mut invalid_count = 0usize;
         for sig in &checkpoint.signatures {
             if let Some(stake) = committee.get_stake(&sig.validator) {
-                // CRITICAL: Verify actual Falcon signature
-                match verify_falcon(&sig.validator, &message, &sig.signature) {
+                // CRITICAL: Verify actual ML-DSA-65 signature
+                match verify_ml_dsa_65(&sig.validator, &message, &sig.signature) {
                     Ok(true) => {
                         // Use checked arithmetic to prevent overflow
                         signed_stake = signed_stake.checked_add(stake)
@@ -718,7 +718,7 @@ impl LightClient {
         let mut attested_stake = 0u64;
         for sig in transition_signatures {
             if let Some(stake) = current_committee.get_stake(&sig.validator) {
-                match verify_falcon(&sig.validator, &transition_msg, &sig.signature) {
+                match verify_ml_dsa_65(&sig.validator, &transition_msg, &sig.signature) {
                     Ok(true) => {
                         attested_stake = attested_stake.checked_add(stake)
                             .ok_or_else(|| LightClientError::VerificationFailed(

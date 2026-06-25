@@ -8,9 +8,9 @@
 //!   over the proof body.
 //! * `validators` lists the public keys *referenced* by the signatures
 //!   that follow, alongside their stake weight at the time of signing.
-//! * `signatures` is a list of post-quantum signatures (Falcon-512 by
+//! * `signatures` is a list of post-quantum signatures (ML-DSA-65 by
 //!   default, Dilithium-3 as a fallback for nodes that do not run
-//!   Falcon).
+//!   ML-DSA-65).
 //!
 //! All structures derive [`Serialize`] / [`Deserialize`] so that the
 //! proof can be encoded with bincode, JSON, MessagePack, or any other
@@ -32,9 +32,9 @@ pub const L0_PROOF_VERSION: u16 = 1;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum PqcSignatureAlgo {
-    /// Falcon-512 — preferred for compact L0 proofs.
-    Falcon512 = 1,
-    /// Dilithium-3 — fallback when Falcon is unavailable.
+    /// ML-DSA-65 — preferred for compact L0 proofs.
+    MlDsa65 = 1,
+    /// Dilithium-3 — fallback when ML-DSA-65 is unavailable.
     Dilithium3 = 2,
 }
 
@@ -85,7 +85,7 @@ pub struct L0ProofHeader {
 pub struct ValidatorRecord {
     /// 32-byte validator address.
     pub address: [u8; 32],
-    /// Validator public key (Falcon-512 or Dilithium-3 depending on
+    /// Validator public key (ML-DSA-65 or Dilithium-3 depending on
     /// the matching signature entry).
     pub public_key: Vec<u8>,
     /// Stake weight at the time of signing.

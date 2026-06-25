@@ -9,7 +9,7 @@
 //! |-----------|-------|----------|----------------|
 //! | **Dilithium-3** | Transaction signatures | 1952 bytes | 3293 bytes |
 //! | **SPHINCS+** | VRF for committee selection | 32 bytes | 17088 bytes |
-//! | **Falcon-512** | Checkpoint finality | 897 bytes | 666 bytes |
+//! | **ML-DSA-65** | Checkpoint finality (FIPS 204) | 1952 bytes | 3309 bytes |
 //!
 //! ## Security Considerations
 //!
@@ -37,7 +37,7 @@
 mod dilithium;
 mod kyber_kem;
 mod sphincs;
-mod falcon;
+mod ml_dsa;
 mod vrf;
 mod qrng;
 mod qr_vrf;
@@ -80,7 +80,7 @@ pub use domains::{with_domain, DOMAIN_TX, DOMAIN_VERTEX, DOMAIN_COMMITTEE_VOTE,
 pub use dilithium::*;
 pub use kyber_kem::*;
 pub use sphincs::*;
-pub use falcon::*;
+pub use ml_dsa::*;
 pub use vrf::*;
 pub use qrng::*;
 pub use qr_vrf::*;

@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 
 use crate::consensus::{ConsensusError, ConsensusResult, CommitteeManager};
-use crate::crypto::{verify_falcon, FalconKeypair, merkle_root};
+use crate::crypto::{verify_ml_dsa_65, MlDsa65Keypair, merkle_root};
 use crate::dag::DAGGraph;
 use crate::storage::Storage;
 use crate::types::{
@@ -131,7 +131,7 @@ impl FinalityLayer {
         &self,
         checkpoint_hash: &Hash,
         validator: Address,
-        falcon_key: &FalconKeypair,
+        finality_key: &MlDsa65Keypair,
     ) -> ConsensusResult<ValidatorSignature> {
         let pending = self.pending_checkpoints.get(checkpoint_hash)
             .ok_or(ConsensusError::CheckpointVerificationFailed)?;
@@ -143,14 +143,14 @@ impl FinalityLayer {
                 format!("Validator {:?} not found", validator)
             ))?;
 
-        // Verify the finality public key matches the registered Falcon key.
-        if validator_info.finality_public_key != falcon_key.public_key {
+        // Verify the finality public key matches the registered ML-DSA-65 key.
+        if validator_info.finality_public_key != finality_key.public_key {
             return Err(ConsensusError::Unauthorized(
                 format!("Finality public key mismatch for validator {:?}", validator)
             ));
         }
 
-        let signature = falcon_key.sign(&pending.checkpoint.signing_data())
+        let signature = finality_key.sign(&pending.checkpoint.signing_data())
             .map_err(|e| ConsensusError::CryptoError(e.to_string()))?;
 
         Ok(ValidatorSignature::new(validator, signature))
@@ -186,7 +186,7 @@ impl FinalityLayer {
             }
             
             let checkpoint_data = pending.checkpoint.signing_data();
-            let valid = verify_falcon(
+            let valid = verify_ml_dsa_65(
                 &validator_info.finality_public_key,
                 &checkpoint_data,
                 &signature.signature,
@@ -352,7 +352,7 @@ impl FinalityLayer {
                 if !v.active || v.jailed || v.finality_public_key.is_empty() {
                     return Ok(false);
                 }
-                let valid = verify_falcon(&v.finality_public_key, &checkpoint_data, &sig.signature)
+                let valid = verify_ml_dsa_65(&v.finality_public_key, &checkpoint_data, &sig.signature)
                     .map_err(|e| ConsensusError::CryptoError(e.to_string()))?;
                 
                 if !valid {

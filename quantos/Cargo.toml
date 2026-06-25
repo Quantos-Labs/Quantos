@@ -13,7 +13,7 @@ categories = ["cryptography", "network-programming"]
 # Post-Quantum Cryptography
 pqcrypto-dilithium = "0.5"
 pqcrypto-sphincsplus = "0.7"
-pqcrypto-falcon = "0.3"
+pqcrypto-mldsa = "0.1"
 pqcrypto-kyber = "0.8"
 pqcrypto-traits = "0.3"
 hkdf = "0.12"
@@ -121,6 +121,10 @@ path = "src/cli.rs"
 [[bin]]
 name = "quantos-sol"
 path = "src/solang_cli.rs"
+
+[[bin]]
+name = "stress-test"
+path = "src/bin/stress_test.rs"
 
 [[bench]]
 name = "raw_tps"

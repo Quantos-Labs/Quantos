@@ -12,7 +12,7 @@
 //!
 //! | Layer | Deterministic? | Used in consensus? |
 //! |-------|---------------|--------------------|
-//! | `AlwaysDilithium` / `AlwaysFalcon` / `AlwaysSPHINCS` | ✅ trivially | ✅ safe |
+//! | `AlwaysDilithium` / `AlwaysMlDsa65` / `AlwaysSPHINCS` | ✅ trivially | ✅ safe |
 //! | `Adaptive` ([`select_adaptive`]) | ✅ pure function | ✅ safe |
 //! | `MLBased` ([`select_ml_based`]) | ❌ non-deterministic | ❌ **ADVISORY ONLY** |
 //!
@@ -28,7 +28,7 @@
 //!
 //! ## Key Innovations (Patent Claims)
 //!
-//! 1. **Dynamic Algorithm Selection**: Real-time switching between Dilithium, Falcon, and SPHINCS+
+//! 1. **Dynamic Algorithm Selection**: Real-time switching between Dilithium, ML-DSA-65, and SPHINCS+
 //! 2. **ML-Based Prediction**: Neural network predicts optimal algorithm per transaction
 //! 3. **Cost Function Optimization**: Multi-objective optimization (latency, bandwidth, security)
 //! 4. **Adaptive Thresholds**: Self-tuning based on network conditions
@@ -44,7 +44,7 @@
 //! | Algorithm | Sig Size | Verify Time | Use Case |
 //! |-----------|----------|-------------|----------|
 //! | Dilithium | 3.2 KB   | ~50 µs      | Fast verification, high throughput |
-//! | Falcon    | 0.6 KB   | ~80 µs      | Bandwidth-constrained, mobile |
+//! | ML-DSA-65 | 3.3 KB   | ~55 µs      | Standardized finality / general use |
 //! | SPHINCS+  | 17 KB    | ~30 µs      | Maximum security, stateless |
 
 use std::sync::Arc;
@@ -61,8 +61,8 @@ pub enum PQCStrategy {
     /// Always use Dilithium (default, fast verification)
     AlwaysDilithium,
     
-    /// Always use Falcon (compact signatures)
-    AlwaysFalcon,
+    /// Always use ML-DSA-65 (FIPS 204)
+    AlwaysMlDsa65,
     
     /// Always use SPHINCS+ (maximum security)
     AlwaysSPHINCS,
@@ -78,7 +78,7 @@ pub enum PQCStrategy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PropagationPref {
     PreferDilithium,
-    PreferFalcon,
+    PreferMlDsa65,
 }
 
 impl Default for PropagationPref {
@@ -148,7 +148,7 @@ pub struct SelectedAlgorithm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PQCAlgorithm {
     Dilithium,
-    Falcon,
+    MlDsa65,
     SPHINCS,
 }
 
@@ -167,10 +167,10 @@ impl PQCAlgorithm {
                 verify_time_us: 50,
                 bandwidth_cost: 1.0,
             },
-            PQCAlgorithm::Falcon => ExpectedMetrics {
-                signature_size: 666,
-                verify_time_us: 80,
-                bandwidth_cost: 0.2,
+            PQCAlgorithm::MlDsa65 => ExpectedMetrics {
+                signature_size: 3309,
+                verify_time_us: 55,
+                bandwidth_cost: 1.0,
             },
             PQCAlgorithm::SPHINCS => ExpectedMetrics {
                 signature_size: 17088,
@@ -391,7 +391,7 @@ struct HistoricalSample {
 pub struct SelectionStats {
     pub total_selections: u64,
     pub dilithium_selected: u64,
-    pub falcon_selected: u64,
+    pub ml_dsa65_selected: u64,
     pub sphincs_selected: u64,
     pub avg_latency_ms: f32,
     pub avg_bandwidth_saved: f32,
@@ -441,7 +441,7 @@ impl AdaptivePQCSelector {
         
         let algorithm = match strategy {
             PQCStrategy::AlwaysDilithium => self.select_dilithium(context, &network),
-            PQCStrategy::AlwaysFalcon => self.select_falcon(context, &network),
+            PQCStrategy::AlwaysMlDsa65 => self.select_ml_dsa65(context, &network),
             PQCStrategy::AlwaysSPHINCS => self.select_sphincs(context, &network),
             PQCStrategy::Adaptive => self.select_adaptive(context, &network),
             PQCStrategy::MLBased => self.select_ml_based(context, &network),
@@ -462,12 +462,12 @@ impl AdaptivePQCSelector {
         }
     }
 
-    fn select_falcon(&self, _context: &TransactionContext, _network: &NetworkMetrics) -> SelectedAlgorithm {
+    fn select_ml_dsa65(&self, _context: &TransactionContext, _network: &NetworkMetrics) -> SelectedAlgorithm {
         SelectedAlgorithm {
-            algorithm: PQCAlgorithm::Falcon,
+            algorithm: PQCAlgorithm::MlDsa65,
             confidence: 1.0,
-            reason: "Static: Always Falcon".to_string(),
-            expected_metrics: PQCAlgorithm::Falcon.metrics(),
+            reason: "Static: Always ML-DSA-65".to_string(),
+            expected_metrics: PQCAlgorithm::MlDsa65.metrics(),
         }
     }
 
@@ -496,25 +496,25 @@ impl AdaptivePQCSelector {
             &weights,
         );
         
-        let falcon_score = self.calculate_score(
-            &PQCAlgorithm::Falcon,
+        let ml_dsa_score = self.calculate_score(
+            &PQCAlgorithm::MlDsa65,
             context,
             network,
             &weights,
         );
-        
+
         let sphincs_score = self.calculate_score(
             &PQCAlgorithm::SPHINCS,
             context,
             network,
             &weights,
         );
-        
+
         // Select algorithm with highest score
-        let (algorithm, score, reason) = if dilithium_score >= falcon_score && dilithium_score >= sphincs_score {
+        let (algorithm, score, reason) = if dilithium_score >= ml_dsa_score && dilithium_score >= sphincs_score {
             (PQCAlgorithm::Dilithium, dilithium_score, "Adaptive: Fast verification priority")
-        } else if falcon_score >= sphincs_score {
-            (PQCAlgorithm::Falcon, falcon_score, "Adaptive: Bandwidth constrained")
+        } else if ml_dsa_score >= sphincs_score {
+            (PQCAlgorithm::MlDsa65, ml_dsa_score, "Adaptive: Standardized finality priority")
         } else {
             (PQCAlgorithm::SPHINCS, sphincs_score, "Adaptive: Maximum security required")
         };
@@ -551,7 +551,7 @@ impl AdaptivePQCSelector {
         let security_score = match algorithm {
             PQCAlgorithm::SPHINCS => 1.0, // Maximum security
             PQCAlgorithm::Dilithium => 0.9,
-            PQCAlgorithm::Falcon => 0.85,
+            PQCAlgorithm::MlDsa65 => 0.9, // Equivalent to Dilithium-3 (FIPS 204)
         };
         
         // Context-aware adjustments
@@ -602,7 +602,7 @@ impl AdaptivePQCSelector {
             let (algorithm, confidence) = if scores[0] >= scores[1] && scores[0] >= scores[2] {
                 (PQCAlgorithm::Dilithium, scores[0])
             } else if scores[1] >= scores[2] {
-                (PQCAlgorithm::Falcon, scores[1])
+                (PQCAlgorithm::MlDsa65, scores[1])
             } else {
                 (PQCAlgorithm::SPHINCS, scores[2])
             };
@@ -711,7 +711,7 @@ impl AdaptivePQCSelector {
                 // Target: 1.0 for selected algorithm, 0.0 for others
                 let target = match sample.selected {
                     PQCAlgorithm::Dilithium => [1.0, 0.0, 0.0],
-                    PQCAlgorithm::Falcon => [0.0, 1.0, 0.0],
+                    PQCAlgorithm::MlDsa65 => [0.0, 1.0, 0.0],
                     PQCAlgorithm::SPHINCS => [0.0, 0.0, 1.0],
                 };
                 
@@ -754,7 +754,7 @@ impl AdaptivePQCSelector {
         
         match selection.algorithm {
             PQCAlgorithm::Dilithium => stats.dilithium_selected += 1,
-            PQCAlgorithm::Falcon => stats.falcon_selected += 1,
+            PQCAlgorithm::MlDsa65 => stats.ml_dsa65_selected += 1,
             PQCAlgorithm::SPHINCS => stats.sphincs_selected += 1,
         }
     }
@@ -768,7 +768,7 @@ impl AdaptivePQCSelector {
     ///
     /// **⚠️ Warning**: `MLBased` is advisory-only. For consensus-critical
     /// code paths (block production/validation), only `AlwaysDilithium`,
-    /// `AlwaysFalcon`, `AlwaysSPHINCS`, or `Adaptive` are safe.
+    /// `AlwaysMlDsa65`, `AlwaysSPHINCS`, or `Adaptive` are safe.
     pub fn set_strategy(&self, strategy: PQCStrategy) {
         if strategy == PQCStrategy::MLBased {
             tracing::warn!(
@@ -806,28 +806,14 @@ mod tests {
         let selection = selector.select_algorithm(&context);
         assert!(matches!(
             selection.algorithm,
-            PQCAlgorithm::Dilithium | PQCAlgorithm::Falcon | PQCAlgorithm::SPHINCS
+            PQCAlgorithm::Dilithium | PQCAlgorithm::MlDsa65 | PQCAlgorithm::SPHINCS
         ));
     }
 
     #[test]
-    fn test_bandwidth_constrained_selects_falcon() {
-        let selector = AdaptivePQCSelector::new(PQCStrategy::Adaptive);
-        
-        // Update network to show high bandwidth utilization
-        selector.update_network_metrics(NetworkMetrics {
-            bandwidth_utilization: 95.0, // Very congested
-            avg_latency_ms: 100.0,
-            ..Default::default()
-        });
-        
-        // Update weights to prioritize bandwidth
-        selector.update_cost_weights(CostWeights {
-            latency_weight: 0.2,
-            bandwidth_weight: 0.7, // High bandwidth weight
-            security_weight: 0.1,
-        });
-        
+    fn test_always_ml_dsa65_strategy() {
+        let selector = AdaptivePQCSelector::new(PQCStrategy::AlwaysMlDsa65);
+
         let context = TransactionContext {
             value: Amount(1000),
             priority: 128,
@@ -836,11 +822,11 @@ mod tests {
             timestamp: 0,
             max_compute_units: 10,
         };
-        
+
         let selection = selector.select_algorithm(&context);
-        
-        // Should select Falcon due to small signature size
-        assert_eq!(selection.algorithm, PQCAlgorithm::Falcon);
+
+        // AlwaysMlDsa65 must select ML-DSA-65
+        assert_eq!(selection.algorithm, PQCAlgorithm::MlDsa65);
     }
 
     #[test]
@@ -850,7 +836,10 @@ mod tests {
         
         selector.set_strategy(PQCStrategy::AlwaysDilithium);
         assert!(selector.is_consensus_safe());
-        
+
+        selector.set_strategy(PQCStrategy::AlwaysMlDsa65);
+        assert!(selector.is_consensus_safe());
+
         selector.set_strategy(PQCStrategy::MLBased);
         assert!(!selector.is_consensus_safe());
     }

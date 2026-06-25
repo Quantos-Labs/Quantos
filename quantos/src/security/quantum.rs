@@ -10,7 +10,7 @@
 //!
 //! - **Dilithium-3**: Primary signature scheme (NIST Level 3, ~128-bit PQ security)
 //! - **SPHINCS+**: Backup hash-based signatures (stateless, conservative choice)
-//! - **Falcon-512**: Fast verification for finality checkpoints
+//! - **ML-DSA-65**: NIST-standardized finality checkpoints (FIPS 204)
 //!
 //! ## Grover's Algorithm Protection
 //!
@@ -87,9 +87,9 @@ pub enum PQSignatureScheme {
     SphincsShake128f,
     SphincsShake192f,
     SphincsShake256f,
-    /// Falcon (lattice-based, compact)
-    Falcon512,
-    Falcon1024,
+    /// ML-DSA (FIPS 204, lattice-based)
+    MlDsa65,
+    MlDsa87,
 }
 
 impl PQSignatureScheme {
@@ -102,8 +102,8 @@ impl PQSignatureScheme {
             PQSignatureScheme::SphincsShake128f => QuantumSecurityLevel::Level1,
             PQSignatureScheme::SphincsShake192f => QuantumSecurityLevel::Level3,
             PQSignatureScheme::SphincsShake256f => QuantumSecurityLevel::Level5,
-            PQSignatureScheme::Falcon512 => QuantumSecurityLevel::Level1,
-            PQSignatureScheme::Falcon1024 => QuantumSecurityLevel::Level5,
+            PQSignatureScheme::MlDsa65 => QuantumSecurityLevel::Level3,
+            PQSignatureScheme::MlDsa87 => QuantumSecurityLevel::Level5,
         }
     }
 
@@ -116,8 +116,8 @@ impl PQSignatureScheme {
             PQSignatureScheme::SphincsShake128f => 17088,
             PQSignatureScheme::SphincsShake192f => 35664,
             PQSignatureScheme::SphincsShake256f => 49856,
-            PQSignatureScheme::Falcon512 => 690,
-            PQSignatureScheme::Falcon1024 => 1330,
+            PQSignatureScheme::MlDsa65 => 3309,
+            PQSignatureScheme::MlDsa87 => 4627,
         }
     }
 
@@ -135,8 +135,8 @@ impl PQSignatureScheme {
             PQSignatureScheme::SphincsShake128f => 2_u64.pow(64), // Hash-based, very high
             PQSignatureScheme::SphincsShake192f => 2_u64.pow(96),
             PQSignatureScheme::SphincsShake256f => 2_u64.pow(128),
-            PQSignatureScheme::Falcon512 => 3000,
-            PQSignatureScheme::Falcon1024 => 6000,
+            PQSignatureScheme::MlDsa65 => 6000,
+            PQSignatureScheme::MlDsa87 => 8000,
         }
     }
 }
@@ -391,7 +391,7 @@ mod tests {
             QuantumSecurityLevel::Level3
         );
         assert_eq!(
-            PQSignatureScheme::Falcon1024.security_level(),
+            PQSignatureScheme::MlDsa87.security_level(),
             QuantumSecurityLevel::Level5
         );
     }

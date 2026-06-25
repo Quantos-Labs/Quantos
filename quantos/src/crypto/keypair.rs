@@ -1,5 +1,5 @@
 use crate::crypto::{
-    CryptoResult, DilithiumKeypair, FalconKeypair, VRFKeypair,
+    CryptoResult, DilithiumKeypair, MlDsa65Keypair, VRFKeypair,
 };
 use crate::types::Address;
 use serde::{Deserialize, Serialize};
@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct ValidatorKeys {
     pub signing_key: DilithiumKeypair,
     pub vrf_key: VRFKeypair,
-    pub finality_key: FalconKeypair,
+    pub finality_key: MlDsa65Keypair,
 }
 
 impl ValidatorKeys {
@@ -16,7 +16,7 @@ impl ValidatorKeys {
         Ok(Self {
             signing_key: DilithiumKeypair::generate()?,
             vrf_key: VRFKeypair::generate()?,
-            finality_key: FalconKeypair::generate()?,
+            finality_key: MlDsa65Keypair::generate()?,
         })
     }
 

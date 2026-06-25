@@ -6,7 +6,7 @@
 //! makes the same code reusable inside Quantos, in an off-chain audit
 //! tool, or behind a smart-contract / native program on the target chain.
 
-use crate::crypto::{verify_dilithium_batch, verify_falcon};
+use crate::crypto::{verify_dilithium_batch, verify_ml_dsa_65};
 use crate::l0::error::{L0Error, L0Result};
 use crate::l0::hub::ValidatorSetSnapshot;
 use crate::l0::proof::{L0FinalityProof, L0_PROOF_VERSION, PqcSignatureAlgo};
@@ -85,7 +85,7 @@ impl ExternalVerifier {
             };
 
             let ok = match sig.algo {
-                PqcSignatureAlgo::Falcon512 => verify_falcon(
+                PqcSignatureAlgo::MlDsa65 => verify_ml_dsa_65(
                     &validator.public_key,
                     &digest,
                     &sig.signature,

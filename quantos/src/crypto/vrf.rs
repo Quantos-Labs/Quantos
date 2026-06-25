@@ -30,8 +30,17 @@ impl VRFKeypair {
         Self { sphincs, prf_key }
     }
 
+    pub fn from_keys(public_key: Vec<u8>, secret_key: Vec<u8>) -> CryptoResult<Self> {
+        let sphincs = SphincsKeypair::from_keys(public_key, secret_key)?;
+        Ok(Self::from_sphincs(sphincs))
+    }
+
     pub fn public_key(&self) -> &[u8] {
         &self.sphincs.public_key
+    }
+
+    pub fn secret_key(&self) -> &[u8] {
+        &self.sphincs.secret_key
     }
 
     fn derive_prf_key(sk: &[u8]) -> [u8; 32] {

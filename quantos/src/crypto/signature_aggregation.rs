@@ -25,10 +25,10 @@ use crate::types::Hash;
 pub const DILITHIUM3_SIG_SIZE: usize = 3_293;
 /// Dilithium-3 public key size in bytes
 pub const DILITHIUM3_PK_SIZE: usize = 1_952;
-/// Falcon-512 signature size in bytes
-pub const FALCON512_SIG_SIZE: usize = 666;
-/// Falcon-512 public key size in bytes
-pub const FALCON512_PK_SIZE: usize = 897;
+/// ML-DSA-65 signature size in bytes (FIPS 204)
+pub const MLDSA65_SIG_SIZE: usize = 3_309;
+/// ML-DSA-65 public key size in bytes
+pub const MLDSA65_PK_SIZE: usize = 1_952;
 /// SPHINCS+-128s signature size in bytes
 pub const SPHINCS_SIG_SIZE: usize = 17_088;
 /// SPHINCS+-128s public key size in bytes
@@ -437,9 +437,9 @@ impl CompressionMetrics {
         }
     }
 
-    /// Computes realistic compression metrics for Falcon-512.
-    pub fn falcon(num_signers: usize, committee_size: usize) -> Self {
-        let individual = num_signers * (FALCON512_SIG_SIZE + FALCON512_PK_SIZE);
+    /// Computes realistic compression metrics for ML-DSA-65.
+    pub fn ml_dsa(num_signers: usize, committee_size: usize) -> Self {
+        let individual = num_signers * (MLDSA65_SIG_SIZE + MLDSA65_PK_SIZE);
         let bitmap_bytes = (committee_size + 7) / 8 + 4;
         let compact = 32 + bitmap_bytes + 4 + 32;
         let ratio = if compact > 0 { individual as f64 / compact as f64 } else { 1.0 };
@@ -540,13 +540,13 @@ mod tests {
     }
 
     #[test]
-    fn test_compression_metrics_falcon() {
-        let m = CompressionMetrics::falcon(534, 800);
-        // Individual: 534 * (666 + 897) = ~834 KB
-        assert!(m.individual_bytes > 800_000);
+    fn test_compression_metrics_ml_dsa() {
+        let m = CompressionMetrics::ml_dsa(534, 800);
+        // Individual: 534 * (3309 + 1952) = ~2.8 MB
+        assert!(m.individual_bytes > 2_000_000);
         // Compact: same ~172 bytes
         assert!(m.compact_bytes < 200);
-        assert!(m.ratio > 4_000.0);
+        assert!(m.ratio > 10_000.0);
     }
 
     #[test]

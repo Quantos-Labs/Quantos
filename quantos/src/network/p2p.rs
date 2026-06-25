@@ -90,10 +90,12 @@ impl P2PNetwork {
 
         let mut p2p_config = P2PConfig::default();
         p2p_config.merge_bootstrap_from_env();
+        p2p_config.merge_bootstrap_from_file(&config.network_name);
 
         let peer_manager = Arc::new(PeerManager::new(p2p_config.max_peers)?);
         let peer_store = Arc::new(PeerStore::load_or_create(&config.db_path)?);
         peer_manager.load_banned(peer_store.banned_peers());
+        p2p_config.merge_known_peers(&peer_store.known_peers());
 
         let (dilithium_keypair, kem_keypair) =
             crate::network::pq_identity_store::load_or_create_identity(&config.db_path)?;
@@ -537,10 +539,17 @@ impl P2PNetwork {
             }
             NetworkMessage::DiscoveryResponse(addrs) => {
                 // Process discovered peers
+                let mut discovered = Vec::new();
                 for addr_str in addrs {
-                    if let Err(e) = self.connect_to_peer(addr_str.trim()).await {
+                    let addr = addr_str.trim().to_string();
+                    if let Err(e) = self.connect_to_peer(&addr).await {
                         tracing::debug!(target: "quantos_network", "discovery connect skipped: {}", e);
+                    } else {
+                        discovered.push(addr);
                     }
+                }
+                if !discovered.is_empty() {
+                    let _ = self.peer_store.add_known_peers(discovered);
                 }
                 self.metrics.write().messages_received += 1;
             }

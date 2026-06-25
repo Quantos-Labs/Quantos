@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use crate::types::{Address, Hash, hash_data};
-use crate::crypto::{verify_falcon, with_domain, DOMAIN_CHECKPOINT};
+use crate::crypto::{verify_ml_dsa_65, with_domain, DOMAIN_CHECKPOINT};
 
 /// HIGH (z5): Maximum validators per checkpoint to prevent DoS
 const MAX_CHECKPOINT_VALIDATORS: usize = 1000;
@@ -123,7 +123,7 @@ impl FinalityProof {
         // CRITICAL (z3): Verify the finality signature cryptographically.
         // Must use signing_data() (domain-prefixed) to match what validators sign in finality.rs.
         let signing_data = self.checkpoint.signing_data();
-        match verify_falcon(validator_pubkey, &signing_data, &sig.signature) {
+        match verify_ml_dsa_65(validator_pubkey, &signing_data, &sig.signature) {
             Ok(true) => {},
             Ok(false) => return Err("Invalid finality signature: verification failed".to_string()),
             Err(e) => return Err(format!("Signature verification error: {:?}", e)),

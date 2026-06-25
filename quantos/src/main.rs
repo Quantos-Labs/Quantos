@@ -4,7 +4,7 @@
 //!
 //! ## Features
 //!
-//! - **Post-Quantum Security**: Dilithium-3, SPHINCS+, Falcon-512
+//! - **Post-Quantum Security**: Dilithium-3, SPHINCS+, ML-DSA-65
 //! - **Massive Parallelization**: 1000+ shards, ~100M TPS
 //! - **Dynamic Sharding**: Auto-scaling based on load
 //! - **Sidechains**: Application-specific chains
@@ -42,6 +42,7 @@ mod standards;
 mod stacc;
 mod genesis;
 pub mod l0;
+mod validator_keys;
 
 use std::time::Duration;
 use anyhow::Result;
@@ -50,8 +51,10 @@ use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use crate::consensus::QuantosConsensus;
-use crate::genesis::{GenesisConfig, GenesisBuilder, NetworkId};
+use crate::genesis::{GenesisConfig, GenesisBuilder, GenesisValidator, NetworkId};
 use crate::network::P2PNetwork;
+use crate::validator_keys::ValidatorKeySet;
+use crate::NodeConfig;
 use crate::rpc::RpcServer;
 use crate::storage::Storage;
 use crate::state::StateManager;
@@ -133,13 +136,35 @@ enum Commands {
         network: String,
     },
     
-    /// Generate a new validator key
-    GenerateKey {
+    /// Generate a full validator key set (Dilithium + VRF + ML-DSA-65)
+    GenerateValidatorKeys {
         /// Output path for key file
         #[arg(short, long)]
         output: String,
+        /// Human-readable validator name
+        #[arg(short, long)]
+        name: Option<String>,
     },
-    
+
+    /// Create a genesis file from a list of validator key files
+    CreateGenesis {
+        /// Network type
+        #[arg(short, long, default_value = "testnet")]
+        network: String,
+        /// Output path for genesis file
+        #[arg(short, long)]
+        output: String,
+        /// Validator key files (comma-separated)
+        #[arg(short, long, value_delimiter = ',')]
+        validators: Vec<String>,
+        /// Initial stake per validator in QTS (default 1,000,000)
+        #[arg(long, default_value = "1000000")]
+        stake: u128,
+        /// Commission rate in basis points (100 = 1%)
+        #[arg(long, default_value = "500")]
+        commission_bps: u16,
+    },
+
     /// Show node info
     Info,
 }
@@ -166,8 +191,17 @@ async fn main() -> Result<()> {
         Some(Commands::ExportGenesis { output, network }) => {
             return export_genesis(&output, &network);
         }
-        Some(Commands::GenerateKey { output }) => {
-            return generate_validator_key(&output);
+        Some(Commands::GenerateValidatorKeys { output, name }) => {
+            return generate_validator_keys(&output, name.as_deref());
+        }
+        Some(Commands::CreateGenesis {
+            network,
+            output,
+            validators,
+            stake,
+            commission_bps,
+        }) => {
+            return create_genesis_from_keys(&network, &output, &validators, *stake, *commission_bps);
         }
         Some(Commands::Info) => {
             return show_info();
@@ -237,17 +271,42 @@ async fn main() -> Result<()> {
         storage.clone(),
     ).await?;
 
-    // Testnet: generate validator identity so the node can produce vertices
-    {
+    // Load or generate validator identity so the node can produce vertices
+    if let Some(key_path) = &cli.validator_key {
+        let keyset = ValidatorKeySet::from_file(key_path)
+            .map_err(|e| anyhow::anyhow!("Failed to load validator keys: {}", e))?;
+        let signing_key = keyset.signing_keypair()
+            .map_err(|e| anyhow::anyhow!("Failed to load signing keypair: {}", e))?;
+        let vrf_key = keyset.vrf_keypair()
+            .map_err(|e| anyhow::anyhow!("Failed to load VRF keypair: {}", e))?;
+        let finality_key = keyset.finality_keypair()
+            .map_err(|e| anyhow::anyhow!("Failed to load finality keypair: {}", e))?;
+        let addr = signing_key.address();
+        info!("✓ Loaded validator identity: {}", hex::encode(&addr[..8]));
+        consensus.set_validator_keys(&genesis, signing_key, vrf_key, finality_key);
+    } else if let Ok(keyset) = ValidatorKeySet::from_file(ValidatorKeySet::default_path(&config.db_path)) {
+        let signing_key = keyset.signing_keypair()
+            .map_err(|e| anyhow::anyhow!("Failed to load signing keypair: {}", e))?;
+        let vrf_key = keyset.vrf_keypair()
+            .map_err(|e| anyhow::anyhow!("Failed to load VRF keypair: {}", e))?;
+        let finality_key = keyset.finality_keypair()
+            .map_err(|e| anyhow::anyhow!("Failed to load finality keypair: {}", e))?;
+        let addr = signing_key.address();
+        info!("✓ Loaded validator identity: {}", hex::encode(&addr[..8]));
+        consensus.set_validator_keys(&genesis, signing_key, vrf_key, finality_key);
+    } else if cli.validator {
+        warn!("⚠ Validator mode requested but no key file found. Run `quantos generate-validator-keys` first.");
+    } else if genesis.network == NetworkId::Devnet || genesis.network == NetworkId::Testnet {
+        warn!("⚠ No validator key file found; generating ephemeral validator identity for local testing.");
         let signing_key = crypto::DilithiumKeypair::generate()
             .expect("Failed to generate validator signing key");
         let vrf_key = crypto::VRFKeypair::generate()
             .expect("Failed to generate validator VRF key");
-        let finality_key = crypto::FalconKeypair::generate()
+        let finality_key = crypto::MlDsa65Keypair::generate()
             .expect("Failed to generate validator finality key");
         let addr = signing_key.address();
         info!("✓ Validator identity: {}", hex::encode(&addr[..8]));
-        consensus.set_validator_keys(signing_key, vrf_key, finality_key);
+        consensus.set_validator_keys(&genesis, signing_key, vrf_key, finality_key);
     }
     info!("✓ Quantos Consensus initialized");
     info!("  ├─ Committees: {}", config.num_committees);
@@ -378,71 +437,6 @@ fn print_banner() {
     info!("═══════════════════════════════════════════════════════════════");
 }
 
-/// Configuration for a Quantos node.
-///
-/// All fields can be overridden via environment variables with the
-/// `QUANTOS_` prefix (e.g., `QUANTOS_P2P_PORT=30304`).
-#[derive(Clone, Debug)]
-pub struct NodeConfig {
-    /// Path to the RocksDB database directory
-    pub db_path: String,
-    
-    /// P2P network listening port
-    pub p2p_port: u16,
-    
-    /// JSON-RPC server port
-    pub rpc_port: u16,
-    
-    /// Prometheus metrics port
-    pub metrics_port: u16,
-    
-    /// Number of validator committees
-    pub num_committees: usize,
-    
-    /// Validators per committee (BFT requires 3f+1)
-    pub validators_per_committee: usize,
-    
-    /// Number of shards for parallel execution
-    pub num_shards: usize,
-    
-    /// Committee rotation interval in milliseconds
-    pub committee_rotation_ms: u64,
-    
-    /// Checkpoint interval in DAG vertices
-    pub checkpoint_interval: u64,
-    
-    /// Maximum parent references per DAG vertex
-    pub max_dag_parents: usize,
-    
-    /// Minimum parent references per DAG vertex
-    pub min_dag_parents: usize,
-    
-    /// Enable dynamic sharding
-    pub dynamic_sharding: bool,
-    
-    /// Minimum shards when dynamic sharding is enabled
-    pub min_shards: usize,
-    
-    /// Maximum shards when dynamic sharding is enabled
-    pub max_shards: usize,
-    
-    /// Enable sidechain support
-    pub sidechains_enabled: bool,
-    
-    /// Maximum number of sidechains
-    pub max_sidechains: usize,
-
-    /// Optional L0 finality hub configuration
-    pub l0_config: crate::l0::L0Config,
-
-    /// Whether STACC requires sender activation before admission.
-    /// Mainnet defaults to true, testnet/devnet default to false.
-    pub stacc_require_activation: bool,
-
-    /// Optional confidential-mode (privacy) configuration. Disabled by default.
-    pub privacy_config: crate::privacy::PrivacyConfig,
-}
-
 impl NodeConfig {
     fn env_bool(name: &str) -> Option<bool> {
         let raw = std::env::var(name).ok()?;
@@ -481,6 +475,7 @@ impl NodeConfig {
             },
             stacc_require_activation,
             privacy_config: Self::privacy_from_env(),
+            network_name: network_name.to_string(),
         }
     }
 
@@ -535,13 +530,9 @@ impl NodeConfig {
             },
             stacc_require_activation: Self::env_bool("QUANTOS_STACC_REQUIRE_ACTIVATION").unwrap_or(true),
             privacy_config: Self::privacy_from_env(),
+            network_name: std::env::var("QUANTOS_NETWORK")
+                .unwrap_or_else(|_| "testnet".to_string()),
         }
-    }
-}
-
-impl Default for NodeConfig {
-    fn default() -> Self {
-        Self::from_env()
     }
 }
 
@@ -664,55 +655,118 @@ fn export_genesis(output: &str, network: &str) -> Result<()> {
     Ok(())
 }
 
-/// Generates a new validator key
-fn generate_validator_key(output: &str) -> Result<()> {
-    use crate::crypto::DilithiumKeypair;
-    use crate::types::address_to_qts;
-    
-    println!("🔑 Generating new Dilithium-3 validator key...");
-    
-    let keypair = DilithiumKeypair::generate()
-        .map_err(|e| anyhow::anyhow!("Failed to generate keypair: {:?}", e))?;
-    let public_key = &keypair.public_key;
-    let secret_key = &keypair.secret_key;
-    
-    // Derive address from public key
-    let address = crate::types::hash_data(public_key);
-    let qts_address = address_to_qts(&address);
-    
-    // Create key file structure
-    let key_data = serde_json::json!({
-        "type": "dilithium3",
-        "public_key": hex::encode(&public_key),
-        "secret_key": hex::encode(&secret_key),
-        "address": qts_address.clone(),
-        "address_hex": hex::encode(&address),
-    });
-    
-    // Create parent directories
-    if let Some(parent) = std::path::Path::new(output).parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    
-    std::fs::write(output, serde_json::to_string_pretty(&key_data)?)?;
-    
-    // Set file permissions (Unix only)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(output, std::fs::Permissions::from_mode(0o600))?;
-    }
-    
+/// Generates a full validator key set (Dilithium + VRF + ML-DSA-65).
+fn generate_validator_keys(output: &str, name: Option<&str>) -> Result<()> {
+    println!("🔑 Generating post-quantum validator key set...");
+
+    let keyset = ValidatorKeySet::generate(name.map(|s| s.to_string()))
+        .map_err(|e| anyhow::anyhow!("Failed to generate validator keys: {}", e))?;
+    keyset.to_file(output)
+        .map_err(|e| anyhow::anyhow!("Failed to save validator keys: {}", e))?;
+
     println!("");
-    println!("✅ Validator key generated!");
+    println!("✅ Validator key set generated!");
     println!("");
-    println!("   Address:    {}", qts_address);
-    println!("   Public Key: {}...", hex::encode(&public_key[..32]));
+    println!("   Address:    {}", keyset.address);
+    println!("   Signing:    {}...", &keyset.signing.public_key[..std::cmp::min(32, keyset.signing.public_key.len())]);
+    println!("   VRF:        {}...", &keyset.vrf.public_key[..std::cmp::min(32, keyset.vrf.public_key.len())]);
+    println!("   Finality:   {}...", &keyset.finality.public_key[..std::cmp::min(32, keyset.finality.public_key.len())]);
     println!("   Key File:   {}", output);
     println!("");
     println!("⚠️  Keep your key file secure! Never share your secret key.");
     println!("");
-    
+
+    Ok(())
+}
+
+/// Creates a genesis file from a list of validator key files.
+fn create_genesis_from_keys(
+    network: &str,
+    output: &str,
+    validator_paths: &[String],
+    stake_qts: u128,
+    commission_bps: u16,
+) -> Result<()> {
+    if validator_paths.is_empty() {
+        anyhow::bail!("At least one validator key file is required");
+    }
+
+    let network_id = match network.to_lowercase().as_str() {
+        "mainnet" => NetworkId::Mainnet,
+        "testnet" => NetworkId::Testnet,
+        "devnet" => NetworkId::Devnet,
+        _ => NetworkId::Testnet,
+    };
+
+    let stake = stake_qts * 10u128.pow(18);
+    let mut validators = Vec::new();
+    for path in validator_paths {
+        let keyset = ValidatorKeySet::from_file(path)
+            .map_err(|e| anyhow::anyhow!("Failed to load validator key file {}: {}", path, e))?;
+        validators.push(GenesisValidator {
+            address: keyset.address_hex,
+            public_key: keyset.signing.public_key,
+            stake,
+            name: keyset.name,
+            commission_bps,
+        });
+    }
+
+    let chain = match network_id {
+        NetworkId::Mainnet => crate::genesis::ChainConfig::default(),
+        NetworkId::Testnet => crate::genesis::ChainConfig {
+            chain_id: 2,
+            block_time_ms: 200,
+            initial_shards: 4,
+            dynamic_sharding: true,
+            min_shards: 1,
+            max_shards: 10_000,
+            min_validator_stake: 10_000 * 10u128.pow(18),
+            ..Default::default()
+        },
+        NetworkId::Devnet => crate::genesis::ChainConfig {
+            chain_id: 3,
+            block_time_ms: 200,
+            initial_shards: 2,
+            dynamic_sharding: true,
+            min_shards: 1,
+            max_shards: 1_000,
+            min_validator_stake: 1000 * 10u128.pow(18),
+            epoch_length: 16,
+            unbonding_period_seconds: 300,
+            ..Default::default()
+        },
+        NetworkId::Custom(id) => crate::genesis::ChainConfig {
+            chain_id: id,
+            ..Default::default()
+        },
+    };
+
+    let genesis = GenesisConfig {
+        network: network_id,
+        genesis_time: chrono::Utc::now().timestamp() as u64,
+        chain,
+        validators,
+        allocations: vec![],
+        system_contracts: vec![],
+        extra_data: Some(format!("Quantos {} Genesis", network_id.name())),
+    };
+
+    genesis.validate()
+        .map_err(|e| anyhow::anyhow!("Genesis validation failed: {}", e))?;
+    genesis.to_file(output)
+        .map_err(|e| anyhow::anyhow!("Failed to write genesis file: {}", e))?;
+
+    println!("");
+    println!("✅ Genesis created!");
+    println!("");
+    println!("   Network:      {}", genesis.network.name());
+    println!("   Chain ID:     {}", genesis.chain.chain_id);
+    println!("   Validators:   {}", genesis.validators.len());
+    println!("   Genesis Hash: 0x{}", hex::encode(&genesis.genesis_hash()[..8]));
+    println!("   Output:       {}", output);
+    println!("");
+
     Ok(())
 }
 
@@ -731,7 +785,7 @@ fn show_info() -> Result<()> {
     println!("");
     println!("═══════════════════════════════════════════════════════════════");
     println!("  Features:");
-    println!("  ├─ Post-Quantum Cryptography (Dilithium-3, SPHINCS+, Falcon)");
+    println!("  ├─ Post-Quantum Cryptography (Dilithium-3, SPHINCS+, ML-DSA-65)");
     println!("  ├─ DAG-based Consensus");
     println!("  ├─ Dynamic Sharding (up to 10,000 shards)");
     println!("  ├─ ~100M TPS theoretical throughput");

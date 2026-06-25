@@ -16,6 +16,8 @@ struct PeerStoreFile {
     banned: Vec<String>,
     /// Base58 PeerId -> reputation score.
     reputation: HashMap<String, i32>,
+    /// Known peer multiaddrs discovered from previous sessions.
+    known_peers: Vec<String>,
 }
 
 fn default_path(db_path: &str) -> PathBuf {
@@ -26,6 +28,7 @@ pub struct PeerStore {
     path: PathBuf,
     banned: Arc<RwLock<HashSet<PeerId>>>,
     reputation: Arc<RwLock<HashMap<PeerId, i32>>>,
+    known_peers: Arc<RwLock<Vec<String>>>,
 }
 
 impl PeerStore {
@@ -53,10 +56,13 @@ impl PeerStore {
                 }
             }
 
+            let known = file.known_peers;
+
             return Ok(Self {
                 path,
                 banned: Arc::new(RwLock::new(banned)),
                 reputation: Arc::new(RwLock::new(rep)),
+                known_peers: Arc::new(RwLock::new(known)),
             });
         }
 
@@ -68,6 +74,7 @@ impl PeerStore {
             path,
             banned: Arc::new(RwLock::new(HashSet::new())),
             reputation: Arc::new(RwLock::new(HashMap::new())),
+            known_peers: Arc::new(RwLock::new(Vec::new())),
         };
         st.flush()?;
         Ok(st)
@@ -91,6 +98,34 @@ impl PeerStore {
         self.flush()
     }
 
+    pub fn known_peers(&self) -> Vec<String> {
+        self.known_peers.read().clone()
+    }
+
+    pub fn add_known_peer(&self, addr: String) -> NetworkResult<()> {
+        let mut peers = self.known_peers.write();
+        if !peers.contains(&addr) {
+            peers.push(addr);
+        }
+        self.flush()
+    }
+
+    pub fn add_known_peers(&self, addrs: Vec<String>) -> NetworkResult<()> {
+        let mut peers = self.known_peers.write();
+        for addr in addrs {
+            if !peers.contains(&addr) {
+                peers.push(addr);
+            }
+        }
+        self.flush()
+    }
+
+    pub fn remove_known_peer(&self, addr: &str) -> NetworkResult<()> {
+        let mut peers = self.known_peers.write();
+        peers.retain(|p| p != addr);
+        self.flush()
+    }
+
     fn flush(&self) -> NetworkResult<()> {
         let banned: Vec<String> = self.banned.read().iter().map(|p| p.to_string()).collect();
         let reputation: HashMap<String, i32> = self
@@ -99,7 +134,12 @@ impl PeerStore {
             .iter()
             .map(|(k, v)| (k.to_string(), *v))
             .collect();
-        let file = PeerStoreFile { banned, reputation };
+        let known_peers: Vec<String> = self.known_peers.read().clone();
+        let file = PeerStoreFile {
+            banned,
+            reputation,
+            known_peers,
+        };
         let out =
             serde_json::to_string_pretty(&file).map_err(|e| NetworkError::SerializationError(e.to_string()))?;
         fs::write(&self.path, out).map_err(|e| NetworkError::IoError(e.to_string()))?;

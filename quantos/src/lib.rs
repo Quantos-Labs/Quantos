@@ -1,7 +1,7 @@
 //! # Quantos - Post-Quantum L1 Blockchain
 //!
 //! Quantos is a revolutionary Layer 1 blockchain featuring:
-//! - **Post-Quantum Cryptography**: Dilithium-3, SPHINCS+, Falcon-512
+//! - **Post-Quantum Cryptography**: Dilithium-3, SPHINCS+, ML-DSA-65
 //! - **DAG-based Consensus**: Parallel transaction processing
 //! - **Massive Parallelization**: 1000+ shards, optimistic execution
 //! - **Dynamic Sharding**: Auto-scaling based on load
@@ -12,7 +12,7 @@
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────┐
 //! │                    Layer 3: Finality Anchor                  │
-//! │         Falcon-512 checkpoints, deterministic finality       │
+//! │         ML-DSA-65 checkpoints, deterministic finality        │
 //! ├─────────────────────────────────────────────────────────────┤
 //! │                 Layer 2: Quantum Committees                  │
 //! │        1000 committees × 21 validators, VRF rotation         │
@@ -59,11 +59,12 @@ pub mod genesis;
 pub mod stacc;
 pub mod l0;
 pub mod privacy;
+pub mod validator_keys;
 
 /// Prelude module for convenient imports
 pub mod prelude {
     pub use crate::consensus::QuantosConsensus;
-    pub use crate::crypto::{DilithiumKeypair, FalconKeypair, VRFKeypair};
+    pub use crate::crypto::{DilithiumKeypair, MlDsa65Keypair, VRFKeypair};
     pub use crate::state::StateManager;
     pub use crate::storage::Storage;
     pub use crate::types::*;
@@ -99,6 +100,9 @@ pub struct NodeConfig {
     
     /// JSON-RPC server port
     pub rpc_port: u16,
+
+    /// Prometheus metrics port
+    pub metrics_port: u16,
     
     /// Number of validator committees (default: 1000)
     pub num_committees: usize,
@@ -148,6 +152,10 @@ pub struct NodeConfig {
     /// Optional confidential-mode (privacy) configuration. Disabled by default.
     #[serde(default)]
     pub privacy_config: crate::privacy::PrivacyConfig,
+
+    /// Network name (mainnet, testnet, devnet) used for bootnode selection.
+    #[serde(default)]
+    pub network_name: String,
 }
 
 impl Default for NodeConfig {
@@ -156,6 +164,7 @@ impl Default for NodeConfig {
             db_path: "./data/quantos".to_string(),
             p2p_port: 30303,
             rpc_port: 8545,
+            metrics_port: 9615,
             num_committees: 1000,
             validators_per_committee: 21,
             num_shards: 1000,
@@ -175,6 +184,7 @@ impl Default for NodeConfig {
             },
             stacc_require_activation: true,
             privacy_config: crate::privacy::PrivacyConfig::default(),
+            network_name: "testnet".to_string(),
         }
     }
 }

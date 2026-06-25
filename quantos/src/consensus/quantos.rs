@@ -10,7 +10,7 @@ use crate::consensus::{
     FinalizedCheckpoint, CrossShardAtomicProtocol, ShardOperation, AtomicResult,
     AtomicStatus,
 };
-use crate::crypto::{DilithiumKeypair, FalconKeypair, VRFKeypair};
+use crate::crypto::{DilithiumKeypair, MlDsa65Keypair, VRFKeypair};
 use crate::dag::DAGGraph;
 use crate::l0::{CheckpointGossip, CheckpointPool, FinalityHub, HttpRelayTransport, LightClientRegistry, RelayDispatcher, ChainRegistry, ValidatorSetSnapshot, SubnetManager, SubnetId, SubnetConfig};
 use crate::l0::hub::SignatureContribution;
@@ -55,7 +55,7 @@ pub struct QuantosConsensus {
 struct ValidatorKeys {
     signing_key: DilithiumKeypair,
     vrf_key: VRFKeypair,
-    finality_key: FalconKeypair,
+    finality_key: MlDsa65Keypair,
     address: Address,
 }
 
@@ -179,40 +179,76 @@ impl QuantosConsensus {
 
     pub fn set_validator_keys(
         &mut self,
+        genesis: &crate::genesis::GenesisConfig,
         signing_key: DilithiumKeypair,
         vrf_key: VRFKeypair,
-        finality_key: FalconKeypair,
+        finality_key: MlDsa65Keypair,
     ) {
         let address = signing_key.address();
+        let address_hex = hex::encode(&address);
 
-        // Register validator in committee manager for single-node testnet.
-        // Validator registration is a local node bootstrap operation here; the
-        // public auth-token getter has intentionally been removed.
-        let validator = Validator {
-            address,
-            public_key: signing_key.public_key.clone(),
-            finality_public_key: finality_key.public_key.clone(),
-            stake: crate::types::Amount(1_000_000),
-            commission_rate: 0,
-            active: true,
-            jailed: false,
-            slash_count: 0,
-            last_active_slot: 0,
-            vrf_public_key: vrf_key.public_key().to_vec(),
-        };
-        if let Err(e) = self.committee_manager.add_validator(validator) {
-            tracing::warn!("Failed to register validator: {}", e);
+        // Register all genesis validators in the committee manager so the
+        // network starts with the exact validator set defined by genesis.
+        for gv in &genesis.validators {
+            let Ok(vaddr) = crate::genesis::GenesisConfig::parse_address(&gv.address) else {
+                continue;
+            };
+            let Ok(vpubkey) = hex::decode(&gv.public_key) else {
+                continue;
+            };
+            let validator = Validator {
+                address: vaddr,
+                public_key: vpubkey,
+                finality_public_key: Vec::new(), // populated later when finality key is known
+                stake: crate::types::Amount(gv.stake),
+                commission_rate: gv.commission_bps,
+                active: true,
+                jailed: false,
+                slash_count: 0,
+                last_active_slot: 0,
+                vrf_public_key: Vec::new(), // populated below
+            };
+            if let Err(e) = self.committee_manager.add_validator(validator) {
+                tracing::warn!("Failed to register genesis validator {}: {}", gv.address, e);
+            }
         }
 
-        // Authorize this validator to create vertices in the DAG
-        self.dag.add_authorized_creator(address);
+        // If this node owns one of the genesis validators, add its VRF/ML-DSA-65
+        // public keys and authorize it to create vertices.
+        let mut local_vrf_pubkey = Vec::new();
+        for gv in &genesis.validators {
+            if gv.address.eq_ignore_ascii_case(&address_hex) {
+                local_vrf_pubkey = vrf_key.public_key().to_vec();
+                self.committee_manager.update_validator_vrf(&address, local_vrf_pubkey.clone());
+                self.committee_manager.update_validator_finality_key(&address, finality_key.public_key.clone());
+                self.dag.add_authorized_creator(address);
+                tracing::info!("Local validator {} authorized from genesis", address_hex);
+                break;
+            }
+        }
 
-        // Initialize Threshold QR-VRF with this validator's VRF public key.
-        // In a multi-validator network the full validator set public keys would
-        // be collected here; for single-node testnet we seed with one key.
-        let vrf_pubkey = vrf_key.public_key().to_vec();
-        if let Err(e) = self.committee_manager.initialize_threshold_vrf(vec![vrf_pubkey]) {
-            tracing::warn!("Threshold VRF init: {}", e);
+        if local_vrf_pubkey.is_empty() {
+            tracing::warn!(
+                "Local validator address {} is not present in genesis; node will not produce vertices",
+                address_hex
+            );
+        }
+
+        // Collect all VRF public keys from genesis validators that have one.
+        let vrf_pubkeys: Vec<Vec<u8>> = genesis.validators.iter()
+            .filter_map(|gv| {
+                if gv.address.eq_ignore_ascii_case(&address_hex) {
+                    Some(vrf_key.public_key().to_vec())
+                } else {
+                    None // unknown VRF keys for other validators until discovered on the network
+                }
+            })
+            .collect();
+
+        if !vrf_pubkeys.is_empty() {
+            if let Err(e) = self.committee_manager.initialize_threshold_vrf(vrf_pubkeys) {
+                tracing::warn!("Threshold VRF init: {}", e);
+            }
         }
 
         self.validator_keys = Some(ValidatorKeys {
@@ -324,7 +360,7 @@ impl QuantosConsensus {
 
         let contributions: Vec<SignatureContribution> = finalized.signatures.iter().map(|s| SignatureContribution {
             validator: s.validator,
-            algo: PqcSignatureAlgo::Falcon512,
+            algo: PqcSignatureAlgo::MlDsa65,
             signature: s.signature.clone(),
         }).collect();
 
@@ -601,10 +637,10 @@ impl QuantosConsensus {
     /// Sign an external checkpoint if this node is a validator
     pub fn sign_external_checkpoint(&self, digest: &Hash) -> Option<SignatureContribution> {
         let keys = self.validator_keys.as_ref()?;
-        
-        // Sign with Falcon (preferred) or Dilithium
+
+        // Sign with ML-DSA-65 (finality key) or Dilithium (signing key)
         let (algo, signature) = if let Ok(sig) = keys.finality_key.sign(digest) {
-            (PqcSignatureAlgo::Falcon512, sig)
+            (PqcSignatureAlgo::MlDsa65, sig)
         } else if let Ok(sig) = keys.signing_key.sign(digest) {
             (PqcSignatureAlgo::Dilithium3, sig)
         } else {

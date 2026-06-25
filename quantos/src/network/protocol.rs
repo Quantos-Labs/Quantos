@@ -29,6 +29,8 @@ pub struct P2PConfig {
     pub connection_timeout: u64,
     /// Bootstrap nodes: `/ip4|ip6/.../tcp/PORT/p2p/<PeerId>` with Dilithium-derived [`PeerId`].
     pub bootstrap_nodes: Vec<String>,
+    /// Known peer addresses persisted from previous sessions.
+    pub known_peer_addresses: Vec<String>,
 }
 
 impl Default for P2PConfig {
@@ -44,6 +46,7 @@ impl Default for P2PConfig {
             ping_interval: 30,
             connection_timeout: 30,
             bootstrap_nodes: Vec::new(),
+            known_peer_addresses: Vec::new(),
         }
     }
 }
@@ -195,6 +198,68 @@ impl P2PConfig {
                 if !s.is_empty() {
                     self.bootstrap_nodes.push(s.to_string());
                 }
+            }
+        }
+    }
+
+    /// Load bootstrap nodes from `config/bootnodes.json` for the given network.
+    /// Falls back to `QUANTOS_BOOTNODES_PATH` env var for the config file path.
+    pub fn merge_bootstrap_from_file(&mut self, network_name: &str) {
+        let default_path = std::path::PathBuf::from("config/bootnodes.json");
+        let path = std::env::var("QUANTOS_BOOTNODES_PATH")
+            .map(|p| std::path::PathBuf::from(p))
+            .unwrap_or(default_path);
+
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("Bootnode file {} not readable: {}", path.display(), e);
+                return;
+            }
+        };
+
+        let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Failed to parse bootnode file {}: {}", path.display(), e);
+                return;
+            }
+        };
+
+        let Some(networks) = parsed.get("networks") else {
+            return;
+        };
+
+        let Some(net) = networks.get(network_name) else {
+            tracing::warn!("No bootnodes defined for network '{}' in {}", network_name, path.display());
+            return;
+        };
+
+        let Some(peers) = net.get("peers").and_then(|p| p.as_array()) else {
+            return;
+        };
+
+        for peer in peers {
+            if let Some(addr) = peer.get("addr").and_then(|a| a.as_str()) {
+                if !self.bootstrap_nodes.contains(&addr.to_string()) {
+                    self.bootstrap_nodes.push(addr.to_string());
+                }
+            }
+        }
+
+        tracing::info!(
+            "Loaded {} bootstrap nodes for '{}' from {}",
+            self.bootstrap_nodes.len(),
+            network_name,
+            path.display()
+        );
+    }
+
+    /// Merge known peer addresses persisted by the peer store.
+    pub fn merge_known_peers(&mut self, peers: &[String]) {
+        for p in peers {
+            if !self.bootstrap_nodes.contains(p) && !self.known_peer_addresses.contains(p) {
+                self.known_peer_addresses.push(p.clone());
             }
         }
     }

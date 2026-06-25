@@ -17,6 +17,21 @@ impl SphincsKeypair {
         })
     }
 
+    pub fn from_keys(public_key: Vec<u8>, secret_key: Vec<u8>) -> CryptoResult<Self> {
+        if public_key.len() != sphincs::public_key_bytes() {
+            return Err(CryptoError::InvalidPublicKey);
+        }
+        if secret_key.len() != sphincs::secret_key_bytes() {
+            return Err(CryptoError::InvalidPrivateKey);
+        }
+        // Validate that both keys parse correctly.
+        let _ = sphincs::PublicKey::from_bytes(&public_key)
+            .map_err(|_| CryptoError::InvalidPublicKey)?;
+        let _ = sphincs::SecretKey::from_bytes(&secret_key)
+            .map_err(|_| CryptoError::InvalidPrivateKey)?;
+        Ok(Self { public_key, secret_key })
+    }
+
     pub fn sign(&self, message: &[u8]) -> CryptoResult<Vec<u8>> {
         let sk = sphincs::SecretKey::from_bytes(&self.secret_key)
             .map_err(|_| CryptoError::InvalidPrivateKey)?;

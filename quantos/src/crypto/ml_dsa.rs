@@ -42,6 +42,30 @@ impl MlDsa65Keypair {
         })
     }
 
+    pub fn from_secret_key(secret_key: &[u8]) -> CryptoResult<Self> {
+        let expected_size = mldsa65::secret_key_bytes();
+        if secret_key.len() != expected_size {
+            return Err(CryptoError::InvalidPrivateKey);
+        }
+
+        let sk = mldsa65::SecretKey::from_bytes(secret_key)
+            .map_err(|_| CryptoError::InvalidPrivateKey)?;
+
+        let pk_size = mldsa65::public_key_bytes();
+        if secret_key.len() < pk_size {
+            return Err(CryptoError::InvalidPrivateKey);
+        }
+
+        let pk_bytes = &secret_key[secret_key.len() - pk_size..];
+        let pk = mldsa65::PublicKey::from_bytes(pk_bytes)
+            .map_err(|_| CryptoError::InvalidPublicKey)?;
+
+        Ok(Self {
+            public_key: pk.as_bytes().to_vec(),
+            secret_key: sk.as_bytes().to_vec(),
+        })
+    }
+
     pub fn sign(&self, message: &[u8]) -> CryptoResult<Vec<u8>> {
         let sk = mldsa65::SecretKey::from_bytes(&self.secret_key)
             .map_err(|_| CryptoError::InvalidPrivateKey)?;

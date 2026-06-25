@@ -317,6 +317,20 @@ impl CommitteeManager {
         set.validators.retain(|v| &v.address != address);
     }
 
+    pub fn update_validator_vrf(&self, address: &Address, vrf_public_key: Vec<u8>) {
+        let mut set = self.validator_set.write();
+        if let Some(v) = set.get_validator_mut(address) {
+            v.vrf_public_key = vrf_public_key;
+        }
+    }
+
+    pub fn update_validator_finality_key(&self, address: &Address, finality_public_key: Vec<u8>) {
+        let mut set = self.validator_set.write();
+        if let Some(v) = set.get_validator_mut(address) {
+            v.finality_public_key = finality_public_key;
+        }
+    }
+
     pub fn get_validator_set(&self) -> ValidatorSet {
         self.validator_set.read().clone()
     }

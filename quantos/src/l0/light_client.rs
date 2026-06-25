@@ -2,7 +2,7 @@
 //!
 //! Flow: source chain signs with its native crypto (ECDSA, Ed25519, BLS) →
 //!       light client verifies those signatures →
-//!       Quantos validators sign L0FinalityProof with Falcon-512 (PQC).
+//!       Quantos validators sign L0FinalityProof with ML-DSA-65 (PQC).
 use async_trait::async_trait;
 use sha2::{Digest as Sha2Digest, Sha256};
 use sha3::{Digest as Sha3Digest, Keccak256};
