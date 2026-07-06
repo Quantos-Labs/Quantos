@@ -6,7 +6,7 @@ const steps = [
     num: '01',
     icon: Pen,
     title: 'Create & edit',
-    desc: 'Upload content or record directly in Vybss. Kai AI instantly adds captions, extracts highlights, enhances audio, and auto-crops for every format — Stories, Clips, and Live.',
+    desc: 'Upload content or record directly in the app. Kai AI instantly adds captions, extracts highlights, enhances audio, and auto-crops for every format — Stories, Clips, and Live.',
     color: '#00C2FF',
     tags: ['AI captions', 'Smart crop', 'Audio enhance', 'Highlight reel'],
   },

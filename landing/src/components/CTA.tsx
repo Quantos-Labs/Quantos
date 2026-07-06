@@ -4,7 +4,7 @@ import { ArrowUpRight, Github } from 'lucide-react'
 const actionCards = [
   {
     title: 'Start building',
-    desc: 'Build, launch, and scale products with Quantos architecture and Vybss service rails.',
+    desc: 'Build, launch, and scale products with Quantos architecture and service rails.',
     href: '#architecture',
     label: 'Read launch playbook',
   },

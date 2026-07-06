@@ -57,7 +57,7 @@ export default function NetworkStatus() {
                   color: '#22C55E',
                 },
                 {
-                  title: 'Vybss service stack — live product surfaces',
+                  title: 'Product surfaces — live modules and flows',
                   status: 'active',
                   color: '#FBBF24',
                 },

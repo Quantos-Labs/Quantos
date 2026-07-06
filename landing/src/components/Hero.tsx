@@ -37,14 +37,13 @@ export default function Hero() {
             >
               <span className="block">Build full stack</span>
               <span className="block">with Quantos</span>
-              <span className="block text-cyan-300">and Vybss.</span>
+              <span className="block text-cyan-300">post-quantum DAG.</span>
             </h1>
 
             <p className="text-[#AAB5CB] max-w-2xl mt-8 text-[18px] leading-[1.6]">
               Quantos delivers the base infrastructure for a new product economy — including a
-              Layer 0 PQC finality hub that anchors external chains. Vybss is the service surface
-              built on top. The testnet is not launched yet, but modules, product flows and
-              architecture are already visible.
+              Layer 0 PQC finality hub that anchors external chains. The testnet is not launched
+              yet, but modules, product flows and architecture are already visible.
             </p>
 
             <div className="flex flex-wrap items-center gap-3 mt-10">

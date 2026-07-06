@@ -40,7 +40,7 @@ const industries = [
   },
 ]
 
-export default function VybssSection() {
+export default function SolutionsSection() {
   return (
     <section id="services" className="relative py-28 px-6 border-t border-white/[0.04] overflow-hidden">
       <div className="liquid-blob liquid-blob-c" />
@@ -65,8 +65,8 @@ export default function VybssSection() {
           </h2>
           <p className="text-[#8893AC] text-[17px] leading-[1.55]">
             Quantos post-quantum DAG infrastructure supports vertical products from AI
-            to payments and DeFi. Vybss demonstrates how quantum-safe primitives turn into
-            user-facing services with shared identity, wallet, and security behavior.
+            to payments and DeFi. Quantum-safe primitives turn into user-facing services
+            with shared identity, wallet, and security behavior.
           </p>
         </motion.div>
 

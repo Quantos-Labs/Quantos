@@ -8,7 +8,7 @@ const questions = [
   },
   {
     q: 'Is the Quantos testnet live?',
-    a: 'Not yet. Public network access is gated by audits, stability, and rollout readiness. Product surfaces are already accessible via Vybss.',
+    a: 'Not yet. Public network access is gated by audits, stability, and rollout readiness. Product surfaces and architecture are already visible.',
   },
   {
     q: 'What makes Quantos quantum-safe?',
@@ -16,7 +16,7 @@ const questions = [
   },
   {
     q: 'Can I build on a quantum-safe Layer 1 before testnet?',
-    a: 'Yes. The Vybss service stack exposes wallet, identity, payment and AI modules today on Quantos post-quantum DAG primitives. Integrate now, settle on mainnet when the network opens.',
+    a: 'Yes. Quantos exposes wallet, identity, payment and AI modules today on its post-quantum DAG primitives. Integrate now, settle on mainnet when the network opens.',
   },
   {
     q: 'How is settlement coordinated on Quantos?',

@@ -3,7 +3,6 @@ import Hero from './components/Hero'
 import HowItWorks from './components/HowItWorks'
 import Stats from './components/Stats'
 import QuantosSection from './components/QuantosSection'
-import VybssSection from './components/VybssSection'
 import BuilderFlow from './components/BuilderFlow'
 import L0Section from './components/L0Section'
 import NetworkStatus from './components/NetworkStatus'
@@ -32,9 +31,6 @@ export default function App() {
         </div>
         <div className="section-stage section-stage-wave">
           <QuantosSection />
-        </div>
-        <div className="section-stage section-stage-soft">
-          <VybssSection />
         </div>
         <div className="section-stage section-stage-soft">
           <BuilderFlow />

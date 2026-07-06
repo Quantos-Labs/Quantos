@@ -14,7 +14,7 @@ const steps = [
   {
     n: '03',
     t: 'Ship the surface',
-    d: 'Vybss product flows expose your stack as a polished user experience.',
+    d: 'Product flows expose your stack as a polished user experience.',
   },
   {
     n: '04',
