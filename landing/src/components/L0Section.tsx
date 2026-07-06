@@ -6,7 +6,7 @@ const l0Modules = [
     metric: 'L0-01',
     title: 'PQC Finality Proofs',
     name: 'Layer 0 Hub',
-    desc: 'Post-quantum signature aggregation with Falcon-512 and Dilithium-3. Finality checkpoints are cryptographically anchored and verifiable by any external chain.',
+    desc: 'Post-quantum signature aggregation with Dilithium-3. Finality checkpoints are cryptographically anchored and verifiable by any external chain.',
     accent: '#22D3EE',
     icon: Shield,
   },
@@ -53,7 +53,7 @@ const l0Modules = [
 ]
 
 const l0Pills = [
-  'Falcon-512', 'Dilithium-3', 'STACC', 'Subnet Leasing', 'Double-Staking',
+  'Dilithium-3', 'STACC', 'Subnet Leasing', 'Double-Staking',
   'Light Clients', 'Cross-Shard STARKs', 'Recursive Proofs', 'Private Transfer',
   'Winterfell', 'Batched Verification',
 ]

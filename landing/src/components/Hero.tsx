@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { ArrowUpRight } from 'lucide-react'
+import SphereGlobe from './SphereGlobe'
 const railTags = ['AI', 'Payments', 'DeFi', 'Trading', 'Social', 'Wallet', 'Identity', 'Security']
 
 export default function Hero() {
@@ -74,40 +75,7 @@ export default function Hero() {
           </div>
 
           <div className="lg:pl-4">
-            <div className="gradient-border overflow-hidden">
-              <div className="p-7 border-b border-white/[0.06]">
-                <p className="h-eyebrow mb-3">The economy, rebuilt on integrity</p>
-                <h3 className="text-[#F0F4FF] text-[28px] font-semibold tracking-[-0.03em] leading-[1.15]">
-                  Ownable assets, verifiable flows, business-ready infrastructure.
-                </h3>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2">
-                {[
-                  {
-                    title: 'Ownable by design',
-                    text: 'Assets, permissions, and service actions are modeled for clear ownership.',
-                  },
-                  {
-                    title: 'Verifiable by default',
-                    text: 'Execution, signatures, and status exposed with transparent checkpoints.',
-                  },
-                  {
-                    title: 'Business ready',
-                    text: 'Reliability and integration pathways prioritized before public release.',
-                  },
-                  {
-                    title: 'Composable and scalable',
-                    text: 'Modules compose into products without redesigning the core rails.',
-                  },
-                ].map((item, i) => (
-                  <div key={item.title} className={`p-5 md:p-6 border-t border-white/[0.06] ${i % 2 === 0 ? 'md:border-r md:border-white/[0.06]' : ''}`}>
-                    <p className="h-eyebrow mb-2">{item.title}</p>
-                    <p className="text-[13.5px] text-[#AAB5CB] leading-[1.6]">{item.text}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <SphereGlobe />
           </div>
         </div>
 

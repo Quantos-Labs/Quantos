@@ -4,7 +4,7 @@ import { useEffect } from 'react'
 const questions = [
   {
     q: 'What is a post-quantum DAG?',
-    a: 'A post-quantum DAG uses cryptographic algorithms resistant to quantum computer attacks. Quantos implements NIST-standardized PQC signatures (Dilithium, Falcon-512, SPHINCS+) alongside classical cryptography to ensure long-term security.',
+    a: 'A post-quantum DAG uses cryptographic algorithms resistant to quantum computer attacks. Quantos implements NIST-standardized PQC signatures (Dilithium, SPHINCS+) alongside classical cryptography to ensure long-term security.',
   },
   {
     q: 'Is the Quantos testnet live?',
@@ -12,7 +12,7 @@ const questions = [
   },
   {
     q: 'What makes Quantos quantum-safe?',
-    a: 'A hybrid signature path compatible with NIST PQC candidates (Dilithium, Falcon-512, SPHINCS+) sits alongside classical signatures, with an explicit migration roadmap toward full quantum resistance.',
+    a: 'A hybrid signature path compatible with NIST PQC candidates (Dilithium, SPHINCS+) sits alongside classical signatures, with an explicit migration roadmap toward full quantum resistance.',
   },
   {
     q: 'Can I build on a quantum-safe Layer 1 before testnet?',

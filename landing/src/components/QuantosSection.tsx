@@ -54,7 +54,7 @@ const stack = [
 ]
 
 const techPills = [
-  'L0 Finality Hub', 'STACC', 'Subnets', 'Falcon-512', 'Dilithium',
+  'L0 Finality Hub', 'STACC', 'Subnets', 'Dilithium',
   'DAG consensus', 'WASM', 'NIST PQC', 'SPHINCS+', 'zk-STARKs',
   'Hybrid crypto', 'Sharding', 'libp2p', 'QUIC', 'Reed-Solomon',
   'Proof systems', 'State sync', 'Rust', '.qts domains',

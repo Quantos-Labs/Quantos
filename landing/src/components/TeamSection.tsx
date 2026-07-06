@@ -4,13 +4,11 @@ import { Linkedin, Github } from 'lucide-react'
 const teamMembers = [
   { name: 'Yacine Wayle', role: 'CEO', initials: 'YW', photo: '/team/yacine-wayle.png', bio: 'Developed the entire Quantos stack single-handedly. DAG expert and product visionary.', linkedin: 'https://www.linkedin.com/in/yacine-wayle-bb0114217/', github: 'https://github.com/Wayleyy' },
   { name: 'Yann Mastin', role: 'COO', initials: 'YM', photo: '/team/yann-mastin.png', bio: 'Former Nomiks. Tokenomics expert with deep experience in incentive design and DeFi protocols.', linkedin: 'https://www.linkedin.com/in/yannmastin/' },
-  { name: 'Imane El Yaqoti', role: 'CFO', initials: 'IE', photo: '/team/imane-elyaqoti.png', bio: 'Several years of financial operations experience in tech and Web3 ventures.', linkedin: 'https://www.linkedin.com/in/imane-ey-7aa001227/' },
+  { name: 'Imane EY', role: 'CFO', initials: 'IE', photo: '/team/imane-elyaqoti.png', bio: 'Several years of financial operations experience in tech and Web3 ventures.', linkedin: 'https://www.linkedin.com/in/imane-ey-7aa001227/' },
   { name: 'Jean-Jacques Quisquater', role: 'Advisor', initials: 'JQ', photo: '/team/jean-jacques-quisquater.png', bio: 'Mentioned in the Bitcoin whitepaper by Satoshi Nakamoto. Pioneer in cryptography and security.', linkedin: 'https://www.linkedin.com/in/jean-jacques-quisquater-3671682/' },
   { name: 'Laurent Leloup', role: 'Managing Director', initials: 'LL', photo: '/team/laurent-leloup.png', bio: 'Quantum computing expert, author and thought leader in quantum-safe technologies.', linkedin: 'https://www.linkedin.com/in/laurentleloup001/' },
-  { name: 'Lionel Klein', role: 'Advisor', initials: 'LK', photo: '/team/lionel-klein.png', bio: 'Expert in digital sovereignty and critical infrastructure resilience.' },
-  { name: 'Maximiliano Beccera', role: 'CTO', initials: 'MB', bio: 'Expert in AI and blockchain. Oversees all technical architecture and engineering for Quantos.', linkedin: 'https://www.linkedin.com/in/maxbecerra/' },
   { name: 'Iliane Chikhaoui', role: 'Researcher', initials: 'IC', photo: '/team/iliane-chikhaoui.png', bio: 'Student at EM Lyon Business School. Research focus on post-quantum systems and tokenomics.', linkedin: 'https://www.linkedin.com/in/iliane-chikhaoui/' },
-  { name: 'Mounir Danyte', role: 'Advisor — Go-to-Market & Marketing', initials: 'MD', photo: '/team/mounir-danyte.png', bio: 'Go-to-market expert with several years of experience scaling Web3 and fintech products.', linkedin: 'https://www.linkedin.com/in/mounir-danyte/' },
+  { name: 'Mounir Danyte', role: 'CMO', initials: 'MD', photo: '/team/mounir-danyte.png', bio: 'Go-to-market expert with several years of experience scaling Web3 and fintech products.', linkedin: 'https://www.linkedin.com/in/mounir-danyte/' },
 ]
 
 export default function TeamSection() {

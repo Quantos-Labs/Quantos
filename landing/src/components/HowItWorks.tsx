@@ -14,7 +14,7 @@ const steps = [
     n: '02',
     title: 'L0 Finality Hub',
     subtitle: 'Cross-chain trust anchor',
-    desc: 'Quantos L0 does not compete with other chains — it finalizes them. Through post-quantum proofs (Falcon-512, Dilithium-3), sovereign subnets, and native light clients, Quantos acts as a universal trust anchor for Bitcoin, Ethereum, Tezos, Cardano, and more.',
+    desc: 'Quantos L0 does not compete with other chains — it finalizes them. Through post-quantum proofs (Dilithium-3), sovereign subnets, and native light clients, Quantos acts as a universal trust anchor for Bitcoin, Ethereum, Tezos, Cardano, and more.',
     accent: '#A78BFA',
     icon: Layers,
   },
