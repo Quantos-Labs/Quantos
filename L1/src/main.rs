@@ -42,7 +42,13 @@ mod standards;
 mod stacc;
 mod genesis;
 pub mod l0;
+mod privacy;
 mod validator_keys;
+mod config;
+
+pub use config::NodeConfig;
+pub use config::chain_id;
+pub use config::version;
 
 use std::time::Duration;
 use anyhow::Result;
@@ -201,7 +207,7 @@ async fn main() -> Result<()> {
             stake,
             commission_bps,
         }) => {
-            return create_genesis_from_keys(&network, &output, &validators, *stake, *commission_bps);
+            return create_genesis_from_keys(&network, &output, &validators, stake, commission_bps);
         }
         Some(Commands::Info) => {
             return show_info();
