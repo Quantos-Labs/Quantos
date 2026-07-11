@@ -53,8 +53,3 @@ dashmap = "5.5"
 parking_lot = "0.12"
 zeroize = { version = "1.7", features = ["derive"] }
 dotenvy = "0.15"
-
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1

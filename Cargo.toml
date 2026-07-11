@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "L1",
+    "quantos-wallet-core",
+    "quantos-wallet-server",
+    "quantos-l0-sdk",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Quantos Labs"]
+license = "MIT"
+repository = "https://github.com/Quantos-Labs/Quantos"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.release.package.quantos-wallet-core]
+opt-level = "s"

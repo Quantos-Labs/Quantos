@@ -29,7 +29,3 @@ pqc_dilithium = { version = "0.2", features = ["wasm"] }
 
 # WASM-compatible random
 getrandom = { version = "0.2", features = ["js"] }
-
-[profile.release]
-opt-level = "s"
-lto = true
