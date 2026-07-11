@@ -60,7 +60,6 @@ use crate::consensus::QuantosConsensus;
 use crate::genesis::{GenesisConfig, GenesisBuilder, GenesisValidator, NetworkId};
 use crate::network::P2PNetwork;
 use crate::validator_keys::ValidatorKeySet;
-use crate::NodeConfig;
 use crate::rpc::RpcServer;
 use crate::storage::Storage;
 use crate::state::StateManager;
@@ -473,6 +472,7 @@ impl NodeConfig {
             dynamic_sharding: genesis.chain.dynamic_sharding,
             min_shards: genesis.chain.min_shards as usize,
             max_shards: genesis.chain.max_shards as usize,
+            execution_threads: num_cpus::get(),
             sidechains_enabled: true,
             max_sidechains: 1000,
             l0_config: crate::l0::L0Config {
@@ -528,6 +528,7 @@ impl NodeConfig {
             dynamic_sharding: true,
             min_shards: 1,
             max_shards: 10_000,
+            execution_threads: num_cpus::get(),
             sidechains_enabled: true,
             max_sidechains: 1000,
             l0_config: crate::l0::L0Config {
