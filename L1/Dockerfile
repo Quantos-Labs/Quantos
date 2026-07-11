@@ -23,11 +23,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-# Copy workspace root manifest + lockfile
+# --------------------------------------------------------------------------
+# Step 1: Copy all Cargo.toml files for dependency caching
+# --------------------------------------------------------------------------
 COPY Cargo.toml Cargo.lock ./
-
-# Copy L1 crate manifest and create dummy sources for dependency caching
 COPY L1/Cargo.toml L1/Cargo.toml
+COPY quantos-wallet-core/Cargo.toml quantos-wallet-core/Cargo.toml
+COPY quantos-wallet-server/Cargo.toml quantos-wallet-server/Cargo.toml
+COPY quantos-l0-sdk/Cargo.toml quantos-l0-sdk/Cargo.toml
+
+# --------------------------------------------------------------------------
+# Step 2: Create dummy sources for all workspace members
+# --------------------------------------------------------------------------
 RUN mkdir -p L1/src/bin L1/benches && \
     echo 'fn main() { println!("placeholder"); }' > L1/src/main.rs && \
     echo 'fn main() { println!("placeholder"); }' > L1/src/cli.rs && \
@@ -36,19 +43,39 @@ RUN mkdir -p L1/src/bin L1/benches && \
     echo 'fn main() { println!("placeholder"); }' > L1/benches/raw_tps.rs && \
     echo 'fn main() { println!("placeholder"); }' > L1/benches/testnet_tps.rs && \
     echo 'fn main() { println!("placeholder"); }' > L1/benches/pqc_bloat.rs && \
-    echo 'fn main() { println!("placeholder"); }' > L1/benches/tps_throughput.rs
+    echo 'fn main() { println!("placeholder"); }' > L1/benches/tps_throughput.rs && \
+    mkdir -p quantos-wallet-core/src && \
+    echo 'pub fn placeholder() {}' > quantos-wallet-core/src/lib.rs && \
+    mkdir -p quantos-wallet-server/src && \
+    echo 'fn main() { println!("placeholder"); }' > quantos-wallet-server/src/main.rs && \
+    mkdir -p quantos-l0-sdk/src && \
+    echo 'pub fn placeholder() {}' > quantos-l0-sdk/src/lib.rs
 
-# Build deps only (layer caching)
-RUN cargo build --release -p quantos 2>/dev/null || true
+# --------------------------------------------------------------------------
+# Step 3: Build dependencies only (layer caching — this is the slow step)
+# --------------------------------------------------------------------------
+RUN cargo build --release 2>/dev/null || true
 
-# Copy full L1 source
+# --------------------------------------------------------------------------
+# Step 4: Copy real sources for all workspace members
+# --------------------------------------------------------------------------
 COPY L1/ L1/
+COPY quantos-wallet-core/src/ quantos-wallet-core/src/
+COPY quantos-wallet-server/src/ quantos-wallet-server/src/
+COPY quantos-l0-sdk/src/ quantos-l0-sdk/src/
 
-# Touch main files to force rebuild with real sources
-RUN touch L1/src/main.rs L1/src/cli.rs L1/src/solang_cli.rs
+# --------------------------------------------------------------------------
+# Step 5: Touch main files to force rebuild with real sources
+# --------------------------------------------------------------------------
+RUN touch L1/src/main.rs L1/src/cli.rs L1/src/solang_cli.rs && \
+    touch quantos-wallet-core/src/lib.rs && \
+    touch quantos-wallet-server/src/main.rs && \
+    touch quantos-l0-sdk/src/lib.rs
 
-# Build both binaries in release mode
-RUN cargo build --release -p quantos --bin quantos --bin quantos-cli
+# --------------------------------------------------------------------------
+# Step 6: Build all binaries in release mode
+# --------------------------------------------------------------------------
+RUN cargo build --release --bin quantos --bin quantos-cli
 
 # --------------------------------------------------------------------------
 # Stage 2: Runtime

@@ -1,0 +1,62 @@
+# Build artifacts
+target/
+**/target/
+
+# Node.js
+node_modules/
+**/node_modules/
+
+# Frontend build outputs
+dist/
+build/
+**/dist/
+**/build/
+
+# Environment & secrets
+.env
+.env.*
+**/.env
+**/.env.*
+
+# OS files
+.DS_Store
+**/.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+**/.git/
+
+# Vercel
+**/.vercel/
+
+# Supabase
+**/supabase/
+
+# Logs
+*.log
+**/*.log
+
+# Data directories
+data/
+**/data/
+
+# Docker
+Dockerfile
+docker-compose.yml
+
+# Docs (not needed for build)
+*.md
+*.pdf
+
+# TypeScript-only projects (not needed for Rust build)
+bridge-relayer/
+l0-relayer/
+explorer-api/
+quantos-wallet-extension/
+quantos-l0-sdk-js/
+base-bridge/
+pqc-guard/
