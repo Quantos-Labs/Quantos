@@ -6,10 +6,12 @@ dist/
 .env
 .env.*
 .env.local
+**/.env
 *.log
 *.pid
 .e2e-node-data/
 quantos/data/
 .git.corrupted/
 **/.vercel/
+**/supabase/
 
