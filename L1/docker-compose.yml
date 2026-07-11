@@ -81,7 +81,6 @@ services:
       - QUANTOS_METRICS_PORT=9615
       - RUST_LOG=${RUST_LOG:-info}
     command: >
-      run
       --network ${QUANTOS_NETWORK:-testnet}
       --datadir /data/quantos
       --rpc-port 8545
@@ -89,6 +88,7 @@ services:
       --validator
       --validator-key /config/validator-key.json
       --bootnodes ${QUANTOS_BOOTNODES:-}
+      run
     networks:
       - quantos-net
     depends_on:

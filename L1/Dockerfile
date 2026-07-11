@@ -143,4 +143,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # Entrypoint
 # --------------------------------------------------------------------------
 ENTRYPOINT ["quantos"]
-CMD ["run", "--network", "testnet", "--datadir", "/data/quantos", "--rpc-port", "8545", "--p2p-port", "30303", "--metrics-port", "9615"]
+CMD ["--network", "testnet", "--datadir", "/data/quantos", "--rpc-port", "8545", "--p2p-port", "30303", "--metrics-port", "9615", "run"]
