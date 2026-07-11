@@ -17,8 +17,8 @@ services:
   # --------------------------------------------------------------------------
   quantos-node:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: L1/Dockerfile
     container_name: quantos-node
     restart: unless-stopped
     ports:
@@ -61,8 +61,8 @@ services:
   # --------------------------------------------------------------------------
   quantos-validator:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: L1/Dockerfile
     container_name: quantos-validator
     restart: unless-stopped
     profiles:

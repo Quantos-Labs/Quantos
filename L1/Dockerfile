@@ -1,7 +1,7 @@
 # ============================================================================
 # Quantos Node — Production Multi-Stage Dockerfile
 # ============================================================================
-# Build:  docker build -t quantos:latest .
+# Build:  docker build -t quantos:latest -f L1/Dockerfile .
 # Run:    docker run -p 8545:8545 -p 30303:30303 quantos:latest
 # ============================================================================
 
@@ -23,24 +23,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-# Cache dependencies: copy manifests first
-COPY Cargo.toml Cargo.lock* ./
+# Copy workspace root manifest + lockfile
+COPY Cargo.toml Cargo.lock ./
 
-# Create a dummy main to build deps only (layer caching)
-RUN mkdir -p src && \
-    echo 'fn main() { println!("placeholder"); }' > src/main.rs && \
-    echo 'fn main() { println!("placeholder"); }' > src/cli.rs && \
-    cargo build --release 2>/dev/null || true && \
-    rm -rf src
+# Copy L1 crate manifest and create dummy sources for dependency caching
+COPY L1/Cargo.toml L1/Cargo.toml
+RUN mkdir -p L1/src L1/benches && \
+    echo 'fn main() { println!("placeholder"); }' > L1/src/main.rs && \
+    echo 'fn main() { println!("placeholder"); }' > L1/src/cli.rs && \
+    echo 'fn main() { println!("placeholder"); }' > L1/src/solang_cli.rs && \
+    echo 'fn main() { println!("placeholder"); }' > L1/src/bin/stress_test.rs && \
+    echo 'fn main() { println!("placeholder"); }' > L1/benches/raw_tps.rs && \
+    echo 'fn main() { println!("placeholder"); }' > L1/benches/testnet_tps.rs && \
+    echo 'fn main() { println!("placeholder"); }' > L1/benches/pqc_bloat.rs && \
+    echo 'fn main() { println!("placeholder"); }' > L1/benches/tps_throughput.rs
 
-# Copy full source
-COPY . .
+# Build deps only (layer caching)
+RUN cargo build --release -p quantos 2>/dev/null || true
+
+# Copy full L1 source
+COPY L1/ L1/
 
 # Touch main files to force rebuild with real sources
-RUN touch src/main.rs src/cli.rs
+RUN touch L1/src/main.rs L1/src/cli.rs L1/src/solang_cli.rs
 
 # Build both binaries in release mode
-RUN cargo build --release --bin quantos --bin quantos-cli
+RUN cargo build --release -p quantos --bin quantos --bin quantos-cli
 
 # --------------------------------------------------------------------------
 # Stage 2: Runtime
