@@ -75,7 +75,12 @@ RUN touch L1/src/main.rs L1/src/cli.rs L1/src/solang_cli.rs && \
 # --------------------------------------------------------------------------
 # Step 6: Build all binaries in release mode
 # --------------------------------------------------------------------------
-RUN cargo build --release --bin quantos --bin quantos-cli
+# wasmer 4.2 references __rust_probestack which was removed in Rust 1.82+.
+# Provide a no-op shim so linking succeeds.
+RUN echo '.globl __rust_probestack\n__rust_probestack:\n\tret' > /tmp/probestack.S && \
+    cc -c /tmp/probestack.S -o /tmp/probestack.o && \
+    ar rcs /usr/lib/libprobestack.a /tmp/probestack.o && \
+    RUSTFLAGS="-C link-arg=-lprobestack" cargo build --release --bin quantos --bin quantos-cli
 
 # --------------------------------------------------------------------------
 # Stage 2: Runtime
