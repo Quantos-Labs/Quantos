@@ -28,7 +28,7 @@ COPY Cargo.toml Cargo.lock ./
 
 # Copy L1 crate manifest and create dummy sources for dependency caching
 COPY L1/Cargo.toml L1/Cargo.toml
-RUN mkdir -p L1/src L1/benches && \
+RUN mkdir -p L1/src/bin L1/benches && \
     echo 'fn main() { println!("placeholder"); }' > L1/src/main.rs && \
     echo 'fn main() { println!("placeholder"); }' > L1/src/cli.rs && \
     echo 'fn main() { println!("placeholder"); }' > L1/src/solang_cli.rs && \
