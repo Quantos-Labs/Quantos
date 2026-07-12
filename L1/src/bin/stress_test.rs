@@ -341,7 +341,7 @@ async fn dashboard_task(
         print!("\x1b[2K\r");
         println!(
             "\x1b[1;33m[{elapsed:>4}s]\x1b[0m  \
-             Sent \x1b[32m{sent_tps:>7.0}/s\x1b[0m  \
+             Sent \x1b[32m{send_tps:>7.0}/s\x1b[0m  \
              Confirmed \x1b[32m{confirm_tps:>7.0}/s\x1b[0m  \
              Accepted \x1b[32m{accepted}\x1b[0m  \
              Rejected \x1b[31m{rejected}\x1b[0m  \

@@ -2,11 +2,13 @@ mod server;
 mod handlers;
 mod atomic_swap;
 pub mod metrics;
+pub mod subscriptions;
 
 pub use server::*;
 pub use handlers::*;
 pub use atomic_swap::*;
 pub use metrics::QuantosMetrics;
+pub use subscriptions::{SubscriptionManager, SubscriptionNotification};
 
 use thiserror::Error;
 

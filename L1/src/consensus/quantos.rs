@@ -562,6 +562,10 @@ impl QuantosConsensus {
         &self.state_manager
     }
 
+    pub fn num_shards(&self) -> usize {
+        self.config.num_shards
+    }
+
     pub fn storage(&self) -> &Storage {
         &self.storage
     }

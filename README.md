@@ -271,9 +271,6 @@ cd explorer-api && npm install && npm run build
 # Wallet extension
 cd quantos-wallet-extension && npm install && npm run build
 
-# Landing page
-cd landing && npm install && npm run build
-
 # PQC-Guard (requires Foundry)
 cd pqc-guard && forge build
 ```
@@ -281,7 +278,6 @@ cd pqc-guard && forge build
 ## Documentation
 
 - `L1/docs/` — 35 technical specification documents covering protocol design, cryptography, consensus, sharding, VM, security, governance, and more
-- `AUDIT_SCOPE.md` — Audit scope and priority components
 - `DEPLOYMENT.md` — Deployment guide
 - `docs/THREAT_MODEL.md` — Threat model and risk assessment
 

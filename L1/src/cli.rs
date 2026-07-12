@@ -11,7 +11,13 @@
 //! # Get account balance
 //! quantos-cli account balance QTS:ab12...ff
 //!
-//! # Send transaction
+//! # Generate a new keypair
+//! quantos-cli keygen
+//!
+//! # Send a transfer (server-side signing)
+//! quantos-cli tx transfer --privkey QTS:... --to QTS:... --amount QTS:de0b6b3a7640000
+//!
+//! # Send a signed transaction
 //! quantos-cli tx send --raw QTS:deadbeef...
 //! ```
 
@@ -87,6 +93,8 @@ enum Commands {
         #[command(subcommand)]
         cmd: ContractCmd,
     },
+    /// Generate a new Dilithium keypair
+    Keygen,
 }
 
 // ---- Account ----
@@ -125,6 +133,42 @@ enum TxCmd {
         /// Raw signed transactions hex, comma-separated
         #[arg(long)]
         raw: String,
+    },
+    /// Transfer tokens (server-side signing via qnt_sendTransaction)
+    Transfer {
+        /// Hex-encoded Dilithium private key (QTS:...)
+        #[arg(long)]
+        privkey: String,
+        /// Destination address (QTS:...)
+        #[arg(long)]
+        to: String,
+        /// Amount in hex (QTS:de0b6b3a7640000 = 1 QTS)
+        #[arg(long)]
+        amount: String,
+        /// Optional nonce in hex (auto-fetched if omitted)
+        #[arg(long)]
+        nonce: Option<String>,
+        /// Shard ID (default 0)
+        #[arg(long, default_value = "0")]
+        shard_id: u16,
+    },
+    /// Stake tokens (server-side signing)
+    Stake {
+        /// Hex-encoded Dilithium private key (QTS:...)
+        #[arg(long)]
+        privkey: String,
+        /// Amount to stake in hex
+        #[arg(long)]
+        amount: String,
+    },
+    /// Unstake tokens (server-side signing)
+    Unstake {
+        /// Hex-encoded Dilithium private key (QTS:...)
+        #[arg(long)]
+        privkey: String,
+        /// Amount to unstake in hex
+        #[arg(long)]
+        amount: String,
     },
     /// Get transaction by hash
     Get {
@@ -304,6 +348,7 @@ async fn run(cli: &Cli, client: &HttpClient) -> Result<Value, String> {
         Commands::Dag { cmd } => run_dag(client, cmd).await,
         Commands::Mempool { cmd } => run_mempool(client, cmd).await,
         Commands::Contract { cmd } => run_contract(client, cmd).await,
+        Commands::Keygen => run_keygen(client).await,
     }
 }
 
@@ -365,6 +410,35 @@ async fn run_tx(client: &HttpClient, cmd: &TxCmd) -> Result<Value, String> {
         TxCmd::SendBatch { raw } => {
             let txs: Vec<&str> = raw.split(',').map(|s| s.trim()).collect();
             rpc_call(client, "qnt_sendRawTransactionBatch", one_param(txs)).await
+        }
+        TxCmd::Transfer { privkey, to, amount, nonce, shard_id } => {
+            let request = serde_json::json!({
+                "from_private_key": privkey,
+                "to": to,
+                "amount": amount,
+                "nonce": nonce,
+                "tx_type": "transfer",
+                "shard_id": shard_id,
+            });
+            rpc_call(client, "qnt_sendTransaction", one_param(request)).await
+        }
+        TxCmd::Stake { privkey, amount } => {
+            let request = serde_json::json!({
+                "from_private_key": privkey,
+                "to": "QTS:0000000000000000000000000000000000000000000000000000000000000000",
+                "amount": amount,
+                "tx_type": "stake",
+            });
+            rpc_call(client, "qnt_sendTransaction", one_param(request)).await
+        }
+        TxCmd::Unstake { privkey, amount } => {
+            let request = serde_json::json!({
+                "from_private_key": privkey,
+                "to": "QTS:0000000000000000000000000000000000000000000000000000000000000000",
+                "amount": amount,
+                "tx_type": "unstake",
+            });
+            rpc_call(client, "qnt_sendTransaction", one_param(request)).await
         }
         TxCmd::Get { hash } => {
             rpc_call(client, "qnt_getTransactionByHash", one_param(hash)).await
@@ -480,6 +554,14 @@ async fn run_contract(client: &HttpClient, cmd: &ContractCmd) -> Result<Value, S
             }).await
         }
     }
+}
+
+// ============================================================================
+// Keygen Command
+// ============================================================================
+
+async fn run_keygen(client: &HttpClient) -> Result<Value, String> {
+    rpc_call(client, "qnt_generateKeyPair", no_params()).await
 }
 
 // ============================================================================

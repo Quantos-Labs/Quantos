@@ -45,6 +45,7 @@ use crate::consensus::QuantosConsensus;
 use crate::state::StateManager;
 use crate::types::{SignedTransaction, TransactionReceipt, TransactionStatus};
 use crate::vm::{BytecodeProtector, ContractManager};
+use crate::rpc::subscriptions::SubscriptionManager;
 use crate::NodeConfig;
 
 /// Production-ready rate limiter state
@@ -150,6 +151,8 @@ pub struct RpcServer {
     contract_manager: Arc<ContractManager>,
     /// Production rate limiter with IP tracking
     rate_limiter: RateLimiterState,
+    /// WebSocket subscription manager
+    subscription_manager: SubscriptionManager,
 }
 
 impl RpcServer {
@@ -167,6 +170,7 @@ impl RpcServer {
             bytecode_protector,
             contract_manager,
             rate_limiter: RateLimiterState::new(),
+            subscription_manager: SubscriptionManager::new(),
         }
     }
 
@@ -188,6 +192,7 @@ impl RpcServer {
             exec_semaphore: Arc::new(tokio::sync::Semaphore::new(max_concurrent_executions())),
             start_time: Instant::now(),
             num_shards: self.config.num_shards,
+            subscription_manager: self.subscription_manager.clone(),
         };
 
         let handle = server.start(rpc_impl.into_rpc());
@@ -203,7 +208,68 @@ impl RpcServer {
                 cleanup_limiter.cleanup();
             }
         });
-        
+
+        // Spawn subscription polling loop for newHeads
+        let sub_mgr_heads = self.subscription_manager.clone();
+        let consensus_heads = self.consensus.clone();
+        let mut last_slot: u64 = consensus_heads.current_slot();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(500));
+            loop {
+                interval.tick().await;
+                let current_slot = consensus_heads.current_slot();
+                if current_slot != last_slot {
+                    last_slot = current_slot;
+                    let epoch = consensus_heads.current_epoch();
+                    let finalized = consensus_heads.finalized_slot();
+                    let state_root = {
+                        let sm = consensus_heads.state_manager();
+                        hex::encode(sm.state_root())
+                    };
+                    let notification = serde_json::json!({
+                        "slot": current_slot,
+                        "epoch": epoch,
+                        "finalized_slot": finalized,
+                        "state_root": format!("QTS:{}", state_root),
+                    });
+                    sub_mgr_heads.broadcast("newHeads", notification);
+                }
+            }
+        });
+
+        // Spawn subscription polling loop for newPendingTransactions
+        let sub_mgr_pending = self.subscription_manager.clone();
+        let consensus_pending = self.consensus.clone();
+        let mut last_pending_count: usize = 0;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(200));
+            loop {
+                interval.tick().await;
+                let mempool = consensus_pending.mempool();
+                let current_count = mempool.total_pending();
+                if current_count != last_pending_count {
+                    if current_count > last_pending_count {
+                        // New transactions appeared - broadcast them
+                        let new_count = current_count - last_pending_count;
+                        for shard_id in 0..consensus_pending.num_shards() as u16 {
+                            let txs = mempool.get_pending_for_shard(shard_id, new_count);
+                            for tx in txs {
+                                let notification = serde_json::json!({
+                                    "hash": format!("QTS:{}", hex::encode(tx.hash)),
+                                    "from": format!("QTS:{}", hex::encode(tx.transaction.from)),
+                                    "to": format!("QTS:{}", hex::encode(tx.transaction.to)),
+                                    "value": format!("QTS:{:x}", tx.transaction.amount.0),
+                                    "nonce": format!("QTS:{:x}", tx.transaction.nonce),
+                                });
+                                sub_mgr_pending.broadcast("newPendingTransactions", notification);
+                            }
+                        }
+                    }
+                    last_pending_count = current_count;
+                }
+            }
+        });
+
         handle.stopped().await;
         
         Ok(())
@@ -376,6 +442,23 @@ pub trait QuantosRpc {
 
     #[method(name = "qnt_getSubnet")]
     async fn get_subnet(&self, id: String) -> Result<Option<SubnetInfo>, jsonrpsee::types::ErrorObjectOwned>;
+
+    // ====================================================================
+    // Server-side transaction signing
+    // ====================================================================
+
+    #[method(name = "qnt_sendTransaction")]
+    async fn send_transaction(&self, request: SendTransactionRequest) -> Result<String, jsonrpsee::types::ErrorObjectOwned>;
+
+    #[method(name = "qnt_generateKeyPair")]
+    async fn generate_keypair(&self) -> Result<KeyPairResponse, jsonrpsee::types::ErrorObjectOwned>;
+
+    // ====================================================================
+    // WebSocket Subscriptions
+    // ====================================================================
+
+    #[subscription(name = "qnt_subscribe", unsubscribe = "qnt_unsubscribe", item = SubscriptionNotification)]
+    fn subscribe(&self, kind: String, params: Option<serde_json::Value>);
 }
 
 pub struct QuantosRpcImpl {
@@ -393,6 +476,8 @@ pub struct QuantosRpcImpl {
     start_time: Instant,
     /// Number of shards configured
     num_shards: usize,
+    /// WebSocket subscription manager
+    subscription_manager: SubscriptionManager,
 }
 
 #[async_trait]
@@ -1388,6 +1473,152 @@ impl QuantosRpcServer for QuantosRpcImpl {
             None => Ok(None),
         }
     }
+
+    // ====================================================================
+    // Server-side transaction signing
+    // ====================================================================
+
+    async fn send_transaction(&self, request: SendTransactionRequest) -> Result<String, jsonrpsee::types::ErrorObjectOwned> {
+        self.check_rate_limit()?;
+
+        use crate::crypto::DilithiumKeypair;
+        use crate::types::{Transaction, TransactionType, Amount, ShardId};
+
+        // Parse private key
+        let priv_key_hex = request.from_private_key
+            .strip_prefix("QTS:").or_else(|| request.from_private_key.strip_prefix("0x"))
+            .unwrap_or(&request.from_private_key);
+        let priv_key_bytes = hex::decode(priv_key_hex)
+            .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid private key hex: {}", e), None::<()>))?;
+
+        let keypair = DilithiumKeypair::from_secret_key(&priv_key_bytes)
+            .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid Dilithium private key: {}", e), None::<()>))?;
+
+        let from_addr = keypair.address();
+
+        // Parse destination
+        let to_addr = parse_address(&request.to)?;
+
+        // Parse amount
+        let amount_val = u128::from_str_radix(
+            request.amount.strip_prefix("QTS:").or_else(|| request.amount.strip_prefix("0x")).unwrap_or(&request.amount),
+            16
+        ).map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid amount hex: {}", e), None::<()>))?;
+
+        // Get nonce from state if not provided
+        let nonce = if let Some(nonce_hex) = &request.nonce {
+            u64::from_str_radix(
+                nonce_hex.strip_prefix("QTS:").or_else(|| nonce_hex.strip_prefix("0x")).unwrap_or(nonce_hex),
+                16
+            ).map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid nonce hex: {}", e), None::<()>))?
+        } else {
+            self.state_manager.get_nonce(&from_addr)
+                .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Failed to get nonce: {}", e), None::<()>))?
+        };
+
+        // Parse tx type
+        let tx_type = match request.tx_type.as_deref().unwrap_or("transfer") {
+            "transfer" => TransactionType::Transfer,
+            "stake" => TransactionType::Stake,
+            "unstake" => TransactionType::Unstake,
+            "validator_register" => TransactionType::ValidatorRegister,
+            "validator_exit" => TransactionType::ValidatorExit,
+            "contract_call" => TransactionType::ContractCall,
+            "contract_deploy" => TransactionType::ContractDeploy,
+            other => return Err(jsonrpsee::types::ErrorObject::owned(-32000, format!("Unknown tx type: {}", other), None::<()>)),
+        };
+
+        // Parse data
+        let data = if let Some(data_hex) = &request.data {
+            let d = data_hex.strip_prefix("QTS:").or_else(|| data_hex.strip_prefix("0x")).unwrap_or(data_hex);
+            hex::decode(d).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        let shard_id: ShardId = request.shard_id.unwrap_or(0);
+        let max_compute_units = if let Some(cu_hex) = &request.max_compute_units {
+            u64::from_str_radix(
+                cu_hex.strip_prefix("QTS:").or_else(|| cu_hex.strip_prefix("0x")).unwrap_or(cu_hex),
+                16
+            ).unwrap_or(100_000)
+        } else {
+            100_000
+        };
+
+        // Create transaction
+        let mut tx = Transaction::new(
+            tx_type,
+            from_addr,
+            to_addr,
+            Amount(amount_val),
+            nonce,
+            max_compute_units,
+            None,
+            data,
+            shard_id,
+        );
+        tx.chain_id = self.chain_id;
+
+        // Sign transaction
+        let signing_data = tx.signing_data();
+        let signature = keypair.sign(&signing_data)
+            .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Signing failed: {}", e), None::<()>))?;
+        tx.signature = signature;
+        tx.public_key = keypair.public_key.clone();
+
+        let signed_tx = SignedTransaction::new(tx);
+
+        // Submit to consensus
+        let hash = self.consensus.submit_transaction(signed_tx).await
+            .map_err(|e| {
+                tracing::error!("submit_transaction failed: {:?}", e);
+                jsonrpsee::types::ErrorObject::owned(-32000, format!("Failed to submit transaction: {}", e), None::<()>)
+            })?;
+
+        Ok(format!("QTS:{}", hex::encode(hash)))
+    }
+
+    async fn generate_keypair(&self) -> Result<KeyPairResponse, jsonrpsee::types::ErrorObjectOwned> {
+        use crate::crypto::DilithiumKeypair;
+
+        let keypair = DilithiumKeypair::generate()
+            .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Key generation failed: {}", e), None::<()>))?;
+
+        let address = keypair.address();
+
+        Ok(KeyPairResponse {
+            address: format!("QTS:{}", hex::encode(address)),
+            public_key: format!("QTS:{}", hex::encode(&keypair.public_key)),
+            private_key: format!("QTS:{}", hex::encode(&keypair.secret_key)),
+        })
+    }
+
+    // ====================================================================
+    // WebSocket Subscriptions
+    // ====================================================================
+
+    fn subscribe(&self, pending: jsonrpsee::server::PendingSubscriptionSink, kind: String, _params: Option<serde_json::Value>) {
+        let sub_mgr = self.subscription_manager.clone();
+        tokio::spawn(async move {
+            let sink = match pending.accept().await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!("Failed to accept subscription: {}", e);
+                    return;
+                }
+            };
+
+            match kind.as_str() {
+                "newHeads" | "newPendingTransactions" | "logs" => {
+                    sub_mgr.add(kind, sink);
+                }
+                other => {
+                    tracing::warn!("Unknown subscription type: {}", other);
+                }
+            }
+        });
+    }
 }
 
 impl QuantosRpcImpl {
@@ -1834,6 +2065,37 @@ pub struct VertexInfo {
     pub height: u64,
     pub status: String,
     pub state_root: String,
+}
+
+// ============================================================================
+// Server-side signing types
+// ============================================================================
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SendTransactionRequest {
+    /// Hex-encoded Dilithium secret key (QTS:... or 0x... or raw hex)
+    pub from_private_key: String,
+    /// Destination address (QTS:...)
+    pub to: String,
+    /// Amount in smallest units, hex-encoded (QTS:... or 0x...)
+    pub amount: String,
+    /// Optional calldata, hex-encoded
+    pub data: Option<String>,
+    /// Optional nonce, hex-encoded. If omitted, fetched from state.
+    pub nonce: Option<String>,
+    /// Transaction type: "transfer", "stake", "unstake", "validator_register", "validator_exit", "contract_call", "contract_deploy"
+    pub tx_type: Option<String>,
+    /// Shard ID (default 0)
+    pub shard_id: Option<u16>,
+    /// Max compute units, hex-encoded (default 100000)
+    pub max_compute_units: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct KeyPairResponse {
+    pub address: String,
+    pub public_key: String,
+    pub private_key: String,
 }
 
 #[cfg(test)]
