@@ -306,7 +306,7 @@ impl QuantosConsensus {
         };
 
         let epoch = slot / 32;
-        tracing::debug!("on_slot_tick: slot={}, epoch={}", slot, epoch);
+        tracing::info!("on_slot_tick: slot={}, epoch={}", slot, epoch);
 
         if slot % 32 == 0 {
             let randomness = self.compute_epoch_randomness(epoch);
