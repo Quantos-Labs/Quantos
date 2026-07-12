@@ -306,17 +306,21 @@ impl QuantosConsensus {
         };
 
         let epoch = slot / 32;
+        tracing::debug!("on_slot_tick: slot={}, epoch={}", slot, epoch);
 
         if slot % 32 == 0 {
             let randomness = self.compute_epoch_randomness(epoch);
             self.committee_manager.rotate_committees(epoch, slot, &randomness)?;
-            tracing::debug!("Committees rotated for epoch {}", epoch);
+            tracing::info!("Committees rotated for epoch {}", epoch);
         }
 
         if let Some(ref keys) = self.validator_keys {
+            tracing::debug!("Calling try_produce_vertices for slot {}", slot);
             self.try_produce_vertices(keys, slot).await?;
+            tracing::debug!("try_produce_vertices done for slot {}", slot);
         }
 
+        tracing::debug!("Checking checkpoint for slot {}", slot);
         if let Some(checkpoint) = self.finality.maybe_create_checkpoint(slot).await? {
             tracing::info!("Checkpoint created at slot {}", slot);
 
