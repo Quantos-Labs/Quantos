@@ -45,28 +45,54 @@ impl DilithiumKeypair {
     }
     
     pub fn from_secret_key(secret_key: &[u8]) -> CryptoResult<Self> {
-        // Validate input size before attempting to extract public key
         let expected_size = dilithium3::secret_key_bytes();
         if secret_key.len() != expected_size {
             return Err(CryptoError::InvalidPrivateKey);
         }
-        
+
         let sk = dilithium3::SecretKey::from_bytes(secret_key)
             .map_err(|_| CryptoError::InvalidPrivateKey)?;
-        
-        // Safe to index now that we've validated the size
+
         let pk_size = dilithium3::public_key_bytes();
         if secret_key.len() < pk_size {
             return Err(CryptoError::InvalidPrivateKey);
         }
-        
+
         let pk_bytes = &secret_key[secret_key.len() - pk_size..];
         let pk = dilithium3::PublicKey::from_bytes(pk_bytes)
             .map_err(|_| CryptoError::InvalidPublicKey)?;
-        
+
         Ok(Self {
             public_key: pk.as_bytes().to_vec(),
             secret_key: sk.as_bytes().to_vec(),
+        })
+    }
+
+    /// Reconstruct a keypair from stored public and secret keys.
+    /// Prefer this over `from_secret_key` when the public key is already known,
+    /// to avoid relying on internal key format assumptions.
+    pub fn from_keys(public_key: &[u8], secret_key: &[u8]) -> CryptoResult<Self> {
+        let expected_sk_size = dilithium3::secret_key_bytes();
+        if secret_key.len() != expected_sk_size {
+            return Err(CryptoError::InvalidPrivateKey);
+        }
+
+        let expected_pk_size = dilithium3::public_key_bytes();
+        if public_key.len() != expected_pk_size {
+            return Err(CryptoError::InvalidPublicKey);
+        }
+
+        // Validate that the secret key is well-formed
+        let _sk = dilithium3::SecretKey::from_bytes(secret_key)
+            .map_err(|_| CryptoError::InvalidPrivateKey)?;
+
+        // Validate that the public key is well-formed
+        let _pk = dilithium3::PublicKey::from_bytes(public_key)
+            .map_err(|_| CryptoError::InvalidPublicKey)?;
+
+        Ok(Self {
+            public_key: public_key.to_vec(),
+            secret_key: secret_key.to_vec(),
         })
     }
 

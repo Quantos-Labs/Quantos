@@ -52,7 +52,7 @@ impl Prefilter {
     pub fn check_transaction_bytes(&mut self, payload: &[u8]) -> Result<(), String> {
         // Size limits: reject trivially tiny or enormous payloads
         if payload.len() < 64 { return Err("payload too small".to_string()); }
-        if payload.len() > 64 * 1024 { return Err("payload too large".to_string()); }
+        if payload.len() > 256 * 1024 { return Err("payload too large".to_string()); }
 
         // Quick hash duplicate suppression
         let mut h = Sha3_256::new();

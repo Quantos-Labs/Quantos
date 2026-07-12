@@ -107,11 +107,13 @@ impl ValidatorKeySet {
         Path::new(datadir).join("validator_keys.json")
     }
 
-    /// Reconstruct the Dilithium keypair from the stored secret key.
+    /// Reconstruct the Dilithium keypair from the stored public and secret keys.
     pub fn signing_keypair(&self) -> anyhow::Result<DilithiumKeypair> {
+        let public_key = hex::decode(&self.signing.public_key)
+            .map_err(|e| anyhow::anyhow!("Invalid signing public key: {e}"))?;
         let secret_key = hex::decode(&self.signing.secret_key)
             .map_err(|e| anyhow::anyhow!("Invalid signing secret key: {e}"))?;
-        DilithiumKeypair::from_secret_key(&secret_key)
+        DilithiumKeypair::from_keys(&public_key, &secret_key)
             .map_err(|e| anyhow::anyhow!("Failed to load signing keypair: {e:?}"))
     }
 
@@ -125,11 +127,13 @@ impl ValidatorKeySet {
             .map_err(|e| anyhow::anyhow!("Failed to load VRF keypair: {e:?}"))
     }
 
-    /// Reconstruct the ML-DSA-65 keypair from the stored secret key.
+    /// Reconstruct the ML-DSA-65 keypair from the stored public and secret keys.
     pub fn finality_keypair(&self) -> anyhow::Result<MlDsa65Keypair> {
+        let public_key = hex::decode(&self.finality.public_key)
+            .map_err(|e| anyhow::anyhow!("Invalid finality public key: {e}"))?;
         let secret_key = hex::decode(&self.finality.secret_key)
             .map_err(|e| anyhow::anyhow!("Invalid finality secret key: {e}"))?;
-        MlDsa65Keypair::from_secret_key(&secret_key)
+        MlDsa65Keypair::from_keys(&public_key, &secret_key)
             .map_err(|e| anyhow::anyhow!("Failed to load finality keypair: {e:?}"))
     }
 
