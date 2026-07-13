@@ -118,6 +118,12 @@ impl RelayTransport for HttpRelayTransport {
         adapter: &ChainAdapter,
         payload: &EncodedProof,
     ) -> Result<String, RelayTransportError> {
+        if adapter.endpoint.is_empty() {
+            return Err(RelayTransportError::Permanent(
+                "no endpoint configured for this target chain".to_string(),
+            ));
+        }
+
         let body = json!({
             "chain_id": adapter.id.as_str(),
             "chain_family": format!("{:?}", adapter.family),
