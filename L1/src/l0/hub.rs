@@ -288,11 +288,8 @@ impl FinalityHub {
         }
 
         if signed_stake < required {
-            self.metrics.write().proofs_failed = self
-                .metrics
-                .read()
-                .proofs_failed
-                .saturating_add(1);
+            let new_failed = self.metrics.read().proofs_failed.saturating_add(1);
+            self.metrics.write().proofs_failed = new_failed;
             return Err(L0Error::InsufficientStake {
                 signed: signed_stake,
                 required,
@@ -342,11 +339,8 @@ impl FinalityHub {
             self.metrics.write().archived_proofs = archive.len() as u64;
         }
 
-        self.metrics.write().proofs_produced = self
-            .metrics
-            .read()
-            .proofs_produced
-            .saturating_add(1);
+        let new_produced = self.metrics.read().proofs_produced.saturating_add(1);
+        self.metrics.write().proofs_produced = new_produced;
 
         Ok(proof)
     }
@@ -525,11 +519,8 @@ impl FinalityHub {
         }
 
         if signed_stake < required {
-            self.metrics.write().proofs_failed = self
-                .metrics
-                .read()
-                .proofs_failed
-                .saturating_add(1);
+            let new_failed = self.metrics.read().proofs_failed.saturating_add(1);
+            self.metrics.write().proofs_failed = new_failed;
             return Err(L0Error::InsufficientStake {
                 signed: signed_stake,
                 required,
@@ -584,11 +575,8 @@ impl FinalityHub {
             self.metrics.write().archived_proofs = archive.len() as u64;
         }
 
-        self.metrics.write().proofs_produced = self
-            .metrics
-            .read()
-            .proofs_produced
-            .saturating_add(1);
+        let new_produced = self.metrics.read().proofs_produced.saturating_add(1);
+        self.metrics.write().proofs_produced = new_produced;
 
         Ok(proof)
     }

@@ -304,8 +304,8 @@ impl StarkShardCoordinator {
         // Check proof cache first
         if let Some(ref cache) = self.proof_cache {
             if let Some(cached_proof) = cache.get(&batch.id) {
-                self.metrics.write().cache_hit_rate = 
-                    (self.metrics.read().cache_hit_rate * 0.99) + 0.01;
+                let new_hit_rate = (self.metrics.read().cache_hit_rate * 0.99) + 0.01;
+                self.metrics.write().cache_hit_rate = new_hit_rate;
                 return Ok(cached_proof.clone());
             }
         }

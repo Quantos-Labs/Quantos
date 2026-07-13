@@ -1240,8 +1240,8 @@ impl SlashingManager {
         }
 
         self.jail_status.remove(&validator);
-        self.metrics.write().validators_jailed = 
-            self.metrics.read().validators_jailed.saturating_sub(1);
+        let new_jailed = self.metrics.read().validators_jailed.saturating_sub(1);
+        self.metrics.write().validators_jailed = new_jailed;
 
         info!("Validator unjailed: {}", hex::encode(&validator[..8]));
         Ok(())

@@ -426,7 +426,8 @@ impl DdosProtection {
         if let Some(mut score) = self.peer_scores.get_mut(peer_id) {
             score.ban_expiry = None;
             score.score = 0;
-            self.stats.write().banned_peers = self.stats.read().banned_peers.saturating_sub(1);
+            let new_banned = self.stats.read().banned_peers.saturating_sub(1);
+            self.stats.write().banned_peers = new_banned;
             
             tracing::info!("Peer {} unbanned", peer_id);
         }
@@ -466,7 +467,8 @@ impl DdosProtection {
             if let Some(expiry) = score.ban_expiry {
                 if now >= expiry {
                     tracing::info!("Ban expired for peer {}", peer_id);
-                    self.stats.write().banned_peers = self.stats.read().banned_peers.saturating_sub(1);
+                    let new_banned = self.stats.read().banned_peers.saturating_sub(1);
+                    self.stats.write().banned_peers = new_banned;
                     return false;
                 }
             }
