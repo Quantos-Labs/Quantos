@@ -354,56 +354,64 @@ impl QuantosConsensus {
                     &keys.finality_key,
                 ).await {
                     Ok(sig) => {
-                        if let Ok(Some(finalized)) = self.finality.receive_checkpoint_signature(&checkpoint.hash(), sig).await {
-                            tracing::info!("Checkpoint finalized at slot {}", slot);
-                            let finalized = finalized.clone();
-                            let hub = self.finality_hub.clone();
-                            let dispatcher = self.relay_dispatcher.clone();
-                            let validator_set = self.committee_manager.get_validator_set();
-                            tokio::task::spawn_blocking(move || {
-                                if let (Some(hub), Some(dispatcher)) = (hub, dispatcher) {
-                                    let records: Vec<crate::l0::proof::ValidatorRecord> = validator_set.validators.iter().map(|v| crate::l0::proof::ValidatorRecord {
-                                        address: v.address,
-                                        public_key: v.finality_public_key.clone(),
-                                        stake: v.effective_stake(),
-                                    }).collect();
+                        match self.finality.receive_checkpoint_signature(&checkpoint.hash(), sig).await {
+                            Ok(Some(finalized)) => {
+                                tracing::info!("Checkpoint finalized at slot {}", slot);
+                                let finalized = finalized.clone();
+                                let hub = self.finality_hub.clone();
+                                let dispatcher = self.relay_dispatcher.clone();
+                                let validator_set = self.committee_manager.get_validator_set();
+                                tokio::task::spawn_blocking(move || {
+                                    if let (Some(hub), Some(dispatcher)) = (hub, dispatcher) {
+                                        let records: Vec<crate::l0::proof::ValidatorRecord> = validator_set.validators.iter().map(|v| crate::l0::proof::ValidatorRecord {
+                                            address: v.address,
+                                            public_key: v.finality_public_key.clone(),
+                                            stake: v.effective_stake(),
+                                        }).collect();
 
-                                    let snapshot = ValidatorSetSnapshot {
-                                        root: ValidatorSetSnapshot::compute_root(&records),
-                                        validators: records,
-                                    };
+                                        let snapshot = ValidatorSetSnapshot {
+                                            root: ValidatorSetSnapshot::compute_root(&records),
+                                            validators: records,
+                                        };
 
-                                    let contributions: Vec<SignatureContribution> = finalized.signatures.iter().map(|s| SignatureContribution {
-                                        validator: s.validator,
-                                        algo: PqcSignatureAlgo::MlDsa65,
-                                        signature: s.signature.clone(),
-                                    }).collect();
+                                        let contributions: Vec<SignatureContribution> = finalized.signatures.iter().map(|s| SignatureContribution {
+                                            validator: s.validator,
+                                            algo: PqcSignatureAlgo::MlDsa65,
+                                            signature: s.signature.clone(),
+                                        }).collect();
 
-                                    match hub.build_proof(&finalized.checkpoint, &snapshot, &contributions) {
-                                        Ok(proof) => {
-                                            let proof_hash = hex::encode(proof.proof_hash());
-                                            tracing::info!("L0 proof built: hash={}", proof_hash);
-                                            let outcomes = dispatcher.dispatch(&proof);
-                                            for outcome in outcomes {
-                                                match outcome.status {
-                                                    crate::l0::relay::RelayStatus::Delivered { receipt } => {
-                                                        tracing::info!("L0 proof delivered to {} | receipt={}", outcome.chain, receipt);
-                                                    }
-                                                    crate::l0::relay::RelayStatus::Failed { reason } => {
-                                                        tracing::warn!("L0 proof failed to {} | reason={}", outcome.chain, reason);
-                                                    }
-                                                    crate::l0::relay::RelayStatus::Pending { attempts } => {
-                                                        tracing::debug!("L0 proof pending to {} | attempts={}", outcome.chain, attempts);
+                                        match hub.build_proof(&finalized.checkpoint, &snapshot, &contributions) {
+                                            Ok(proof) => {
+                                                let proof_hash = hex::encode(proof.proof_hash());
+                                                tracing::info!("L0 proof built: hash={}", proof_hash);
+                                                let outcomes = dispatcher.dispatch(&proof);
+                                                for outcome in outcomes {
+                                                    match outcome.status {
+                                                        crate::l0::relay::RelayStatus::Delivered { receipt } => {
+                                                            tracing::info!("L0 proof delivered to {} | receipt={}", outcome.chain, receipt);
+                                                        }
+                                                        crate::l0::relay::RelayStatus::Failed { reason } => {
+                                                            tracing::warn!("L0 proof failed to {} | reason={}", outcome.chain, reason);
+                                                        }
+                                                        crate::l0::relay::RelayStatus::Pending { attempts } => {
+                                                            tracing::debug!("L0 proof pending to {} | attempts={}", outcome.chain, attempts);
+                                                        }
                                                     }
                                                 }
                                             }
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!("L0 proof build failed: {}", e);
+                                            Err(e) => {
+                                                tracing::warn!("L0 proof build failed: {}", e);
+                                            }
                                         }
                                     }
-                                }
-                            });
+                                });
+                            }
+                            Ok(None) => {
+                                tracing::debug!("Checkpoint not yet finalized at slot {}", slot);
+                            }
+                            Err(e) => {
+                                tracing::warn!("Checkpoint signature reception failed at slot {}: {}", slot, e);
+                            }
                         }
                     }
                     Err(e) => {
