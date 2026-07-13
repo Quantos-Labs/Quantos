@@ -209,15 +209,16 @@ impl FinalityHub {
             stark_commitment: [0u8; 32],
         };
 
-        // Build a draft proof so we can compute the signing digest the
-        // contributors must have signed.
         let mut proof = L0FinalityProof {
             header,
             validators: snapshot.validators.clone(),
             signatures: Vec::with_capacity(contributions.len()),
             stark_proof: None,
         };
-        let digest = proof.signing_digest();
+        // Contributions come from the finality committee (see doc comment
+        // above), which signs the checkpoint hash, not this proof's own
+        // (timestamp-dependent) signing digest. Verify against that.
+        let digest = checkpoint.hash();
 
         // One STARK signer entry per validator (is_signer=false by default).
         // Filled in below as signatures are verified.
