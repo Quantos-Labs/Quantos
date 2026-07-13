@@ -273,7 +273,9 @@ impl QuantosConsensus {
         loop {
             tokio::select! {
                 _ = slot_ticker.tick() => {
-                    self.on_slot_tick().await?;
+                    if let Err(e) = self.on_slot_tick().await {
+                        tracing::error!("on_slot_tick error: {} — consensus loop continuing", e);
+                    }
                 }
                 _ = cleanup_ticker.tick() => {
                     // Cleanup happens automatically in FastPath background task
@@ -390,6 +392,7 @@ impl QuantosConsensus {
             }
         }
 
+        tracing::info!("on_slot_tick completed: slot={}", slot);
         Ok(())
     }
 
