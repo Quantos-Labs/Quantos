@@ -339,6 +339,7 @@ impl QuantosConsensus {
                             let hub = self.finality_hub.clone();
                             let dispatcher = self.relay_dispatcher.clone();
                             let validator_set = self.committee_manager.get_validator_set();
+                            tracing::info!("L0 dispatch gate: hub={} dispatcher={}", hub.is_some(), dispatcher.is_some());
                             tokio::task::spawn_blocking(move || {
                                 if let (Some(hub), Some(dispatcher)) = (hub, dispatcher) {
                                     let records: Vec<crate::l0::proof::ValidatorRecord> = validator_set.validators.iter().map(|v| crate::l0::proof::ValidatorRecord {
