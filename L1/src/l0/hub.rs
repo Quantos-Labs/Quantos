@@ -216,9 +216,9 @@ impl FinalityHub {
             stark_proof: None,
         };
         // Contributions come from the finality committee (see doc comment
-        // above), which signs the checkpoint hash, not this proof's own
-        // (timestamp-dependent) signing digest. Verify against that.
-        let digest = checkpoint.hash();
+        // above), which signs checkpoint.signing_data() (domain-prefixed
+        // checkpoint hash), not this proof's own signing digest.
+        let digest = checkpoint.signing_data();
 
         // One STARK signer entry per validator (is_signer=false by default).
         // Filled in below as signatures are verified.
@@ -239,7 +239,6 @@ impl FinalityHub {
         let mut signed_stake: u128 = 0;
         for contribution in contributions {
             let Some(index) = snapshot.position_of(&contribution.validator) else {
-                tracing::warn!("L0 build_proof: contribution validator {} not found in snapshot", hex::encode(contribution.validator));
                 continue;
             };
             let validator = &snapshot.validators[index];
@@ -259,7 +258,6 @@ impl FinalityHub {
             };
 
             if !ok {
-                tracing::warn!("L0 build_proof: signature verification failed for validator index {}", index);
                 continue;
             }
 
