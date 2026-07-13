@@ -239,6 +239,7 @@ impl FinalityHub {
         let mut signed_stake: u128 = 0;
         for contribution in contributions {
             let Some(index) = snapshot.position_of(&contribution.validator) else {
+                tracing::warn!("L0 build_proof: contribution validator {} not found in snapshot", hex::encode(contribution.validator));
                 continue;
             };
             let validator = &snapshot.validators[index];
@@ -258,6 +259,7 @@ impl FinalityHub {
             };
 
             if !ok {
+                tracing::warn!("L0 build_proof: signature verification failed for validator index {}", index);
                 continue;
             }
 
