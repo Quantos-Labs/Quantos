@@ -229,9 +229,30 @@ impl QuantosConsensus {
 
         if local_vrf_pubkey.is_empty() {
             tracing::warn!(
-                "Local validator address {} is not present in genesis; node will not produce vertices",
+                "Local validator address {} is not present in genesis; registering as ephemeral validator for single-node mode",
                 address_hex
             );
+            // Register the ephemeral validator so the node can produce
+            // vertices, sign checkpoints, and build L0 proofs.
+            let ephemeral = crate::types::Validator {
+                address,
+                public_key: signing_key.public_key.clone(),
+                finality_public_key: finality_key.public_key.clone(),
+                stake: crate::types::Amount(1_000_000_000),
+                commission_rate: 0,
+                active: true,
+                jailed: false,
+                slash_count: 0,
+                last_active_slot: 0,
+                vrf_public_key: vrf_key.public_key().to_vec(),
+            };
+            if let Err(e) = self.committee_manager.add_validator(ephemeral) {
+                tracing::warn!("Failed to register ephemeral validator: {}", e);
+            } else {
+                local_vrf_pubkey = vrf_key.public_key().to_vec();
+                self.dag.add_authorized_creator(address);
+                tracing::info!("Ephemeral validator {} registered", address_hex);
+            }
         }
 
         // Collect all VRF public keys from genesis validators that have one.
@@ -386,7 +407,7 @@ impl QuantosConsensus {
                         }
                     }
                     Err(e) => {
-                        tracing::debug!("Checkpoint signing skipped: {}", e);
+                        tracing::warn!("Checkpoint signing failed: {}", e);
                     }
                 }
             }
