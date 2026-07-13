@@ -303,7 +303,7 @@ impl FinalityHub {
         // Proven off-chain in <10 ms; the on-chain footprint is 32 bytes.
         let stark_pub_inputs = crate::l0::stark_prover::BatchPublicInputs {
             validator_set_root,
-            message_hash: digest,
+            message_hash: checkpoint.hash(),
             signed_stake,
             stake_threshold: required,
             signer_count: proof.signatures.len() as u32,
