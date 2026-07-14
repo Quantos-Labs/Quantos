@@ -238,7 +238,7 @@ impl QuantosConsensus {
                 address,
                 public_key: signing_key.public_key.clone(),
                 finality_public_key: finality_key.public_key.clone(),
-                stake: crate::types::Amount(1_000_000_000),
+                stake: crate::types::Amount(10_000_000_000_000_000_000_000_000),
                 commission_rate: 0,
                 active: true,
                 jailed: false,
