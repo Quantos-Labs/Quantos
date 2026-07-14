@@ -184,10 +184,13 @@ impl FinalityLayer {
         checkpoint_hash: &Hash,
         signature: ValidatorSignature,
     ) -> ConsensusResult<Option<FinalizedCheckpoint>> {
+        tracing::info!("receive_checkpoint_signature: entered, hash={}", hex::encode(checkpoint_hash));
         let mut finalized = false;
 
         if let Some(mut pending) = self.pending_checkpoints.get_mut(checkpoint_hash) {
+            tracing::info!("receive_checkpoint_signature: found pending checkpoint");
             if pending.signers.contains(&signature.validator) {
+                tracing::info!("receive_checkpoint_signature: validator already signed, returning None");
                 return Ok(None);
             }
 
@@ -209,19 +212,25 @@ impl FinalityLayer {
             }
             
             let checkpoint_data = pending.checkpoint.signing_data();
+            tracing::info!("receive_checkpoint_signature: verifying signature");
             let valid = verify_ml_dsa_65(
                 &validator_info.finality_public_key,
                 &checkpoint_data,
                 &signature.signature,
             )
-                .map_err(|e| ConsensusError::CryptoError(e.to_string()))?;
+                .map_err(|e| {
+                    tracing::warn!("receive_checkpoint_signature: verify error: {:?}", e);
+                    ConsensusError::CryptoError(e.to_string())
+                })?;
             
             if !valid {
+                tracing::warn!("receive_checkpoint_signature: signature verification returned false");
                 return Err(ConsensusError::Unauthorized(
                     format!("Invalid checkpoint signature from validator {:?}", signature.validator)
                 ));
             }
-            
+
+            tracing::info!("receive_checkpoint_signature: signature valid, recording");
             pending.signers.insert(signature.validator);
             pending.signatures.push(signature);
             pending.total_stake_signed = pending.total_stake_signed
@@ -232,6 +241,8 @@ impl FinalityLayer {
 
             let total_stake = self.committee_manager.get_validator_set().total_active_stake();
             let threshold = (total_stake * 2) / 3 + 1;
+            tracing::info!("receive_checkpoint_signature: signed_stake={}, total_stake={}, threshold={}",
+                pending.total_stake_signed, total_stake, threshold);
 
             if pending.total_stake_signed >= threshold {
                 finalized = true;
