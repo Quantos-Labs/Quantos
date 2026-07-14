@@ -133,26 +133,49 @@ impl FinalityLayer {
         validator: Address,
         finality_key: &MlDsa65Keypair,
     ) -> ConsensusResult<ValidatorSignature> {
+        tracing::info!("sign_checkpoint: looking up checkpoint hash {}", hex::encode(checkpoint_hash));
+
         let pending = self.pending_checkpoints.get(checkpoint_hash)
-            .ok_or(ConsensusError::CheckpointVerificationFailed)?;
+            .ok_or_else(|| {
+                tracing::warn!("sign_checkpoint: checkpoint not found in pending! Available: {:?}",
+                    self.pending_checkpoints.iter().map(|e| hex::encode(e.key())).collect::<Vec<_>>());
+                ConsensusError::CheckpointVerificationFailed
+            })?;
+
+        tracing::info!("sign_checkpoint: checkpoint found, looking up validator {}", hex::encode(&validator));
 
         // Verify key ownership: check that the public key matches the validator
         let validator_set = self.committee_manager.get_validator_set();
         let validator_info = validator_set.get_validator(&validator)
-            .ok_or_else(|| ConsensusError::InvalidValidator(
-                format!("Validator {:?} not found", validator)
-            ))?;
+            .ok_or_else(|| {
+                tracing::warn!("sign_checkpoint: validator not found in set! Validators: {:?}",
+                    validator_set.validators.iter().map(|v| hex::encode(&v.address)).collect::<Vec<_>>());
+                ConsensusError::InvalidValidator(
+                    format!("Validator {:?} not found", validator)
+                )
+            })?;
+
+        tracing::info!("sign_checkpoint: validator found, checking finality key match");
 
         // Verify the finality public key matches the registered ML-DSA-65 key.
         if validator_info.finality_public_key != finality_key.public_key {
+            tracing::warn!("sign_checkpoint: finality key mismatch! registered={}, provided={}",
+                hex::encode(&validator_info.finality_public_key),
+                hex::encode(&finality_key.public_key));
             return Err(ConsensusError::Unauthorized(
                 format!("Finality public key mismatch for validator {:?}", validator)
             ));
         }
 
-        let signature = finality_key.sign(&pending.checkpoint.signing_data())
-            .map_err(|e| ConsensusError::CryptoError(e.to_string()))?;
+        tracing::info!("sign_checkpoint: signing checkpoint data");
 
+        let signature = finality_key.sign(&pending.checkpoint.signing_data())
+            .map_err(|e| {
+                tracing::warn!("sign_checkpoint: sign failed: {:?}", e);
+                ConsensusError::CryptoError(e.to_string())
+            })?;
+
+        tracing::info!("sign_checkpoint: success");
         Ok(ValidatorSignature::new(validator, signature))
     }
 

@@ -348,12 +348,16 @@ impl QuantosConsensus {
             tracing::info!("Checkpoint created at slot {}", slot);
 
             if let Some(ref keys) = self.validator_keys {
+                tracing::info!("Attempting to sign checkpoint at slot {} with validator {}", slot, hex::encode(&keys.address));
+                let checkpoint_hash = checkpoint.hash();
+                tracing::info!("Checkpoint hash: {}", hex::encode(&checkpoint_hash));
                 match self.finality.sign_checkpoint(
-                    &checkpoint.hash(),
+                    &checkpoint_hash,
                     keys.address,
                     &keys.finality_key,
                 ).await {
                     Ok(sig) => {
+                        tracing::info!("Checkpoint signed successfully at slot {}", slot);
                         match self.finality.receive_checkpoint_signature(&checkpoint.hash(), sig).await {
                             Ok(Some(finalized)) => {
                                 tracing::info!("Checkpoint finalized at slot {}", slot);
