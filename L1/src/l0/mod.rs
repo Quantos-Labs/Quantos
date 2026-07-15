@@ -78,8 +78,8 @@ pub use hub::{FinalityHub, HubMetrics, ValidatorSetSnapshot};
 pub use light_client::{
     BitcoinLightClient, CardanoLightClient, CosmosLightClient, EVMLightClient,
     GenericLightClient, LightClient, LightClientRegistry, MoveLightClient,
-    NearLightClient, PolkadotLightClient, SolanaLightClient, StellarLightClient,
-    TezosLightClient, TonLightClient, TronLightClient,
+    NearLightClient, PolkadotLightClient, RippleLightClient, SolanaLightClient,
+    StellarLightClient, TezosLightClient, TonLightClient, TronLightClient,
 };
 pub use proof::{
     L0FinalityProof, L0ProofHeader, L0_PROOF_VERSION, ProofSignature, ValidatorRecord,

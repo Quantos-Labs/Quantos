@@ -45,6 +45,8 @@ pub enum ChainFamily {
     Cardano,
     /// Tezos (Michelson VM, Ed25519 baker signatures).
     Tezos,
+    /// Ripple (XRPL, UNL consensus, Ed25519/secp256k1 validator signatures).
+    Ripple,
     /// Generic catch-all for non-EVM chains using a custom adapter.
     Custom,
 }
@@ -230,5 +232,8 @@ fn default_adapters() -> Vec<ChainAdapter> {
         // Tezos — production active
         mk("tezos", Tezos, 0x5458_5A, "Tezos", true),
         mk("tezos-testnet", Tezos, 0x5458_5A, "Tezos Ghostnet", false),
+        // Ripple (XRPL) — production active
+        mk("ripple", Ripple, 0x525850_4C, "Ripple", true),
+        mk("ripple-testnet", Ripple, 0x525850_54, "Ripple Testnet", false),
     ]
 }

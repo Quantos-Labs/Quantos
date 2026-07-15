@@ -60,6 +60,10 @@ pub enum ChainId {
     Tezos,
     TezosTestnet,
     
+    // Ripple (XRPL)
+    Ripple,
+    RippleTestnet,
+    
     /// Custom chain (for future extensibility)
     Custom(String),
 }
@@ -111,6 +115,8 @@ impl ChainId {
             Self::CardanoTestnet => "cardano-testnet",
             Self::Tezos => "tezos",
             Self::TezosTestnet => "tezos-testnet",
+            Self::Ripple => "ripple",
+            Self::RippleTestnet => "ripple-testnet",
             Self::Custom(s) => s,
         }
     }
@@ -150,6 +156,8 @@ impl ChainId {
             Self::Cardano | Self::CardanoTestnet => ChainFamily::Cardano,
             
             Self::Tezos | Self::TezosTestnet => ChainFamily::Tezos,
+            
+            Self::Ripple | Self::RippleTestnet => ChainFamily::Ripple,
             
             Self::Custom(_) => ChainFamily::Custom,
         }
@@ -278,6 +286,17 @@ pub enum ChainProof {
         /// Baker public keys (Ed25519, 32 bytes each).
         baker_pubkeys: Vec<Vec<u8>>,
     },
+    /// Ripple proof: ledger header + UNL validator signatures.
+    Ripple {
+        /// XRPL ledger header bytes (canonical XDR encoding).
+        ledger_header: Vec<u8>,
+        /// UNL validator signatures (Ed25519 or secp256k1).
+        validator_signatures: Vec<Vec<u8>>,
+        /// Validator public keys (Ed25519 32 bytes or secp256k1 33 bytes).
+        validator_pubkeys: Vec<Vec<u8>>,
+        /// Signed voting power fraction (basis points).
+        signed_power_bps: u16,
+    },
     /// Generic proof for custom/future chain families.
     Generic {
         /// Raw proof bytes.
@@ -305,6 +324,7 @@ impl ChainProof {
             Self::Polkadot { .. } => ChainFamily::Substrate,
             Self::Stellar { .. } => ChainFamily::Stellar,
             Self::Tezos { .. } => ChainFamily::Tezos,
+            Self::Ripple { .. } => ChainFamily::Ripple,
             Self::Generic { .. } => ChainFamily::Custom,
         }
     }

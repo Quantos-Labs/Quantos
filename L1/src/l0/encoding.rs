@@ -38,6 +38,8 @@ pub enum EncodingFormat {
     JsonMove,
     /// Compact JSON wrapped for Cosmos consumers.
     JsonCosmos,
+    /// Compact JSON wrapped for Ripple (XRPL) consumers.
+    JsonRipple,
     /// Catch-all: the proof is serialized as compact JSON without any
     /// chain-specific framing.
     JsonGeneric,
@@ -53,6 +55,7 @@ impl EncodingFormat {
             ChainFamily::Stellar => EncodingFormat::JsonStellar,
             ChainFamily::Move => EncodingFormat::JsonMove,
             ChainFamily::Cosmos => EncodingFormat::JsonCosmos,
+            ChainFamily::Ripple => EncodingFormat::JsonRipple,
             ChainFamily::Near => EncodingFormat::JsonGeneric,
             ChainFamily::Ton => EncodingFormat::JsonGeneric,
             ChainFamily::Bitcoin => EncodingFormat::JsonGeneric,
@@ -171,6 +174,7 @@ fn family_tag(family: ChainFamily) -> &'static str {
         ChainFamily::Substrate => "substrate",
         ChainFamily::Cardano => "cardano",
         ChainFamily::Tezos => "tezos",
+        ChainFamily::Ripple => "ripple",
         ChainFamily::Custom => "custom",
     }
 }

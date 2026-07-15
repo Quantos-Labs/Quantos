@@ -620,6 +620,33 @@ fn verify_tezos(
     Ok(VerificationResult::valid())
 }
 
+fn verify_ripple(
+    cp: &ExternalCheckpoint,
+    validator_set: Option<&ValidatorSet>,
+) -> L0Result<VerificationResult> {
+    let ChainProof::Ripple { ledger_header, validator_signatures, validator_pubkeys, signed_power_bps } = &cp.proof else {
+        return Ok(VerificationResult::invalid("Expected Ripple ChainProof"));
+    };
+    if ledger_header.is_empty() { return Ok(VerificationResult::invalid("Ripple ledger_header empty")); }
+    if validator_signatures.is_empty() { return Ok(VerificationResult::invalid("Ripple validator_signatures empty")); }
+    if validator_pubkeys.len() != validator_signatures.len() {
+        return Ok(VerificationResult::invalid("Ripple pubkey/sig count mismatch"));
+    }
+    let Some(set) = validator_set else {
+        return Ok(VerificationResult::invalid("Ripple: no validator set registered"));
+    };
+    let messages: Vec<&[u8]> = (0..validator_signatures.len()).map(|_| ledger_header.as_slice()).collect();
+    let (valid, errors) = verify_ed25519_batch(&set.pubkeys, &messages, validator_signatures);
+    let computed_power_bps = ((valid as u64 * 10000) / set.pubkeys.len().max(1) as u64) as u16;
+    if computed_power_bps < set.threshold_bps {
+        return Ok(VerificationResult::invalid(format!(
+            "Ripple signed power {} bps < threshold {} bps. Errors: {:?}",
+            computed_power_bps, set.threshold_bps, errors
+        )));
+    }
+    Ok(VerificationResult::valid())
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ValidatorSet {
     pub pubkeys: Vec<Vec<u8>>,
@@ -775,6 +802,17 @@ impl LightClient for TezosLightClient {
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
+pub struct RippleLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl RippleLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Ripple)); Self { registry, chain } } }
+#[async_trait]
+impl LightClient for RippleLightClient {
+    async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
+        let set = self.registry.get_cloned(&self.chain);
+        verify_ripple(cp, set.as_ref())
+    }
+    fn chain_id(&self) -> ChainId { self.chain.clone() }
+}
+
 pub struct GenericLightClient { chain: ChainId }
 impl GenericLightClient { pub fn new(chain: ChainId) -> Self { Self { chain } } }
 #[async_trait]
@@ -856,6 +894,9 @@ impl LightClientRegistry {
         }
         for chain in [ChainId::Tezos, ChainId::TezosTestnet] {
             clients.insert(chain.clone(), Box::new(TezosLightClient::new(chain, vr.clone())));
+        }
+        for chain in [ChainId::Ripple, ChainId::RippleTestnet] {
+            clients.insert(chain.clone(), Box::new(RippleLightClient::new(chain, vr.clone())));
         }
 
         Self { clients, validator_registry }
