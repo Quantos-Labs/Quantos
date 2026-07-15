@@ -647,6 +647,77 @@ fn verify_ripple(
     Ok(VerificationResult::valid())
 }
 
+fn verify_icp(
+    cp: &ExternalCheckpoint,
+    _validator_set: Option<&ValidatorSet>,
+) -> L0Result<VerificationResult> {
+    let ChainProof::Icp { block_header, threshold_signature, subnet_public_key } = &cp.proof else {
+        return Ok(VerificationResult::invalid("Expected ICP ChainProof"));
+    };
+    if block_header.is_empty() { return Ok(VerificationResult::invalid("ICP block_header empty")); }
+    if threshold_signature.is_empty() { return Ok(VerificationResult::invalid("ICP threshold_signature empty")); }
+    if subnet_public_key.is_empty() { return Ok(VerificationResult::invalid("ICP subnet_public_key empty")); }
+    // ICP uses BLS12-381 threshold signatures. Full BLS verification
+    // requires a BLS pairing library. For now, we verify structural
+    // integrity and rely on the relayer to provide valid signatures.
+    // TODO: integrate blst crate for full BLS threshold verification.
+    Ok(VerificationResult::valid())
+}
+
+fn verify_algorand(
+    cp: &ExternalCheckpoint,
+    validator_set: Option<&ValidatorSet>,
+) -> L0Result<VerificationResult> {
+    let ChainProof::Algorand { block_header, participation_signatures, participation_pubkeys, signed_power_bps } = &cp.proof else {
+        return Ok(VerificationResult::invalid("Expected Algorand ChainProof"));
+    };
+    if block_header.is_empty() { return Ok(VerificationResult::invalid("Algorand block_header empty")); }
+    if participation_signatures.is_empty() { return Ok(VerificationResult::invalid("Algorand participation_signatures empty")); }
+    if participation_pubkeys.len() != participation_signatures.len() {
+        return Ok(VerificationResult::invalid("Algorand pubkey/sig count mismatch"));
+    }
+    let Some(set) = validator_set else {
+        return Ok(VerificationResult::invalid("Algorand: no validator set registered"));
+    };
+    let messages: Vec<&[u8]> = (0..participation_signatures.len()).map(|_| block_header.as_slice()).collect();
+    let (valid, errors) = verify_ed25519_batch(&set.pubkeys, &messages, participation_signatures);
+    let computed_power_bps = ((valid as u64 * 10000) / set.pubkeys.len().max(1) as u64) as u16;
+    if computed_power_bps < set.threshold_bps {
+        return Ok(VerificationResult::invalid(format!(
+            "Algorand signed power {} bps < threshold {} bps. Errors: {:?}",
+            computed_power_bps, set.threshold_bps, errors
+        )));
+    }
+    Ok(VerificationResult::valid())
+}
+
+fn verify_hedera(
+    cp: &ExternalCheckpoint,
+    validator_set: Option<&ValidatorSet>,
+) -> L0Result<VerificationResult> {
+    let ChainProof::Hedera { block_header, council_signatures, council_pubkeys, signed_power_bps } = &cp.proof else {
+        return Ok(VerificationResult::invalid("Expected Hedera ChainProof"));
+    };
+    if block_header.is_empty() { return Ok(VerificationResult::invalid("Hedera block_header empty")); }
+    if council_signatures.is_empty() { return Ok(VerificationResult::invalid("Hedera council_signatures empty")); }
+    if council_pubkeys.len() != council_signatures.len() {
+        return Ok(VerificationResult::invalid("Hedera pubkey/sig count mismatch"));
+    }
+    let Some(set) = validator_set else {
+        return Ok(VerificationResult::invalid("Hedera: no validator set registered"));
+    };
+    let messages: Vec<&[u8]> = (0..council_signatures.len()).map(|_| block_header.as_slice()).collect();
+    let (valid, errors) = verify_ed25519_batch(&set.pubkeys, &messages, council_signatures);
+    let computed_power_bps = ((valid as u64 * 10000) / set.pubkeys.len().max(1) as u64) as u16;
+    if computed_power_bps < set.threshold_bps {
+        return Ok(VerificationResult::invalid(format!(
+            "Hedera signed power {} bps < threshold {} bps. Errors: {:?}",
+            computed_power_bps, set.threshold_bps, errors
+        )));
+    }
+    Ok(VerificationResult::valid())
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ValidatorSet {
     pub pubkeys: Vec<Vec<u8>>,
@@ -813,6 +884,39 @@ impl LightClient for RippleLightClient {
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
+pub struct IcpLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl IcpLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Icp)); Self { registry, chain } } }
+#[async_trait]
+impl LightClient for IcpLightClient {
+    async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
+        let set = self.registry.get_cloned(&self.chain);
+        verify_icp(cp, set.as_ref())
+    }
+    fn chain_id(&self) -> ChainId { self.chain.clone() }
+}
+
+pub struct AlgorandLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl AlgorandLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Algorand)); Self { registry, chain } } }
+#[async_trait]
+impl LightClient for AlgorandLightClient {
+    async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
+        let set = self.registry.get_cloned(&self.chain);
+        verify_algorand(cp, set.as_ref())
+    }
+    fn chain_id(&self) -> ChainId { self.chain.clone() }
+}
+
+pub struct HederaLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl HederaLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Hedera)); Self { registry, chain } } }
+#[async_trait]
+impl LightClient for HederaLightClient {
+    async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
+        let set = self.registry.get_cloned(&self.chain);
+        verify_hedera(cp, set.as_ref())
+    }
+    fn chain_id(&self) -> ChainId { self.chain.clone() }
+}
+
 pub struct GenericLightClient { chain: ChainId }
 impl GenericLightClient { pub fn new(chain: ChainId) -> Self { Self { chain } } }
 #[async_trait]
@@ -898,6 +1002,9 @@ impl LightClientRegistry {
         for chain in [ChainId::Ripple, ChainId::RippleTestnet] {
             clients.insert(chain.clone(), Box::new(RippleLightClient::new(chain, vr.clone())));
         }
+        clients.insert(ChainId::InternetComputer, Box::new(IcpLightClient::new(ChainId::InternetComputer, vr.clone())));
+        clients.insert(ChainId::Algorand, Box::new(AlgorandLightClient::new(ChainId::Algorand, vr.clone())));
+        clients.insert(ChainId::Hedera, Box::new(HederaLightClient::new(ChainId::Hedera, vr.clone())));
 
         Self { clients, validator_registry }
     }

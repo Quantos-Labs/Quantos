@@ -56,6 +56,9 @@ impl EncodingFormat {
             ChainFamily::Move => EncodingFormat::JsonMove,
             ChainFamily::Cosmos => EncodingFormat::JsonCosmos,
             ChainFamily::Ripple => EncodingFormat::JsonRipple,
+            ChainFamily::Icp => EncodingFormat::JsonGeneric,
+            ChainFamily::Algorand => EncodingFormat::JsonGeneric,
+            ChainFamily::Hedera => EncodingFormat::JsonGeneric,
             ChainFamily::Near => EncodingFormat::JsonGeneric,
             ChainFamily::Ton => EncodingFormat::JsonGeneric,
             ChainFamily::Bitcoin => EncodingFormat::JsonGeneric,
@@ -175,6 +178,9 @@ fn family_tag(family: ChainFamily) -> &'static str {
         ChainFamily::Cardano => "cardano",
         ChainFamily::Tezos => "tezos",
         ChainFamily::Ripple => "ripple",
+        ChainFamily::Icp => "icp",
+        ChainFamily::Algorand => "algorand",
+        ChainFamily::Hedera => "hedera",
         ChainFamily::Custom => "custom",
     }
 }

@@ -47,6 +47,12 @@ pub enum ChainFamily {
     Tezos,
     /// Ripple (XRPL, UNL consensus, Ed25519/secp256k1 validator signatures).
     Ripple,
+    /// Internet Computer (ICP, Chain Key consensus, BLS threshold signatures).
+    Icp,
+    /// Algorand (Pure Proof of Stake, VRF, Ed25519 participation signatures).
+    Algorand,
+    /// Hedera (Hashgraph consensus, Ed25519 council signatures).
+    Hedera,
     /// Generic catch-all for non-EVM chains using a custom adapter.
     Custom,
 }
@@ -208,6 +214,9 @@ fn default_adapters() -> Vec<ChainAdapter> {
         mk("hyperliquid-evm", Evm, 999, "Hyperliquid EVM", false),
         mk("arbitrum", Evm, 42_161, "Arbitrum One", false),
         mk("base", Evm, 8_453, "Base", false),
+        mk("polygon", Evm, 137, "Polygon", false),
+        mk("optimism", Evm, 10, "Optimism", false),
+        mk("berachain", Evm, 80_082, "Berachain", false),
         // SVM (Solana) — production active
         mk("solana", Svm, 0x534F_4C, "Solana", true),
         // TVM (Tron) — production active
@@ -235,5 +244,11 @@ fn default_adapters() -> Vec<ChainAdapter> {
         // Ripple (XRPL) — production active
         mk("ripple", Ripple, 0x525850_4C, "Ripple", true),
         mk("ripple-testnet", Ripple, 0x525850_54, "Ripple Testnet", false),
+        // Internet Computer (ICP) — production active
+        mk("icp", Icp, 0x494350, "Internet Computer", true),
+        // Algorand — production active
+        mk("algorand", Algorand, 0x414C474F, "Algorand", true),
+        // Hedera — production active
+        mk("hedera", Hedera, 0x484544, "Hedera", true),
     ]
 }

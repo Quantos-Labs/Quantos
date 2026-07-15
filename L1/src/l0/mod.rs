@@ -77,7 +77,8 @@ pub use gossip::{CheckpointGossip, CheckpointGossipMessage};
 pub use hub::{FinalityHub, HubMetrics, ValidatorSetSnapshot};
 pub use light_client::{
     BitcoinLightClient, CardanoLightClient, CosmosLightClient, EVMLightClient,
-    GenericLightClient, LightClient, LightClientRegistry, MoveLightClient,
+    GenericLightClient, HederaLightClient, IcpLightClient, AlgorandLightClient,
+    LightClient, LightClientRegistry, MoveLightClient,
     NearLightClient, PolkadotLightClient, RippleLightClient, SolanaLightClient,
     StellarLightClient, TezosLightClient, TonLightClient, TronLightClient,
 };

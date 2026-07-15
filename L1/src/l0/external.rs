@@ -64,6 +64,15 @@ pub enum ChainId {
     Ripple,
     RippleTestnet,
     
+    // Internet Computer (ICP)
+    InternetComputer,
+    
+    // Algorand
+    Algorand,
+    
+    // Hedera
+    Hedera,
+    
     /// Custom chain (for future extensibility)
     Custom(String),
 }
@@ -117,6 +126,9 @@ impl ChainId {
             Self::TezosTestnet => "tezos-testnet",
             Self::Ripple => "ripple",
             Self::RippleTestnet => "ripple-testnet",
+            Self::InternetComputer => "icp",
+            Self::Algorand => "algorand",
+            Self::Hedera => "hedera",
             Self::Custom(s) => s,
         }
     }
@@ -158,6 +170,12 @@ impl ChainId {
             Self::Tezos | Self::TezosTestnet => ChainFamily::Tezos,
             
             Self::Ripple | Self::RippleTestnet => ChainFamily::Ripple,
+            
+            Self::InternetComputer => ChainFamily::Icp,
+            
+            Self::Algorand => ChainFamily::Algorand,
+            
+            Self::Hedera => ChainFamily::Hedera,
             
             Self::Custom(_) => ChainFamily::Custom,
         }
@@ -297,6 +315,37 @@ pub enum ChainProof {
         /// Signed voting power fraction (basis points).
         signed_power_bps: u16,
     },
+    /// ICP proof: block header + Chain Key BLS threshold signature.
+    Icp {
+        /// ICP block header bytes.
+        block_header: Vec<u8>,
+        /// BLS aggregate threshold signature from subnet replica.
+        threshold_signature: Vec<u8>,
+        /// BLS public key of the subnet (48 bytes).
+        subnet_public_key: Vec<u8>,
+    },
+    /// Algorand proof: block header + participation Ed25519 signatures.
+    Algorand {
+        /// Algorand block header bytes.
+        block_header: Vec<u8>,
+        /// Participation node Ed25519 signatures.
+        participation_signatures: Vec<Vec<u8>>,
+        /// Participation public keys (Ed25519, 32 bytes each).
+        participation_pubkeys: Vec<Vec<u8>>,
+        /// Signed voting power fraction (basis points).
+        signed_power_bps: u16,
+    },
+    /// Hedera proof: block header + council Ed25519 signatures.
+    Hedera {
+        /// Hedera block header bytes (protobuf Record/Event).
+        block_header: Vec<u8>,
+        /// Council member Ed25519 signatures.
+        council_signatures: Vec<Vec<u8>>,
+        /// Council member public keys (Ed25519, 32 bytes each).
+        council_pubkeys: Vec<Vec<u8>>,
+        /// Signed voting power fraction (basis points).
+        signed_power_bps: u16,
+    },
     /// Generic proof for custom/future chain families.
     Generic {
         /// Raw proof bytes.
@@ -325,6 +374,9 @@ impl ChainProof {
             Self::Stellar { .. } => ChainFamily::Stellar,
             Self::Tezos { .. } => ChainFamily::Tezos,
             Self::Ripple { .. } => ChainFamily::Ripple,
+            Self::Icp { .. } => ChainFamily::Icp,
+            Self::Algorand { .. } => ChainFamily::Algorand,
+            Self::Hedera { .. } => ChainFamily::Hedera,
             Self::Generic { .. } => ChainFamily::Custom,
         }
     }
