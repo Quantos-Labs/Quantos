@@ -53,6 +53,8 @@ pub enum ChainFamily {
     Algorand,
     /// Hedera (Hashgraph consensus, Ed25519 council signatures).
     Hedera,
+    /// Canton Network (Hyperledger Canton, privacy-preserving multi-party sync).
+    Canton,
     /// Generic catch-all for non-EVM chains using a custom adapter.
     Custom,
 }
@@ -250,5 +252,7 @@ fn default_adapters() -> Vec<ChainAdapter> {
         mk("algorand", Algorand, 0x414C474F, "Algorand", true),
         // Hedera — production active
         mk("hedera", Hedera, 0x484544, "Hedera", true),
+        // Canton Network — production active
+        mk("canton", Canton, 0x43414E, "Canton Network", true),
     ]
 }

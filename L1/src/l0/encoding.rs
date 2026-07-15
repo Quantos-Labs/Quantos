@@ -59,6 +59,7 @@ impl EncodingFormat {
             ChainFamily::Icp => EncodingFormat::JsonGeneric,
             ChainFamily::Algorand => EncodingFormat::JsonGeneric,
             ChainFamily::Hedera => EncodingFormat::JsonGeneric,
+            ChainFamily::Canton => EncodingFormat::JsonGeneric,
             ChainFamily::Near => EncodingFormat::JsonGeneric,
             ChainFamily::Ton => EncodingFormat::JsonGeneric,
             ChainFamily::Bitcoin => EncodingFormat::JsonGeneric,
@@ -181,6 +182,7 @@ fn family_tag(family: ChainFamily) -> &'static str {
         ChainFamily::Icp => "icp",
         ChainFamily::Algorand => "algorand",
         ChainFamily::Hedera => "hedera",
+        ChainFamily::Canton => "canton",
         ChainFamily::Custom => "custom",
     }
 }

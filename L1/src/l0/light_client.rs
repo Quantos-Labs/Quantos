@@ -718,6 +718,33 @@ fn verify_hedera(
     Ok(VerificationResult::valid())
 }
 
+fn verify_canton(
+    cp: &ExternalCheckpoint,
+    validator_set: Option<&ValidatorSet>,
+) -> L0Result<VerificationResult> {
+    let ChainProof::Canton { sync_event, participant_signatures, participant_pubkeys } = &cp.proof else {
+        return Ok(VerificationResult::invalid("Expected Canton ChainProof"));
+    };
+    if sync_event.is_empty() { return Ok(VerificationResult::invalid("Canton sync_event empty")); }
+    if participant_signatures.is_empty() { return Ok(VerificationResult::invalid("Canton participant_signatures empty")); }
+    if participant_pubkeys.len() != participant_signatures.len() {
+        return Ok(VerificationResult::invalid("Canton pubkey/sig count mismatch"));
+    }
+    let Some(set) = validator_set else {
+        return Ok(VerificationResult::invalid("Canton: no validator set registered"));
+    };
+    let messages: Vec<&[u8]> = (0..participant_signatures.len()).map(|_| sync_event.as_slice()).collect();
+    let (valid, errors) = verify_ed25519_batch(&set.pubkeys, &messages, participant_signatures);
+    let computed_power_bps = ((valid as u64 * 10000) / set.pubkeys.len().max(1) as u64) as u16;
+    if computed_power_bps < set.threshold_bps {
+        return Ok(VerificationResult::invalid(format!(
+            "Canton signed power {} bps < threshold {} bps. Errors: {:?}",
+            computed_power_bps, set.threshold_bps, errors
+        )));
+    }
+    Ok(VerificationResult::valid())
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ValidatorSet {
     pub pubkeys: Vec<Vec<u8>>,
@@ -917,6 +944,17 @@ impl LightClient for HederaLightClient {
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
+pub struct CantonLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl CantonLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { assert!(matches!(chain.family(), ChainFamily::Canton)); Self { registry, chain } } }
+#[async_trait]
+impl LightClient for CantonLightClient {
+    async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
+        let set = self.registry.get_cloned(&self.chain);
+        verify_canton(cp, set.as_ref())
+    }
+    fn chain_id(&self) -> ChainId { self.chain.clone() }
+}
+
 pub struct GenericLightClient { chain: ChainId }
 impl GenericLightClient { pub fn new(chain: ChainId) -> Self { Self { chain } } }
 #[async_trait]
@@ -1005,6 +1043,7 @@ impl LightClientRegistry {
         clients.insert(ChainId::InternetComputer, Box::new(IcpLightClient::new(ChainId::InternetComputer, vr.clone())));
         clients.insert(ChainId::Algorand, Box::new(AlgorandLightClient::new(ChainId::Algorand, vr.clone())));
         clients.insert(ChainId::Hedera, Box::new(HederaLightClient::new(ChainId::Hedera, vr.clone())));
+        clients.insert(ChainId::Canton, Box::new(CantonLightClient::new(ChainId::Canton, vr.clone())));
 
         Self { clients, validator_registry }
     }

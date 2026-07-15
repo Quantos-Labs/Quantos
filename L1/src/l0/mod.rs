@@ -76,7 +76,7 @@ pub use external::{ChainId, ExternalCheckpoint, VerificationResult, Verification
 pub use gossip::{CheckpointGossip, CheckpointGossipMessage};
 pub use hub::{FinalityHub, HubMetrics, ValidatorSetSnapshot};
 pub use light_client::{
-    BitcoinLightClient, CardanoLightClient, CosmosLightClient, EVMLightClient,
+    BitcoinLightClient, CantonLightClient, CardanoLightClient, CosmosLightClient, EVMLightClient,
     GenericLightClient, HederaLightClient, IcpLightClient, AlgorandLightClient,
     LightClient, LightClientRegistry, MoveLightClient,
     NearLightClient, PolkadotLightClient, RippleLightClient, SolanaLightClient,

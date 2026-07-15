@@ -73,6 +73,9 @@ pub enum ChainId {
     // Hedera
     Hedera,
     
+    // Canton Network
+    Canton,
+    
     /// Custom chain (for future extensibility)
     Custom(String),
 }
@@ -129,6 +132,7 @@ impl ChainId {
             Self::InternetComputer => "icp",
             Self::Algorand => "algorand",
             Self::Hedera => "hedera",
+            Self::Canton => "canton",
             Self::Custom(s) => s,
         }
     }
@@ -176,6 +180,8 @@ impl ChainId {
             Self::Algorand => ChainFamily::Algorand,
             
             Self::Hedera => ChainFamily::Hedera,
+            
+            Self::Canton => ChainFamily::Canton,
             
             Self::Custom(_) => ChainFamily::Custom,
         }
@@ -346,6 +352,15 @@ pub enum ChainProof {
         /// Signed voting power fraction (basis points).
         signed_power_bps: u16,
     },
+    /// Canton proof: sync event + participant Ed25519 signatures.
+    Canton {
+        /// Canton sync event or transfer bytes (protobuf encoded).
+        sync_event: Vec<u8>,
+        /// Participant node Ed25519 signatures.
+        participant_signatures: Vec<Vec<u8>>,
+        /// Participant public keys (Ed25519, 32 bytes each).
+        participant_pubkeys: Vec<Vec<u8>>,
+    },
     /// Generic proof for custom/future chain families.
     Generic {
         /// Raw proof bytes.
@@ -377,6 +392,7 @@ impl ChainProof {
             Self::Icp { .. } => ChainFamily::Icp,
             Self::Algorand { .. } => ChainFamily::Algorand,
             Self::Hedera { .. } => ChainFamily::Hedera,
+            Self::Canton { .. } => ChainFamily::Canton,
             Self::Generic { .. } => ChainFamily::Custom,
         }
     }
