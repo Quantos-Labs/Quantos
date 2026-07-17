@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-/// @title LynxNFT - 50,000 unique Lynx on Quantos
-/// @notice ERC721-style NFT with minter-only mint, max supply 50k
+/// @title LynxNFT - 10,000 unique Lynx on Quantos
+/// @notice ERC721-style NFT with minter-only mint, max supply 10k
 contract LynxNFT {
     string public constant name = "Lynx NFT";
     string public constant symbol = "LYNX";
-    uint256 public constant MAX_SUPPLY = 50000;
+    uint256 public constant MAX_SUPPLY = 10000;
 
     address public minter;
     uint256 private _totalMinted;

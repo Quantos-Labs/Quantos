@@ -6,10 +6,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-WALLET_SERVER = "http://127.0.0.1:3001"
-PIN = "999999"
-WASM_PATH = "/Users/wayle/Quantos_labs/quantos/test-contracts/build/QTEST.wasm"
-CONTRACT_METADATA_PATH = "/Users/wayle/Quantos_labs/quantos/test-contracts/build/QTEST.contract"
+import os
+WALLET_SERVER = os.environ.get("WALLET_SERVER", "http://127.0.0.1:3001")
+PIN = os.environ.get("PIN", "999999")
+_BASE = Path(__file__).parent
+WASM_PATH = str(_BASE / "QTEST.wasm")
+CONTRACT_METADATA_PATH = str(_BASE / "QTEST.contract")
 
 
 def curl_post(url, data):
@@ -81,8 +83,17 @@ def main():
     print(f"   Deploy response: {json.dumps(deploy_resp, indent=2)}")
 
     tx_hash = deploy_resp.get("tx_hash", "unknown")
+    contract_address = deploy_resp.get("contract_address") or deploy_resp.get("address", "unknown")
     print(f"\n✓ QTEST deployed! tx_hash: {tx_hash}")
     print(f"  Deployer: {address}")
+    print(f"  Contract: {contract_address}")
+
+    # Save address for downstream scripts
+    addresses_file = _BASE.parent / "solidity-contracts" / "deployed_addresses.txt"
+    with open(addresses_file, "w") as f:
+        f.write(f"DEPLOYER={address}\n")
+        f.write(f"QTEST={contract_address}\n")
+    print(f"  Saved to: {addresses_file}")
 
 
 if __name__ == "__main__":
