@@ -219,6 +219,8 @@ fn default_adapters() -> Vec<ChainAdapter> {
         mk("polygon", Evm, 137, "Polygon", false),
         mk("optimism", Evm, 10, "Optimism", false),
         mk("berachain", Evm, 80_082, "Berachain", false),
+        mk("bsc", Evm, 56, "Binance Smart Chain", true),
+        mk("bsc-testnet", Evm, 97, "BSC Testnet", false),
         // SVM (Solana) — production active
         mk("solana", Svm, 0x534F_4C, "Solana", true),
         // TVM (Tron) — production active
