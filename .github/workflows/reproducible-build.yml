@@ -57,7 +57,7 @@ jobs:
           } > artifacts/build-info.txt
           cat artifacts/build-info.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: reproducible-build-hashes
           path: artifacts/
@@ -88,7 +88,7 @@ jobs:
           sha256sum target/release/quantos target/release/quantos-cli > artifacts/cargo-binary-hashes.txt
           cat artifacts/cargo-binary-hashes.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cargo-build-hashes
           path: artifacts/
