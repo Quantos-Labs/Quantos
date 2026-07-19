@@ -21,10 +21,6 @@ use crate::types::Hash;
 //  PQC signature size constants (bytes)
 // ══════════════════════════════════════════════════════════
 
-/// Dilithium-3 signature size in bytes (NIST standard)
-pub const DILITHIUM3_SIG_SIZE: usize = 3_293;
-/// Dilithium-3 public key size in bytes
-pub const DILITHIUM3_PK_SIZE: usize = 1_952;
 /// ML-DSA-65 signature size in bytes (FIPS 204)
 pub const MLDSA65_SIG_SIZE: usize = 3_309;
 /// ML-DSA-65 public key size in bytes
@@ -136,7 +132,7 @@ impl SignatureAggregator {
             }
 
             // Verify actual signature
-            if let Err(_) = crate::crypto::verify_dilithium(
+            if let Err(_) = crate::crypto::verify_ml_dsa_65(
                 &agg_sig.public_keys[i],
                 &agg_sig.message,
                 &agg_sig.signatures[i],
@@ -291,16 +287,23 @@ impl SignatureAggregator {
         }
     }
 
-    /// Verifies that a compact signature is consistent with known
-    /// committee public keys by checking that the root was produced
-    /// from the claimed signers.
+    /// Verifies a compact block signature against individual signatures
+    /// and committee public keys using batched parallel verification.
+    ///
+    /// Performs full cryptographic verification:
+    /// 1. Message hash matches
+    /// 2. Signer bitmap popcount matches signer_count
+    /// 3. Quorum ≥ 2/3 + 1
+    /// 4. All individual signatures are valid (batched via rayon)
+    /// 5. Reconstructed Merkle root matches compact.root
     pub fn verify_compact(
         &self,
         compact: &CompactBlockSignature,
         committee_pks: &[Vec<u8>],
         message: &[u8],
+        signatures: &[Vec<u8>],
     ) -> Result<bool, AggregationError> {
-        // Verify message hash
+        // 1. Verify message hash
         let mut h = Sha3_256::new();
         h.update(message);
         let d = h.finalize();
@@ -310,14 +313,48 @@ impl SignatureAggregator {
             return Ok(false);
         }
 
-        // Verify signer count matches bitmap popcount
+        // 2. Verify signer count matches bitmap popcount
         if compact.signer_bitmap.count_signers() != compact.signer_count as usize {
             return Ok(false);
         }
 
-        // Verify quorum (≥ 2/3 + 1)
+        // 3. Verify quorum (≥ 2/3 + 1)
         let quorum = (committee_pks.len() * 2 / 3) + 1;
         if compact.signer_count < quorum as u32 {
+            return Ok(false);
+        }
+
+        // 4. Collect signer indices from bitmap
+        let signer_indices: Vec<usize> = (0..committee_pks.len())
+            .filter(|&i| compact.signer_bitmap.has_signed(i))
+            .collect();
+
+        if signer_indices.len() != signatures.len() {
+            return Ok(false);
+        }
+
+        // 5. Build batch verification items: (pubkey, message, signature)
+        let batch_items: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)> = signer_indices
+            .iter()
+            .zip(signatures.iter())
+            .map(|(&idx, sig)| (committee_pks[idx].clone(), message.to_vec(), sig.clone()))
+            .collect();
+
+        // 6. Batch-verify all signatures in parallel
+        let verifier = crate::crypto::batch_verify::MlDsa65BatchVerifier::new(256);
+        if !verifier.verify_all_valid(&batch_items) {
+            return Ok(false);
+        }
+
+        // 7. Reconstruct Merkle root from commitments and compare
+        let commitments: Vec<Hash> = signer_indices
+            .iter()
+            .zip(signatures.iter())
+            .map(|(&idx, sig)| self.compute_commitment(sig, &committee_pks[idx], message))
+            .collect();
+
+        let (reconstructed_root, _) = self.build_merkle_tree(&commitments);
+        if reconstructed_root != compact.root {
             return Ok(false);
         }
 
@@ -334,7 +371,7 @@ impl SignatureAggregator {
 /// After validators verify all individual signatures during block
 /// production, only this compact proof is stored on-chain and
 /// propagated to peers.  For a 800-validator committee this is
-/// ~132 bytes vs ~2.6 MB of raw Dilithium signatures.
+/// ~132 bytes vs ~2.6 MB of raw ML-DSA-65 signatures.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompactBlockSignature {
     /// Merkle root of all signature commitments
@@ -416,12 +453,12 @@ pub struct CompressionMetrics {
 }
 
 impl CompressionMetrics {
-    /// Computes realistic compression metrics for Dilithium-3.
+    /// Computes realistic compression metrics for ML-DSA-65.
     ///
     /// `num_signers` — validators that actually signed.
     /// `committee_size` — total committee (determines bitmap width).
-    pub fn dilithium(num_signers: usize, committee_size: usize) -> Self {
-        let individual = num_signers * (DILITHIUM3_SIG_SIZE + DILITHIUM3_PK_SIZE);
+    pub fn mldsa65(num_signers: usize, committee_size: usize) -> Self {
+        let individual = num_signers * (MLDSA65_SIG_SIZE + MLDSA65_PK_SIZE);
         let bitmap_bytes = (committee_size + 7) / 8 + 4;
         let compact = 32 /* root */ + bitmap_bytes + 4 /* count */ + 32 /* msg hash */;
         let ratio = if compact > 0 { individual as f64 / compact as f64 } else { 1.0 };
@@ -526,9 +563,9 @@ mod tests {
     }
 
     #[test]
-    fn test_compression_metrics_dilithium_800_committee() {
+    fn test_compression_metrics_mldsa65_800_committee() {
         // 21 signers out of 800 committee (typical BFT quorum)
-        let m = CompressionMetrics::dilithium(534, 800); // 2/3 + 1 = 534
+        let m = CompressionMetrics::mldsa65(534, 800); // 2/3 + 1 = 534
         // Individual: 534 * (3293 + 1952) = ~2.8 MB
         assert!(m.individual_bytes > 2_000_000);
         // Compact: 32 + 104 + 4 + 32 = 172 bytes

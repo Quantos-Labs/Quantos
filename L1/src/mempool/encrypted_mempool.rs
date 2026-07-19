@@ -1,12 +1,11 @@
 //! # Encrypted Mempool
 //!
-//! Threshold encryption for MEV protection - transactions are encrypted until
+//! Encryption for MEV protection - transactions are encrypted until
 //! block ordering is finalized, preventing front-running and sandwich attacks.
 //!
 //! **Mainnet status:** this module is **not** on the mainnet critical path.
 //! Production nodes default to [`crate::mempool::AccountableLeaderMempool`]
-//! (rotating accountable leader + slashing). Enable threshold decryption only
-//! with the `experimental-threshold-mlkem` Cargo feature after external audit.
+//! (rotating accountable leader + slashing).
 //!
 //! ## Fair ordering and position-grinding resistance
 //!
@@ -363,7 +362,9 @@ impl EncryptedMempool {
         drop(pending);
         
         // Combine shares and decrypt
-        let shares_vec: Vec<_> = tx_shares.unwrap().iter()
+        let tx_shares = shares.get(&tx_hash)
+            .ok_or(EncryptedMempoolError::SharesNotFound)?;
+        let shares_vec: Vec<_> = tx_shares.iter()
             .take(self.config.threshold as usize)
             .cloned()
             .collect();
@@ -606,17 +607,29 @@ impl EncryptedMempool {
         to.copy_from_slice(&data[offset..offset + 32]);
         offset += 32;
         
-        let amount = u128::from_le_bytes(data[offset..offset + 16].try_into().unwrap());
+        let amount = u128::from_le_bytes(
+            data[offset..offset + 16].try_into().map_err(|_| EncryptedMempoolError::DeserializationError)?
+        );
         offset += 16;
         
-        let nonce = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
+        let nonce = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| EncryptedMempoolError::DeserializationError)?
+        );
         offset += 8;
         
-        let max_compute_units = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
+        let max_compute_units = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| EncryptedMempoolError::DeserializationError)?
+        );
         offset += 8;
         
-        let data_len = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+        let data_len = u32::from_le_bytes(
+            data[offset..offset + 4].try_into().map_err(|_| EncryptedMempoolError::DeserializationError)?
+        ) as usize;
         offset += 4;
+        
+        if offset + data_len > data.len() {
+            return Err(EncryptedMempoolError::DeserializationError);
+        }
         
         let tx_data = data[offset..offset + data_len].to_vec();
         offset += data_len;
@@ -1520,6 +1533,7 @@ pub enum EncryptedMempoolError {
     TransactionTooLarge,
     InvalidShareProof,
     InsufficientShares,
+    SharesNotFound,
     CommitmentMismatch,
     DeserializationError,
     MEVAuctionDisabled,
@@ -1542,6 +1556,7 @@ impl std::fmt::Display for EncryptedMempoolError {
             EncryptedMempoolError::TransactionTooLarge => write!(f, "Transaction too large"),
             EncryptedMempoolError::InvalidShareProof => write!(f, "Invalid share proof"),
             EncryptedMempoolError::InsufficientShares => write!(f, "Insufficient shares"),
+            EncryptedMempoolError::SharesNotFound => write!(f, "Shares not found for transaction"),
             EncryptedMempoolError::CommitmentMismatch => write!(f, "Commitment mismatch"),
             EncryptedMempoolError::DeserializationError => write!(f, "Deserialization error"),
             EncryptedMempoolError::MEVAuctionDisabled => write!(f, "MEV auction disabled"),

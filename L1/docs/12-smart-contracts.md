@@ -21,7 +21,7 @@ Key differences from Ethereum:
 | Addresses | 20 bytes, `0x` prefix | **32 bytes**, `QTS:` prefix |
 | Fees | Gas (ETH) | Zero-gas (STACC bandwidth) |
 | Compiler | solc | **solang** (`--target polkadot`) |
-| Signatures | ECDSA / secp256k1 | **ML-DSA-65** (Dilithium, FIPS 204) |
+| Signatures | ECDSA / secp256k1 | **ML-DSA-65** (FIPS 204) |
 | Wallet | MetaMask | **Quantos Wallet** (PQC keys) |
 
 > Solidity function selectors (Keccak-256, first 4 bytes) are **identical** to Ethereum.
@@ -249,7 +249,7 @@ quantos decode 0x40420f00... --type uint256
 | wagmi / RainbowKit | ❌ | Depend on MetaMask / ECDSA signing |
 | Quantos Wallet | ✅ | Native PQC wallet for transaction signing |
 
-> **Why MetaMask doesn't work**: Quantos validators verify **ML-DSA-65** (Dilithium) signatures. MetaMask produces **ECDSA/secp256k1** signatures. Any transaction signed by MetaMask will be rejected at the consensus layer regardless of VM compatibility.
+> **Why MetaMask doesn't work**: Quantos validators verify **ML-DSA-65** signatures. MetaMask produces **ECDSA/secp256k1** signatures. Any transaction signed by MetaMask will be rejected at the consensus layer regardless of VM compatibility.
 
 ---
 

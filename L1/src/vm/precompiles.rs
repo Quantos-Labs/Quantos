@@ -9,13 +9,13 @@
 //! |---------|-----------|---------|
 //! | `0x01` | SHA3-256 Hash | 100 + 1/byte |
 //! | `0x02` | Blake3 Hash | 80 + 1/byte |
-//! | `0x03` | Dilithium-3 Verify | 50,000 |
+//! | `0x03` | ML-DSA-65 Verify | 50,000 |
 //! | `0x04` | ML-DSA-65 Verify | 30,000 |
 //! | `0x05` | SPHINCS+ Verify | 80,000 |
 //! | `0x06` | QR-VRF Verify | 60,000 |
 //! | `0x07` | Merkle Proof Verify | 5,000 + 500/level |
 //! | `0x08` | Address Derivation | 200 |
-//! | `0x09` | Batch Dilithium Verify | 40,000/sig |
+//! | `0x09` | Batch ML-DSA-65 Verify | 40,000/sig |
 //!
 //! ## Architecture
 //!
@@ -27,7 +27,7 @@
 //! │       │                                                     │
 //! │       ▼                                                     │
 //! │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-//! │  │ SHA3-256 │  │ Blake3   │  │Dilithium │  │ ML-DSA   │  │
+//! │  │ SHA3-256 │  │ Blake3   │  │ML-DSA-65  │  │ ML-DSA   │  │
 //! │  │  (native)│  │  (native)│  │  (native)│  │  (native)│  │
 //! │  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │
 //! │                                                             │
@@ -42,10 +42,10 @@
 use sha3::Digest;
 
 use crate::crypto::{
-    verify_dilithium, verify_dilithium_batch, verify_ml_dsa_65, verify_sphincs,
+    verify_ml_dsa_65, verify_ml_dsa_65_batch, verify_sphincs,
     sha3_256,
 };
-use crate::crypto::batch_verify::DilithiumBatchVerifier;
+use crate::crypto::batch_verify::MlDsa65BatchVerifier;
 use crate::types::{Address, address_to_qts, hash_data};
 
 /// Precompile address range: addresses with first 31 bytes = 0, last byte = ID
@@ -56,7 +56,7 @@ const CU_SHA3_BASE: u64 = 100;
 const CU_SHA3_PER_BYTE: u64 = 1;
 const CU_BLAKE3_BASE: u64 = 80;
 const CU_BLAKE3_PER_BYTE: u64 = 1;
-const CU_DILITHIUM_VERIFY: u64 = 50_000;
+const CU_MLDSA65_VERIFY_PRECOMPILE: u64 = 50_000;
 const CU_MLDSA65_VERIFY: u64 = 30_000;
 const CU_SPHINCS_VERIFY: u64 = 80_000;
 const CU_VRF_VERIFY: u64 = 60_000;
@@ -145,13 +145,13 @@ pub fn execute_precompile(
     match id {
         0x01 => precompile_sha3(input, available_cu),
         0x02 => precompile_blake3(input, available_cu),
-        0x03 => precompile_dilithium_verify(input, available_cu),
+        0x03 => precompile_mldsa65_verify_native(input, available_cu),
         0x04 => precompile_mldsa65_verify(input, available_cu),
         0x05 => precompile_sphincs_verify(input, available_cu),
         0x06 => precompile_vrf_verify(input, available_cu),
         0x07 => precompile_merkle_verify(input, available_cu),
         0x08 => precompile_address_derive(input, available_cu),
-        0x09 => precompile_batch_dilithium_verify(input, available_cu),
+        0x09 => precompile_batch_mldsa65_verify(input, available_cu),
         _ => Err(PrecompileError::UnknownPrecompile(id)),
     }
 }
@@ -161,13 +161,13 @@ pub fn precompile_name(id: u8) -> &'static str {
     match id {
         0x01 => "SHA3-256",
         0x02 => "Blake3",
-        0x03 => "Dilithium-3 Verify",
+        0x03 => "ML-DSA-65 Verify",
         0x04 => "ML-DSA-65 Verify",
         0x05 => "SPHINCS+ Verify",
         0x06 => "QR-VRF Verify",
         0x07 => "Merkle Proof Verify",
         0x08 => "Address Derivation",
-        0x09 => "Batch Dilithium Verify",
+        0x09 => "Batch ML-DSA-65 Verify",
         _ => "Unknown",
     }
 }
@@ -212,17 +212,17 @@ fn precompile_blake3(input: &[u8], available_cu: u64) -> Result<PrecompileResult
     })
 }
 
-/// 0x03: Dilithium-3 Signature Verification
+/// 0x03: ML-DSA-65 Signature Verification
 /// Input: [pubkey_len: u32][pubkey][msg_len: u32][msg][sig_len: u32][sig]
 /// Output: [0x01] if valid, [0x00] if invalid
-fn precompile_dilithium_verify(input: &[u8], available_cu: u64) -> Result<PrecompileResult, PrecompileError> {
-    if available_cu < CU_DILITHIUM_VERIFY {
+fn precompile_mldsa65_verify_native(input: &[u8], available_cu: u64) -> Result<PrecompileResult, PrecompileError> {
+    if available_cu < CU_MLDSA65_VERIFY_PRECOMPILE {
         return Err(PrecompileError::InsufficientCU);
     }
     
     let (pubkey, message, signature) = parse_verify_input(input)?;
     
-    let valid = if verify_dilithium_batch(pubkey.clone(), message.clone(), signature.clone()) {
+    let valid = if verify_ml_dsa_65_batch(pubkey.clone(), message.clone(), signature.clone()) {
         true
     } else {
         false
@@ -230,7 +230,7 @@ fn precompile_dilithium_verify(input: &[u8], available_cu: u64) -> Result<Precom
     
     Ok(PrecompileResult {
         output: vec![if valid { 0x01 } else { 0x00 }],
-        cu_used: CU_DILITHIUM_VERIFY,
+        cu_used: CU_MLDSA65_VERIFY_PRECOMPILE,
         success: true,
     })
 }
@@ -414,10 +414,10 @@ fn precompile_address_derive(input: &[u8], available_cu: u64) -> Result<Precompi
     })
 }
 
-/// 0x09: Batch Dilithium-3 Verification
+/// 0x09: Batch ML-DSA-65 Verification
 /// Input: [count: u32][pubkey_len: u32][pubkey][msg_len: u32][msg][sig_len: u32][sig]...repeated
 /// Output: [count: u32][result_0: u8][result_1: u8]...
-fn precompile_batch_dilithium_verify(input: &[u8], available_cu: u64) -> Result<PrecompileResult, PrecompileError> {
+fn precompile_batch_mldsa65_verify(input: &[u8], available_cu: u64) -> Result<PrecompileResult, PrecompileError> {
     if input.len() < 4 {
         return Err(PrecompileError::InvalidInput("Batch: need count".into()));
     }
@@ -459,7 +459,7 @@ fn precompile_batch_dilithium_verify(input: &[u8], available_cu: u64) -> Result<
         }
     }
 
-    let verifier = DilithiumBatchVerifier::new(items.len());
+    let verifier = MlDsa65BatchVerifier::new(items.len());
     let batch_results = verifier.verify_batch(&items);
     for valid in batch_results {
         results.push(if valid { 0x01 } else { 0x00 });
@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn test_insufficient_cu() {
         let mut addr = [0u8; 32];
-        addr[31] = 0x03; // Dilithium verify = 50,000 CU
+        addr[31] = 0x03; // ML-DSA-65 verify = 50,000 CU
         
         let input = vec![0u8; 12]; // Minimal input
         let result = execute_precompile(&addr, &input, 100);

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use crate::types::{Address, Amount, Hash, PublicKey, ShardId, Signature, hash_data};
-use crate::crypto::{verify_dilithium_batch, with_domain, DOMAIN_TX};
+use crate::crypto::{verify_ml_dsa_65_batch, with_domain, DOMAIN_TX};
 
 /// MEDIUM (z7): Reduced timestamp drift from 5 min to 30 sec to limit manipulation
 const MAX_TIMESTAMP_DRIFT: u64 = 30;
@@ -150,7 +150,7 @@ impl Transaction {
     pub fn set_signature(&mut self, signature: Signature, public_key: PublicKey) -> Result<(), String> {
         // CRITICAL: Verify signature before accepting
         let signing_data = self.signing_data();
-        if verify_dilithium_batch(public_key.clone(), signing_data, signature.clone()) {
+        if verify_ml_dsa_65_batch(public_key.clone(), signing_data, signature.clone()) {
             self.signature = signature;
             self.public_key = public_key;
             Ok(())

@@ -6,7 +6,7 @@ use dashmap::DashMap;
 use parking_lot::Mutex;
 use tracing::{debug, warn};
 
-use crate::crypto::verify_dilithium_batch;
+use crate::crypto::verify_ml_dsa_65_batch;
 
 fn short_hex(a: &[u8]) -> String {
     a.iter().take(4).map(|b| format!("{:02x}", b)).collect()
@@ -72,7 +72,14 @@ impl TxIngressBuffer {
     /// Returns `true` if accepted into the buffer.
     pub fn ingest(&self, tx: SignedTransaction) -> bool {
         // 1. Prefilter (cheap size/format checks)
-        if let Err(e) = network_prefilter(&bincode::serialize(&tx).unwrap_or_default()) {
+        let tx_bytes = match bincode::serialize(&tx) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(hash = %short_hex(&tx.hash), "ingress serialize failed: {}", e);
+                return false;
+            }
+        };
+        if let Err(e) = network_prefilter(&tx_bytes) {
             warn!(hash = %short_hex(&tx.hash), "ingress prefilter drop: {}", e);
             return false;
         }
@@ -93,7 +100,7 @@ impl TxIngressBuffer {
         };
 
         let signing_data = tx.transaction.signing_data();
-        if !verify_dilithium_batch(pk, signing_data, tx.transaction.signature.clone()) {
+        if !verify_ml_dsa_65_batch(pk, signing_data, tx.transaction.signature.clone()) {
             warn!(hash = %short_hex(&tx.hash), "ingress: invalid signature");
             return false;
         }

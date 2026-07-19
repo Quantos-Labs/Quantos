@@ -1,4 +1,4 @@
-use crate::types::{Hash, L0FinalityProof, L0_PROOF_VERSION, PqcSignatureAlgo, ValidatorRecord};
+use crate::types::{Hash, ValidatorRecord};
 use thiserror::Error;
 
 #[derive(Error, Debug)]

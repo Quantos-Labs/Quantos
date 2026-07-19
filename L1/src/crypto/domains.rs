@@ -25,22 +25,22 @@ pub fn with_domain(domain: &[u8], message: &[u8]) -> Vec<u8> {
 
 // ── Signing domains ───────────────────────────────────────────────────────────
 
-/// Dilithium signatures over user transactions.
+/// ML-DSA-65 signatures over user transactions.
 pub const DOMAIN_TX: &[u8] = b"QUANTOS_TX_V1";
 
-/// Dilithium signatures over DAG vertices.
+/// ML-DSA-65 signatures over DAG vertices.
 pub const DOMAIN_VERTEX: &[u8] = b"QUANTOS_VERTEX_V1";
 
-/// Dilithium signatures over committee votes.
+/// ML-DSA-65 signatures over committee votes.
 pub const DOMAIN_COMMITTEE_VOTE: &[u8] = b"QUANTOS_COMMITTEE_VOTE_V1";
 
 /// ML-DSA-65 signatures over finality checkpoints.
 pub const DOMAIN_CHECKPOINT: &[u8] = b"QUANTOS_CHECKPOINT_V1";
 
-/// Dilithium signatures over view-change messages.
+/// ML-DSA-65 signatures over view-change messages.
 pub const DOMAIN_VIEW_CHANGE: &[u8] = b"QUANTOS_VIEW_CHANGE_V1";
 
-/// Dilithium signatures over pipelined proposal votes.
+/// ML-DSA-65 signatures over pipelined proposal votes.
 pub const DOMAIN_PIPELINE_VOTE: &[u8] = b"QUANTOS_PIPELINE_VOTE_V1";
 
 // ── VRF internal domains (never used as transaction signing domains) ──────────
@@ -56,10 +56,10 @@ pub const DOMAIN_VRF_PROVE: &[u8] = b"QUANTOS_VRF_PROVE_V1";
 
 // ── Cross-shard atomic protocol domains ──────────────────────────────────────
 
-/// Dilithium signatures over CSAP lock-vote messages.
+/// ML-DSA-65 signatures over CSAP lock-vote messages.
 pub const DOMAIN_CSAP_VOTE: &[u8] = b"QUANTOS_CSAP_VOTE_V1";
 
-/// Dilithium signatures over CSAP lock-acknowledgment messages.
+/// ML-DSA-65 signatures over CSAP lock-acknowledgment messages.
 pub const DOMAIN_CSAP_ACK: &[u8] = b"QUANTOS_CSAP_ACK_V1";
 
 // ── Slashing evidence domains ─────────────────────────────────────────────────
@@ -78,10 +78,10 @@ pub const DOMAIN_SLASH_FRONT_RUN: &[u8] = b"QUANTOS_SLASH_FRUN_V1";
 
 // ── Network / transport binding (not transaction signatures) ─────────────────
 
-/// Binds a Dilithium public key to a Quantos network PeerId preimage (SHA-256 multihash).
+/// Binds a ML-DSA-65 public key to a Quantos network PeerId preimage (SHA-256 multihash).
 pub const DOMAIN_PQ_PEER_ID: &[u8] = b"QUANTOS_PQ_PEER_ID_V1";
 
-/// Prefix for Dilithium signatures over PQ-KEM handshake transcripts.
+/// Prefix for ML-DSA-65 signatures over PQ-KEM handshake transcripts.
 pub const DOMAIN_PQ_KEM_HANDSHAKE: &[u8] = b"QUANTOS_PQ_KEM_HS_V1";
 
 #[cfg(test)]

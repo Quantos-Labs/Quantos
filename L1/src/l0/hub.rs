@@ -10,7 +10,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use sha3::{Digest, Sha3_256};
 
-use crate::crypto::{verify_dilithium_batch, verify_ml_dsa_65};
+use crate::crypto::verify_ml_dsa_65;
 use crate::l0::config::L0Config;
 use crate::l0::error::{L0Error, L0Result};
 use crate::l0::external::{ExternalCheckpoint, VerificationResult, VerificationStrategy};
@@ -207,6 +207,7 @@ impl FinalityHub {
             stake_threshold: required,
             emitted_at_ms: chrono::Utc::now().timestamp_millis() as u64,
             stark_commitment: [0u8; 32],
+            checkpoint_hash: checkpoint.hash(),
         };
 
         let mut proof = L0FinalityProof {
@@ -250,11 +251,6 @@ impl FinalityHub {
                     &contribution.signature,
                 )
                 .unwrap_or(false),
-                PqcSignatureAlgo::Dilithium3 => verify_dilithium_batch(
-                    validator.public_key.clone(),
-                    digest.to_vec(),
-                    contribution.signature.clone(),
-                ),
             };
 
             if !ok {
@@ -442,6 +438,7 @@ impl FinalityHub {
             stake_threshold: required,
             emitted_at_ms: chrono::Utc::now().timestamp_millis() as u64,
             stark_commitment: [0u8; 32], // filled after STARK proof generation
+            checkpoint_hash: [0u8; 32], // external proofs use signing_digest() as signed message
         };
 
         // Build a draft proof so we can compute the signing digest
@@ -476,11 +473,6 @@ impl FinalityHub {
                     &contribution.signature,
                 )
                 .unwrap_or(false),
-                PqcSignatureAlgo::Dilithium3 => verify_dilithium_batch(
-                    validator.public_key.clone(),
-                    digest.to_vec(),
-                    contribution.signature.clone(),
-                ),
             };
 
             if !ok {

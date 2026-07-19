@@ -9,8 +9,7 @@
 //! * `validators` lists the public keys *referenced* by the signatures
 //!   that follow, alongside their stake weight at the time of signing.
 //! * `signatures` is a list of post-quantum signatures (ML-DSA-65 by
-//!   default, Dilithium-3 as a fallback for nodes that do not run
-//!   ML-DSA-65).
+//!   default; the ML-DSA-65 fallback variant has been removed).
 //!
 //! All structures derive [`Serialize`] / [`Deserialize`] so that the
 //! proof can be encoded with bincode, JSON, MessagePack, or any other
@@ -32,10 +31,8 @@ pub const L0_PROOF_VERSION: u16 = 1;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum PqcSignatureAlgo {
-    /// ML-DSA-65 — preferred for compact L0 proofs.
+    /// ML-DSA-65 (FIPS 204) — the only signature algorithm used in L0 proofs.
     MlDsa65 = 1,
-    /// Dilithium-3 — fallback when ML-DSA-65 is unavailable.
-    Dilithium3 = 2,
 }
 
 /// Header of an L0 proof. Captures the identity of the attested
@@ -78,6 +75,13 @@ pub struct L0ProofHeader {
     /// SHA3-256 commitment over the STARK batch proof (if one was generated).
     /// 32 zero bytes means no STARK proof was attached.
     pub stark_commitment: Hash,
+    /// Hash of the underlying checkpoint that validators actually signed.
+    /// For native proofs: `checkpoint.hash()` — the verifier applies
+    /// `with_domain(DOMAIN_CHECKPOINT, &checkpoint_hash)` to recover the
+    /// signing message.
+    /// For external proofs: `[0u8; 32]` — the verifier uses
+    /// `proof.signing_digest()` directly.
+    pub checkpoint_hash: Hash,
 }
 
 /// Description of a single validator that signed the proof.
@@ -85,8 +89,7 @@ pub struct L0ProofHeader {
 pub struct ValidatorRecord {
     /// 32-byte validator address.
     pub address: [u8; 32],
-    /// Validator public key (ML-DSA-65 or Dilithium-3 depending on
-    /// the matching signature entry).
+    /// Validator public key (ML-DSA-65).
     pub public_key: Vec<u8>,
     /// Stake weight at the time of signing.
     pub stake: u128,
@@ -152,6 +155,7 @@ impl L0FinalityProof {
         hasher.update(self.header.total_stake.to_be_bytes());
         hasher.update(self.header.stake_threshold.to_be_bytes());
         hasher.update(self.header.emitted_at_ms.to_be_bytes());
+        hasher.update(self.header.checkpoint_hash);
 
         for v in &self.validators {
             hasher.update(v.address);
@@ -183,6 +187,18 @@ impl L0FinalityProof {
         let mut out = [0u8; 32];
         out.copy_from_slice(&hasher.finalize());
         out
+    }
+
+    /// Returns the message that validators actually signed.
+    /// For native proofs (no external_chain): `with_domain(DOMAIN_CHECKPOINT, &checkpoint_hash)`.
+    /// For external proofs: `proof.signing_digest()`.
+    pub fn signed_message(&self) -> Vec<u8> {
+        use crate::crypto::{with_domain, DOMAIN_CHECKPOINT};
+        if self.header.external_chain.is_none() && self.header.checkpoint_hash != [0u8; 32] {
+            with_domain(DOMAIN_CHECKPOINT, &self.header.checkpoint_hash)
+        } else {
+            self.signing_digest().to_vec()
+        }
     }
 
     /// Returns the total stake covered by the signatures actually present.

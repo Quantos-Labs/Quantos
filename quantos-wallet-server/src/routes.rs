@@ -1,6 +1,6 @@
 // src/routes.rs — Axum routes + handlers
 //
-// POST /wallet/create         — generate new Dilithium-3 wallet
+// POST /wallet/create         — generate new ML-DSA-65 wallet
 // POST /wallet/import         — import from secret key hex
 // POST /wallet/unlock         — decrypt with PIN, return session token
 // POST /wallet/lock           — invalidate session
@@ -29,8 +29,8 @@ use crate::{
     crypto::{
         address_to_qts, build_signed_transaction, build_signed_transaction_with_data,
         decrypt_with_pin, derive_address, encrypt_with_pin,
-        format_qts, format_token, parse_address, validate_pin, verify_dilithium_signature,
-        DilithiumKeypair,
+        format_qts, format_token, parse_address, validate_pin, verify_ml_dsa_65_signature,
+        MlDsa65Keypair,
     },
     error::{WalletError, WalletResult},
     state::AppState,
@@ -98,7 +98,7 @@ async fn create_wallet(
 ) -> Result<impl IntoResponse, WalletError> {
     validate_pin(&req.pin)?;
 
-    let keypair = DilithiumKeypair::generate()?;
+    let keypair = MlDsa65Keypair::generate()?;
     let address_hex = hex::encode(keypair.address);
     let qts_address = address_to_qts(&keypair.address);
     let rpc_address = format!("QTS:{}", address_hex);
@@ -137,7 +137,7 @@ async fn import_wallet(
     validate_pin(&req.pin)?;
 
     // Validate and derive address from secret key
-    let keypair = DilithiumKeypair::from_secret_key_hex(&req.secret_key_hex)?;
+    let keypair = MlDsa65Keypair::from_secret_key_hex(&req.secret_key_hex)?;
     let address_hex = hex::encode(keypair.address);
     let qts_address = address_to_qts(&keypair.address);
     let rpc_address = format!("QTS:{}", address_hex);
@@ -434,7 +434,7 @@ async fn send_transfer(
     Json(req): Json<SendTransferRequest>,
 ) -> Result<impl IntoResponse, WalletError> {
     let session = state.sessions.get_session(&req.session_token)?;
-    let keypair = DilithiumKeypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
+    let keypair = MlDsa65Keypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
 
     // Resolve .qts domain names to addresses
     let to = match resolve_qts_name_if_needed(&state, &req.to).await? {
@@ -477,7 +477,7 @@ async fn deploy_contract(
     Json(req): Json<DeployContractRequest>,
 ) -> Result<impl IntoResponse, WalletError> {
     let session = state.sessions.get_session(&req.session_token)?;
-    let keypair = DilithiumKeypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
+    let keypair = MlDsa65Keypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
 
     let bytecode = if let Some(bytecode_hex) = req.bytecode_hex.as_deref() {
         let bytecode_str = bytecode_hex.strip_prefix("0x").unwrap_or(bytecode_hex);
@@ -582,7 +582,7 @@ async fn call_contract(
     Json(req): Json<CallContractRequest>,
 ) -> Result<impl IntoResponse, WalletError> {
     let session = state.sessions.get_session(&req.session_token)?;
-    let keypair = DilithiumKeypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
+    let keypair = MlDsa65Keypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
 
     let to = parse_address(&req.contract_address)?;
     let calldata_str = req.calldata_hex.strip_prefix("0x").unwrap_or(&req.calldata_hex);
@@ -665,7 +665,7 @@ async fn batch_call_contract(
     }
 
     let session = state.sessions.get_session(&req.session_token)?;
-    let keypair = DilithiumKeypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
+    let keypair = MlDsa65Keypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
     let chain_id = state.node_client.get_chain_id().await?;
     let node_info = state.node_client.node_info().await?;
     let num_shards = node_info["num_shards"].as_u64().unwrap_or(1000) as u16;
@@ -793,7 +793,7 @@ async fn transfer_token(
         .clone();
 
     let session = state.sessions.get_session(&req.session_token)?;
-    let keypair = DilithiumKeypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
+    let keypair = MlDsa65Keypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
 
     // Resolve .qts domain names to addresses
     let to_addr = match resolve_qts_name_if_needed(&state, &req.to).await? {
@@ -889,7 +889,7 @@ async fn bridge_approve(
     let vault_address = configured_bridge_vault(&state, req.vault_address.as_deref())?;
     let qtest_contract = fetch_bridge_vault_token_address(&state, &vault_address).await?;
     let session = state.sessions.get_session(&req.session_token)?;
-    let keypair = DilithiumKeypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
+    let keypair = MlDsa65Keypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
     let amount = parse_token_amount(&req.amount, 18)?;
     if amount == 0 {
         return Err(WalletError::InvalidAmount("Amount must be > 0".into()));
@@ -929,7 +929,7 @@ async fn bridge_deposit(
     let vault_address = configured_bridge_vault(&state, req.vault_address.as_deref())?;
     let qtest_contract = fetch_bridge_vault_token_address(&state, &vault_address).await?;
     let session = state.sessions.get_session(&req.session_token)?;
-    let keypair = DilithiumKeypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
+    let keypair = MlDsa65Keypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
     let amount = parse_token_amount(&req.amount, 18)?;
     if amount == 0 {
         return Err(WalletError::InvalidAmount("Amount must be > 0".into()));
@@ -1002,7 +1002,7 @@ async fn bridge_release(
 ) -> Result<impl IntoResponse, WalletError> {
     let vault_address = configured_bridge_vault(&state, req.vault_address.as_deref())?;
     let session = state.sessions.get_session(&req.session_token)?;
-    let keypair = DilithiumKeypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
+    let keypair = MlDsa65Keypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
     let amount = parse_token_amount(&req.amount, 18)?;
     if amount == 0 {
         return Err(WalletError::InvalidAmount("Amount must be > 0".into()));
@@ -1042,7 +1042,7 @@ async fn sign_message(
     Json(req): Json<SignMessageRequest>,
 ) -> Result<impl IntoResponse, WalletError> {
     let session = state.sessions.get_session(&req.session_token)?;
-    let keypair = DilithiumKeypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
+    let keypair = MlDsa65Keypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
 
     let message_bytes = if req.message.starts_with("0x") || req.message.starts_with("0X") {
         hex::decode(&req.message[2..])
@@ -1098,7 +1098,7 @@ async fn faucet_claim(
         .ok_or_else(|| WalletError::Internal("QTEST_CONTRACT_ADDRESS not configured".to_string()))?;
 
     let session = state.sessions.get_session(&req.session_token)?;
-    let keypair = DilithiumKeypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
+    let keypair = MlDsa65Keypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
 
     let rpc_address = format!("QTS:{}", hex::encode(keypair.address));
 
@@ -1414,7 +1414,7 @@ async fn qns_register(
     let domain = validate_domain_name(&req.domain_name)?;
 
     let session = state.sessions.get_session(&req.session_token)?;
-    let keypair = DilithiumKeypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
+    let keypair = MlDsa65Keypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
     let rpc_address = format!("QTS:{}", hex::encode(keypair.address));
 
     let qns_addr = parse_address(&qns_addr_str)?;
@@ -1541,7 +1541,7 @@ async fn qns_renew(
     let domain = validate_domain_name(&req.domain_name)?;
 
     let session = state.sessions.get_session(&req.session_token)?;
-    let keypair = DilithiumKeypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
+    let keypair = MlDsa65Keypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
     let rpc_address = format!("QTS:{}", hex::encode(keypair.address));
 
     let qns_addr = parse_address(&qns_addr_str)?;
@@ -1618,7 +1618,7 @@ async fn qns_set_primary(
     let domain = validate_domain_name(&req.domain_name)?;
 
     let session = state.sessions.get_session(&req.session_token)?;
-    let keypair = DilithiumKeypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
+    let keypair = MlDsa65Keypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
     let rpc_address = format!("QTS:{}", hex::encode(keypair.address));
 
     let qns_addr = parse_address(&qns_addr_str)?;
@@ -1961,7 +1961,7 @@ async fn auth_challenge(
 }
 
 // ── POST /auth/verify ────────────────────────────────────────────────────────
-// Verifies the Dilithium signature over the nonce, confirms address ownership.
+// Verifies the ML-DSA-65 signature over the nonce, confirms address ownership.
 
 #[derive(serde::Deserialize)]
 struct AuthVerifyRequest {
@@ -2003,8 +2003,8 @@ async fn auth_verify(
         ));
     }
 
-    // Verify the Dilithium-3 signature over the nonce
-    let valid = verify_dilithium_signature(
+    // Verify the ML-DSA-65 signature over the nonce
+    let valid = verify_ml_dsa_65_signature(
         req.nonce.as_bytes(),
         &req.signature_hex,
         &req.public_key_hex,
@@ -2166,7 +2166,7 @@ fn decode_le_uint128_from_contract_result(result: &str) -> u128 {
 
 async fn submit_contract_call(
     state: &Arc<AppState>,
-    keypair: &DilithiumKeypair,
+    keypair: &MlDsa65Keypair,
     contract_address: &str,
     calldata: Vec<u8>,
     amount: u128,

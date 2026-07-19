@@ -6,12 +6,11 @@ authors = ["Quantos Labs"]
 description = "Quantos - Post-Quantum L1 Blockchain with Massive Parallelization, Dynamic Sharding & Sidechains"
 license = "MIT"
 repository = "https://github.com/quantos-labs/quantos"
-keywords = ["blockchain", "post-quantum", "dilithium", "l1", "sharding"]
+keywords = ["blockchain", "post-quantum", "ml-dsa", "l1", "sharding"]
 categories = ["cryptography", "network-programming"]
 
 [dependencies]
 # Post-Quantum Cryptography
-pqcrypto-dilithium = "0.5"
 pqcrypto-sphincsplus = "0.7"
 pqcrypto-mldsa = "0.1"
 pqcrypto-kyber = "0.8"
@@ -140,5 +139,3 @@ harness = false
 
 [features]
 default = []
-# Research-only threshold ML-KEM mempool crypto. NOT enabled on mainnet builds.
-experimental-threshold-mlkem = []

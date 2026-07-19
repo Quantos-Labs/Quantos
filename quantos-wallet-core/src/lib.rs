@@ -1,12 +1,17 @@
 use wasm_bindgen::prelude::*;
-use pqc_dilithium::Keypair;
+use ml_dsa::{
+    MlDsa65, SigningKey, VerifyingKey, Generate, Signer, Verifier,
+    EncodedVerifyingKey, EncodedSignature, Seed,
+    Signature as MlDsaSignature,
+};
+use ml_dsa::signature::Keypair;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 
-// Dilithium-3 constants
-const SECRETKEYBYTES: usize = 4000;
+// ML-DSA-65 (FIPS 204) constants
+const SEED_SIZE: usize = 32;
 const PUBLICKEYBYTES: usize = 1952;
-const SIGNATUREBYTES: usize = 3293;
+const SIGNATUREBYTES: usize = 3309;
 
 // ── Domain separation (must stay in sync with quantos/src/crypto/domains.rs) ──
 //
@@ -26,32 +31,30 @@ fn with_domain(domain: &[u8], message: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Constructs a `pqc_dilithium::Keypair` from raw public and secret key bytes.
-///
-/// # Safety
-///
-/// `pqc_dilithium 0.2.0::Keypair` is defined as:
-/// ```ignore
-/// pub struct Keypair {
-///     pub public: [u8; 1952],
-///     secret:     [u8; 4000],  // private field
-/// }
-/// ```
-/// The struct carries no `#[repr(C)]` attribute, but both fields are `[u8; N]`
-/// (alignment = 1, no padding possible). Rust's ABI for this specific layout
-/// is identical to `([u8; 1952], [u8; 4000])`, making the transmute safe.
-///
-/// Risks and mitigations:
-/// * **Field reorder**: the Rust compiler may reorder fields of structs
-///   without `#[repr(C)]`, but gains nothing here (all fields have alignment 1),
-///   so no reorder is expected or observed with rustc up to 1.87.
-/// * **Version drift**: pinned to `pqc_dilithium = "0.2"` in `Cargo.toml`.
-///   Any minor-version upgrade that changes the struct must be audited here.
-/// * **Alternative**: `pqc_dilithium` does not expose a `Keypair::from_bytes`
-///   constructor and `crypto_sign_signature` is not public, leaving transmute
-///   as the only option short of forking the crate.
-unsafe fn keypair_from_bytes(public: &[u8; PUBLICKEYBYTES], secret: &[u8; SECRETKEYBYTES]) -> Keypair {
-    std::mem::transmute::<([u8; PUBLICKEYBYTES], [u8; SECRETKEYBYTES]), Keypair>((*public, *secret))
+/// Derive the verifying key (public key) bytes from a 32-byte seed.
+fn derive_public_key(seed: &[u8]) -> Result<Vec<u8>, JsValue> {
+    if seed.len() != SEED_SIZE {
+        return Err(JsValue::from_str(&format!(
+            "Invalid seed length: {} (expected {})", seed.len(), SEED_SIZE
+        )));
+    }
+    let seed_arr: [u8; SEED_SIZE] = seed.try_into().unwrap();
+    let sk = SigningKey::<MlDsa65>::from_seed(&Seed::from(seed_arr));
+    Ok(sk.verifying_key().encode().to_vec())
+}
+
+/// Sign transaction signing data with a 32-byte seed.
+fn sign_with_seed(seed: &[u8], signing_data: &[u8]) -> Result<(Vec<u8>, Vec<u8>), JsValue> {
+    if seed.len() != SEED_SIZE {
+        return Err(JsValue::from_str(&format!(
+            "Invalid seed length: {} (expected {})", seed.len(), SEED_SIZE
+        )));
+    }
+    let seed_arr: [u8; SEED_SIZE] = seed.try_into().unwrap();
+    let sk = SigningKey::<MlDsa65>::from_seed(&Seed::from(seed_arr));
+    let sig = sk.sign(signing_data);
+    let pk = sk.verifying_key().encode().to_vec();
+    Ok((sig.encode().to_vec(), pk))
 }
 
 // ============================================================================
@@ -108,7 +111,7 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    /// Produces the byte string that is signed by the sender's Dilithium-3 key.
+    /// Produces the byte string that is signed by the sender's ML-DSA-65 key.
     ///
     /// **Must stay byte-for-byte identical to
     /// `quantos/src/types/transaction.rs::Transaction::signing_data()`.**
@@ -163,21 +166,21 @@ impl SignedTransaction {
 
 // ── Key Generation ──────────────────────────────────────────
 
-/// Generate a new Dilithium-3 keypair.
-/// Returns JSON: { "publicKey": hex, "secretKey": hex, "address": hex, "qtsAddress": string }
+/// Generate a new ML-DSA-65 keypair.
+/// Returns JSON: { "publicKey": hex, "secretKey": hex (32-byte seed), "address": hex, "qtsAddress": string }
 #[wasm_bindgen(js_name = "generateKeypair")]
 pub fn generate_keypair() -> Result<String, JsValue> {
-    let keys = Keypair::generate();
-    let pk_bytes = keys.public.as_ref();
-    let sk_bytes = keys.expose_secret().as_ref();
-    let address = hash_data(pk_bytes);
+    let sk = SigningKey::<MlDsa65>::generate();
+    let pk_bytes = sk.verifying_key().encode().to_vec();
+    let seed_bytes = sk.to_seed().to_vec();
+    let address = hash_data(&pk_bytes);
 
     let qts_address = encode_qts_address(&address)
         .map_err(|e| JsValue::from_str(&e))?;
 
     let result = serde_json::json!({
         "publicKey": hex::encode(pk_bytes),
-        "secretKey": hex::encode(sk_bytes),
+        "secretKey": hex::encode(seed_bytes),
         "address": hex::encode(address),
         "qtsAddress": qts_address,
     });
@@ -209,15 +212,9 @@ pub fn build_signed_transfer(
     let amount: u128 = amount_str.parse()
         .map_err(|e| JsValue::from_str(&format!("Invalid amount: {}", e)))?;
 
-    // Derive public key from secret key (last 1952 bytes, same as node)
-    let pk_size = 1952usize;
-    if sk_bytes.len() != 4000 {
-        return Err(JsValue::from_str(&format!(
-            "Invalid secret key length: {} (expected 4000)", sk_bytes.len()
-        )));
-    }
-    let pk_bytes = &sk_bytes[sk_bytes.len() - pk_size..];
-    let from = hash_data(pk_bytes);
+    // Derive public key from seed
+    let pk_bytes = derive_public_key(&sk_bytes)?;
+    let from = hash_data(&pk_bytes);
 
     // Calculate shard
     let num_shards = if num_shards == 0 { 1 } else { num_shards };
@@ -243,18 +240,12 @@ pub fn build_signed_transfer(
         chain_id,
     };
 
-    // Sign with Dilithium
+    // Sign with ML-DSA-65
     let signing_data = tx.signing_data();
-    let pk_array: [u8; PUBLICKEYBYTES] = pk_bytes.try_into()
-        .map_err(|_| JsValue::from_str("Invalid public key length"))?;
-    let sk_array: [u8; SECRETKEYBYTES] = sk_bytes.as_slice().try_into()
-        .map_err(|_| JsValue::from_str("Invalid secret key length"))?;
-    
-    let keypair = unsafe { keypair_from_bytes(&pk_array, &sk_array) };
-    let sig = keypair.sign(&signing_data);
+    let (sig, pk) = sign_with_seed(&sk_bytes, &signing_data)?;
 
-    tx.signature = sig.as_ref().to_vec();
-    tx.public_key = pk_bytes.to_vec();
+    tx.signature = sig;
+    tx.public_key = pk;
 
     // Create SignedTransaction (same struct as node)
     let signed_tx = SignedTransaction::new(tx);
@@ -288,8 +279,8 @@ pub fn build_signed_stake(
     let amount: u128 = amount_str.parse()
         .map_err(|e| JsValue::from_str(&format!("Invalid amount: {}", e)))?;
 
-    let pk_bytes = &sk_bytes[sk_bytes.len() - 1952..];
-    let from = hash_data(pk_bytes);
+    let pk_bytes = derive_public_key(&sk_bytes)?;
+    let from = hash_data(&pk_bytes);
     let num_shards = if num_shards == 0 { 1 } else { num_shards };
     let shard_id = Transaction::target_shard(&from, num_shards);
     let timestamp = chrono::Utc::now().timestamp_millis() as u64;
@@ -311,15 +302,9 @@ pub fn build_signed_stake(
     };
 
     let signing_data = tx.signing_data();
-    let pk_array: [u8; PUBLICKEYBYTES] = pk_bytes.try_into()
-        .map_err(|_| JsValue::from_str("PK length"))?;
-    let sk_array: [u8; SECRETKEYBYTES] = sk_bytes.as_slice().try_into()
-        .map_err(|_| JsValue::from_str("SK length"))?;
-    
-    let keypair = unsafe { keypair_from_bytes(&pk_array, &sk_array) };
-    let sig = keypair.sign(&signing_data);
-    tx.signature = sig.as_ref().to_vec();
-    tx.public_key = pk_bytes.to_vec();
+    let (sig, pk) = sign_with_seed(&sk_bytes, &signing_data)?;
+    tx.signature = sig;
+    tx.public_key = pk;
 
     let signed_tx = SignedTransaction::new(tx);
     let tx_hash = hex::encode(signed_tx.hash);
@@ -344,8 +329,8 @@ pub fn build_signed_unstake(
     let amount: u128 = amount_str.parse()
         .map_err(|e| JsValue::from_str(&format!("Invalid amount: {}", e)))?;
 
-    let pk_bytes = &sk_bytes[sk_bytes.len() - 1952..];
-    let from = hash_data(pk_bytes);
+    let pk_bytes = derive_public_key(&sk_bytes)?;
+    let from = hash_data(&pk_bytes);
     let num_shards = if num_shards == 0 { 1 } else { num_shards };
     let shard_id = Transaction::target_shard(&from, num_shards);
     let timestamp = chrono::Utc::now().timestamp_millis() as u64;
@@ -367,15 +352,9 @@ pub fn build_signed_unstake(
     };
 
     let signing_data = tx.signing_data();
-    let pk_array: [u8; PUBLICKEYBYTES] = pk_bytes.try_into()
-        .map_err(|_| JsValue::from_str("PK length"))?;
-    let sk_array: [u8; SECRETKEYBYTES] = sk_bytes.as_slice().try_into()
-        .map_err(|_| JsValue::from_str("SK length"))?;
-    
-    let keypair = unsafe { keypair_from_bytes(&pk_array, &sk_array) };
-    let sig = keypair.sign(&signing_data);
-    tx.signature = sig.as_ref().to_vec();
-    tx.public_key = pk_bytes.to_vec();
+    let (sig, pk) = sign_with_seed(&sk_bytes, &signing_data)?;
+    tx.signature = sig;
+    tx.public_key = pk;
 
     let signed_tx = SignedTransaction::new(tx);
     let tx_hash = hex::encode(signed_tx.hash);
@@ -400,8 +379,8 @@ pub fn build_signed_deploy(
 ) -> Result<String, JsValue> {
     let sk_bytes = hex::decode(secret_key_hex)
         .map_err(|e| JsValue::from_str(&format!("Invalid secret key hex: {}", e)))?;
-    if sk_bytes.len() != SECRETKEYBYTES {
-        return Err(JsValue::from_str(&format!("Invalid SK length: {} (expected {})", sk_bytes.len(), SECRETKEYBYTES)));
+    if sk_bytes.len() != SEED_SIZE {
+        return Err(JsValue::from_str(&format!("Invalid seed length: {} (expected {})", sk_bytes.len(), SEED_SIZE)));
     }
 
     let bytecode = hex::decode(bytecode_hex.strip_prefix("0x").unwrap_or(bytecode_hex))
@@ -421,8 +400,8 @@ pub fn build_signed_deploy(
     deploy_data.extend_from_slice(&bytecode);
     deploy_data.extend_from_slice(&constructor_data);
 
-    let pk_bytes = &sk_bytes[sk_bytes.len() - PUBLICKEYBYTES..];
-    let from = hash_data(pk_bytes);
+    let pk_bytes = derive_public_key(&sk_bytes)?;
+    let from = hash_data(&pk_bytes);
     let num_shards = if num_shards == 0 { 1 } else { num_shards };
     let shard_id = Transaction::target_shard(&from, num_shards);
     let timestamp = chrono::Utc::now().timestamp_millis() as u64;
@@ -444,15 +423,9 @@ pub fn build_signed_deploy(
     };
 
     let signing_data = tx.signing_data();
-    let pk_array: [u8; PUBLICKEYBYTES] = pk_bytes.try_into()
-        .map_err(|_| JsValue::from_str("PK length"))?;
-    let sk_array: [u8; SECRETKEYBYTES] = sk_bytes.as_slice().try_into()
-        .map_err(|_| JsValue::from_str("SK length"))?;
-
-    let keypair = unsafe { keypair_from_bytes(&pk_array, &sk_array) };
-    let sig = keypair.sign(&signing_data);
-    tx.signature = sig.as_ref().to_vec();
-    tx.public_key = pk_bytes.to_vec();
+    let (sig, pk) = sign_with_seed(&sk_bytes, &signing_data)?;
+    tx.signature = sig;
+    tx.public_key = pk;
 
     let signed_tx = SignedTransaction::new(tx);
     let tx_hash = hex::encode(signed_tx.hash);
@@ -480,8 +453,8 @@ pub fn build_signed_contract_call(
 ) -> Result<String, JsValue> {
     let sk_bytes = hex::decode(secret_key_hex)
         .map_err(|e| JsValue::from_str(&format!("Invalid secret key hex: {}", e)))?;
-    if sk_bytes.len() != SECRETKEYBYTES {
-        return Err(JsValue::from_str(&format!("Invalid SK length: {} (expected {})", sk_bytes.len(), SECRETKEYBYTES)));
+    if sk_bytes.len() != SEED_SIZE {
+        return Err(JsValue::from_str(&format!("Invalid seed length: {} (expected {})", sk_bytes.len(), SEED_SIZE)));
     }
 
     let to = parse_address_hex(contract_address_hex)?;
@@ -490,8 +463,8 @@ pub fn build_signed_contract_call(
     let amount: u128 = amount_str.parse()
         .map_err(|e| JsValue::from_str(&format!("Invalid amount: {}", e)))?;
 
-    let pk_bytes = &sk_bytes[sk_bytes.len() - PUBLICKEYBYTES..];
-    let from = hash_data(pk_bytes);
+    let pk_bytes = derive_public_key(&sk_bytes)?;
+    let from = hash_data(&pk_bytes);
     let num_shards = if num_shards == 0 { 1 } else { num_shards };
     let shard_id = Transaction::target_shard(&from, num_shards);
     let timestamp = chrono::Utc::now().timestamp_millis() as u64;
@@ -513,15 +486,9 @@ pub fn build_signed_contract_call(
     };
 
     let signing_data = tx.signing_data();
-    let pk_array: [u8; PUBLICKEYBYTES] = pk_bytes.try_into()
-        .map_err(|_| JsValue::from_str("PK length"))?;
-    let sk_array: [u8; SECRETKEYBYTES] = sk_bytes.as_slice().try_into()
-        .map_err(|_| JsValue::from_str("SK length"))?;
-
-    let keypair = unsafe { keypair_from_bytes(&pk_array, &sk_array) };
-    let sig = keypair.sign(&signing_data);
-    tx.signature = sig.as_ref().to_vec();
-    tx.public_key = pk_bytes.to_vec();
+    let (sig, pk) = sign_with_seed(&sk_bytes, &signing_data)?;
+    tx.signature = sig;
+    tx.public_key = pk;
 
     let signed_tx = SignedTransaction::new(tx);
     let tx_hash = hex::encode(signed_tx.hash);
@@ -534,8 +501,8 @@ pub fn build_signed_contract_call(
 
 // ── Signing (arbitrary message) ─────────────────────────────
 
-/// Sign an arbitrary message (hex) with a secret key (hex).
-/// Returns hex-encoded Dilithium-3 signature.
+/// Sign an arbitrary message (hex) with a secret key (hex, 32-byte seed).
+/// Returns hex-encoded ML-DSA-65 signature.
 #[wasm_bindgen(js_name = "signMessage")]
 pub fn sign_message(message_hex: &str, secret_key_hex: &str) -> Result<String, JsValue> {
     let msg = hex::decode(message_hex)
@@ -543,45 +510,39 @@ pub fn sign_message(message_hex: &str, secret_key_hex: &str) -> Result<String, J
     let sk_bytes = hex::decode(secret_key_hex)
         .map_err(|e| JsValue::from_str(&format!("Invalid secret key hex: {}", e)))?;
 
-    if sk_bytes.len() != 4000 {
-        return Err(JsValue::from_str("Invalid secret key length"));
+    if sk_bytes.len() != SEED_SIZE {
+        return Err(JsValue::from_str(&format!("Invalid seed length (expected {} bytes)", SEED_SIZE)));
     }
 
-    let pk_bytes = &sk_bytes[sk_bytes.len() - PUBLICKEYBYTES..];
-    let pk_array: [u8; PUBLICKEYBYTES] = pk_bytes.try_into()
-        .map_err(|_| JsValue::from_str("PK length"))?;
-    let sk_array: [u8; SECRETKEYBYTES] = sk_bytes.as_slice().try_into()
-        .map_err(|_| JsValue::from_str("SK length"))?;
-    
-    let keypair = unsafe { keypair_from_bytes(&pk_array, &sk_array) };
-    let sig = keypair.sign(&msg);
-    Ok(hex::encode(sig.as_ref()))
+    let seed_arr: [u8; SEED_SIZE] = sk_bytes.as_slice().try_into().unwrap();
+    let sk = SigningKey::<MlDsa65>::from_seed(&Seed::from(seed_arr));
+    let sig = sk.sign(&msg);
+    Ok(hex::encode(sig.encode()))
 }
 
-/// Verify a Dilithium-3 signature.
+/// Verify an ML-DSA-65 signature.
 #[wasm_bindgen(js_name = "verifySignature")]
 pub fn verify_signature(signature_hex: &str, message_hex: &str, public_key_hex: &str) -> Result<bool, JsValue> {
-    let sig = hex::decode(signature_hex)
+    let sig_bytes = hex::decode(signature_hex)
         .map_err(|e| JsValue::from_str(&format!("Invalid sig hex: {}", e)))?;
     let msg = hex::decode(message_hex)
         .map_err(|e| JsValue::from_str(&format!("Invalid msg hex: {}", e)))?;
-    let pk = hex::decode(public_key_hex)
+    let pk_bytes = hex::decode(public_key_hex)
         .map_err(|e| JsValue::from_str(&format!("Invalid pk hex: {}", e)))?;
 
-    if sig.len() != 3293 {
-        return Err(JsValue::from_str("Invalid signature length (expected 3293 bytes)"));
+    if sig_bytes.len() != SIGNATUREBYTES {
+        return Err(JsValue::from_str(&format!("Invalid signature length (expected {} bytes)", SIGNATUREBYTES)));
     }
-    if pk.len() != 1952 {
-        return Err(JsValue::from_str("Invalid public key length (expected 1952 bytes)"));
+    if pk_bytes.len() != PUBLICKEYBYTES {
+        return Err(JsValue::from_str(&format!("Invalid public key length (expected {} bytes)", PUBLICKEYBYTES)));
     }
 
-    let sig_array: &[u8; 3293] = sig.as_slice().try_into()
-        .map_err(|_| JsValue::from_str("Signature conversion failed"))?;
-    let pk_array: &[u8; 1952] = pk.as_slice().try_into()
-        .map_err(|_| JsValue::from_str("Public key conversion failed"))?;
+    let pk = VerifyingKey::<MlDsa65>::decode(<&EncodedVerifyingKey<MlDsa65>>::try_from(&pk_bytes[..]).unwrap());
+    let sig = MlDsaSignature::<MlDsa65>::decode(<&EncodedSignature<MlDsa65>>::try_from(&sig_bytes[..]).unwrap())
+        .ok_or_else(|| JsValue::from_str("Invalid signature"))?;
 
-    match pqc_dilithium::verify(sig_array, &msg, pk_array) {
-        Ok(_) => Ok(true),
+    match pk.verify(&msg, &sig) {
+        Ok(()) => Ok(true),
         Err(_) => Ok(false),
     }
 }
@@ -594,12 +555,12 @@ pub fn verify_signature(signature_hex: &str, message_hex: &str, public_key_hex: 
 pub fn address_from_secret_key(secret_key_hex: &str) -> Result<String, JsValue> {
     let sk_bytes = hex::decode(secret_key_hex)
         .map_err(|e| JsValue::from_str(&format!("Invalid hex: {}", e)))?;
-    if sk_bytes.len() != 4000 {
-        return Err(JsValue::from_str("Invalid secret key length (expected 4000 bytes)"));
+    if sk_bytes.len() != SEED_SIZE {
+        return Err(JsValue::from_str(&format!("Invalid seed length (expected {} bytes)", SEED_SIZE)));
     }
 
-    let pk_bytes = &sk_bytes[sk_bytes.len() - 1952..];
-    let address = hash_data(pk_bytes);
+    let pk_bytes = derive_public_key(&sk_bytes)?;
+    let address = hash_data(&pk_bytes);
     let qts_address = encode_qts_address(&address)
         .map_err(|e| JsValue::from_str(&e))?;
 

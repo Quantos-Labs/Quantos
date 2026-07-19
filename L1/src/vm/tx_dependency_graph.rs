@@ -662,7 +662,7 @@ mod tests {
             Amount(100),
             nonce,
             21000,
-            1,
+            None,
             Vec::new(),
             0,
         );

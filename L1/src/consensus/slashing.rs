@@ -38,7 +38,7 @@ use tracing::{info, warn};
 
 use crate::types::{Address, Hash, Slot};
 use crate::crypto::{
-    verify_dilithium, with_domain,
+    verify_ml_dsa_65, with_domain,
     DOMAIN_SLASH_DOUBLE_SIGN, DOMAIN_SLASH_EQUIVOC, DOMAIN_SLASH_INVALID_BLOCK,
     DOMAIN_SLASH_FRONT_RUN,
 };
@@ -369,7 +369,7 @@ pub struct SlashingMetrics {
 pub struct ValidatorInfo {
     /// Validator address (32 bytes)
     pub address: [u8; 32],
-    /// Dilithium public key for signature verification
+    /// ML-DSA-65 public key for signature verification
     pub public_key: Vec<u8>,
     /// Current stake amount
     pub stake: u64,
@@ -578,7 +578,7 @@ impl SlashingManager {
         // with DOMAIN_SLASH_DOUBLE_SIGN so that an evidence submitter cannot reuse
         // signatures produced in other contexts (e.g. committee votes).
         let payload1 = with_domain(DOMAIN_SLASH_DOUBLE_SIGN, &msg1.message_hash);
-        let valid1 = verify_dilithium(
+        let valid1 = verify_ml_dsa_65(
             &validator_pubkey,
             &payload1,
             &msg1.signature,
@@ -591,7 +591,7 @@ impl SlashingManager {
         }
         
         let payload2 = with_domain(DOMAIN_SLASH_DOUBLE_SIGN, &msg2.message_hash);
-        let valid2 = verify_dilithium(
+        let valid2 = verify_ml_dsa_65(
             &validator_pubkey,
             &payload2,
             &msg2.signature,
@@ -632,7 +632,7 @@ impl SlashingManager {
         // Apply DOMAIN_SLASH_EQUIVOC so surround-vote evidence cannot be confused
         // with signatures from other protocol messages.
         let payload1 = with_domain(DOMAIN_SLASH_EQUIVOC, &vote1.vote_hash);
-        let valid1 = verify_dilithium(
+        let valid1 = verify_ml_dsa_65(
             &validator_pubkey,
             &payload1,
             &vote1.signature,
@@ -645,7 +645,7 @@ impl SlashingManager {
         }
         
         let payload2 = with_domain(DOMAIN_SLASH_EQUIVOC, &vote2.vote_hash);
-        let valid2 = verify_dilithium(
+        let valid2 = verify_ml_dsa_65(
             &validator_pubkey,
             &payload2,
             &vote2.signature,
@@ -869,7 +869,7 @@ impl SlashingManager {
                 block_hash,
             );
 
-            let valid = verify_dilithium(
+            let valid = verify_ml_dsa_65(
                 &validator_pubkey,
                 &block_binding,
                 proposer_signature,
@@ -944,7 +944,7 @@ impl SlashingManager {
         let signing_payload =
             Self::front_run_order_signing_payload(block, ordering_beacon, proposed_order);
 
-        let valid = verify_dilithium(&validator_pubkey, &signing_payload, leader_signature)
+        let valid = verify_ml_dsa_65(&validator_pubkey, &signing_payload, leader_signature)
             .map_err(|e| {
                 SlashingError::InvalidEvidence(format!(
                     "failed to verify leader order signature: {}",
@@ -996,7 +996,7 @@ impl SlashingManager {
         
         // Apply DOMAIN_SLASH_EQUIVOC consistently with the surround-vote path.
         let payload1 = with_domain(DOMAIN_SLASH_EQUIVOC, &vote1.vote_hash);
-        let valid1 = verify_dilithium(
+        let valid1 = verify_ml_dsa_65(
             &validator_pubkey,
             &payload1,
             &vote1.signature,
@@ -1009,7 +1009,7 @@ impl SlashingManager {
         }
         
         let payload2 = with_domain(DOMAIN_SLASH_EQUIVOC, &vote2.vote_hash);
-        let valid2 = verify_dilithium(
+        let valid2 = verify_ml_dsa_65(
             &validator_pubkey,
             &payload2,
             &vote2.signature,
@@ -1266,7 +1266,7 @@ impl SlashingManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::DilithiumKeypair;
+    use crate::crypto::MlDsa65Keypair;
 
     fn create_test_manager() -> SlashingManager {
         let config = SlashingConfig::default();
@@ -1322,7 +1322,7 @@ mod tests {
     #[test]
     fn test_submit_evidence_duplicate() {
         let manager = create_test_manager();
-        let keypair = DilithiumKeypair::generate().unwrap();
+        let keypair = MlDsa65Keypair::generate().unwrap();
         let validator = keypair.address();
         let message1_hash = [1u8; 32];
         let message2_hash = [3u8; 32];

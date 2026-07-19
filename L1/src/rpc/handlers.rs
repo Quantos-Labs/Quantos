@@ -1,4 +1,4 @@
-use crate::crypto::DilithiumKeypair;
+use crate::crypto::MlDsa65Keypair;
 use crate::rpc::{RpcError, RpcResult};
 use crate::state::StateManager;
 use crate::types::{
@@ -50,7 +50,7 @@ impl TransactionBuilder {
 
     pub fn build_transfer(
         &self,
-        keypair: &DilithiumKeypair,
+        keypair: &MlDsa65Keypair,
         to: Address,
         amount: Amount,
         max_compute_units: u64,
@@ -95,7 +95,7 @@ impl TransactionBuilder {
 
     pub fn build_stake(
         &self,
-        keypair: &DilithiumKeypair,
+        keypair: &MlDsa65Keypair,
         amount: Amount,
         max_compute_units: u64,
     ) -> RpcResult<SignedTransaction> {
@@ -134,7 +134,7 @@ impl TransactionBuilder {
 
     pub fn build_unstake(
         &self,
-        keypair: &DilithiumKeypair,
+        keypair: &MlDsa65Keypair,
         amount: Amount,
         max_compute_units: u64,
     ) -> RpcResult<SignedTransaction> {

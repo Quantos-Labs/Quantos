@@ -29,15 +29,13 @@ slug: /glossary
 
 **L0 Finality Hub** — the cross-chain layer that attests Quantos finality to 12 external chains via commitment-based STARK aggregation.
 
-**ML-DSA-65** — NIST FIPS 204 lattice signature scheme (formerly Dilithium-3), security level 3; Quantos's universal signature primitive.
+**ML-DSA-65** — NIST FIPS 204 lattice signature scheme, security level 3; Quantos's universal signature primitive.
 
 **ML-KEM-768** — NIST FIPS 203 lattice key-encapsulation mechanism (formerly Kyber-768); used for P2P handshakes and the encrypted mempool.
 
 **MVCC (Multi-Version Concurrency Control)** — snapshot-isolation technique enabling lock-free parallel execution with commit-time conflict detection.
 
 **Narwhal** — a DAG-based mempool with structured data availability; basis of Quantos's transaction dissemination.
-
-**NIZK** — non-interactive zero-knowledge proof; used (lattice-based) to prove correct partial decryption in threshold ML-KEM.
 
 **PBS (Proposer-Builder Separation)** — separating block building from proposing via a sealed-bid builder market to democratize MEV.
 
@@ -46,8 +44,6 @@ slug: /glossary
 **PQC-Guard** — a quantum-resistant smart account deployable on external chains, releasing funds via M-of-N WOTS attestations from Quantos validators.
 
 **QN4 / QN8 / QN12** — native fungible / non-fungible / multi-token standards (ERC-20 / 721 / 1155 equivalents).
-
-**QRNG** — quantum-resistant random number generator built on SHAKE256 with multi-source entropy pooling.
 
 **QTS** — the native Quantos token: security collateral, bandwidth right, and governance weight.
 

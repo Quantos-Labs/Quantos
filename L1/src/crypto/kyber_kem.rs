@@ -1,6 +1,6 @@
 //! Kyber768 ML-KEM for Quantos P2P session keys (NIST-aligned PQ-KEM via PQClean).
 //!
-//! Pair with Dilithium signatures over [`crate::crypto::DOMAIN_PQ_KEM_HANDSHAKE`] transcripts.
+//! Pair with ML-DSA-65 signatures over [`crate::crypto::DOMAIN_PQ_KEM_HANDSHAKE`] transcripts.
 
 use hkdf::Hkdf;
 use pqcrypto_kyber::kyber768;
@@ -71,27 +71,27 @@ impl KemKeypair {
     }
 }
 
-/// Canonical handshake transcript bound into Dilithium signatures.
+/// Canonical handshake transcript bound into ML-DSA-65 signatures.
 ///
 /// `role`: `0` = initiator, `1` = responder (explicit ordering prevents symmetric ambiguity).
 pub fn kem_handshake_transcript(
     role: u8,
-    initiator_dilithium_pk: &[u8],
-    responder_dilithium_pk: &[u8],
+    initiator_mldsa_pk: &[u8],
+    responder_mldsa_pk: &[u8],
     initiator_kem_pk: &[u8],
     responder_kem_pk: &[u8],
     ciphertext: &[u8],
 ) -> Vec<u8> {
     let mut msg = Vec::with_capacity(
-        1 + initiator_dilithium_pk.len()
-            + responder_dilithium_pk.len()
+        1 + initiator_mldsa_pk.len()
+            + responder_mldsa_pk.len()
             + initiator_kem_pk.len()
             + responder_kem_pk.len()
             + ciphertext.len(),
     );
     msg.push(role);
-    msg.extend_from_slice(initiator_dilithium_pk);
-    msg.extend_from_slice(responder_dilithium_pk);
+    msg.extend_from_slice(initiator_mldsa_pk);
+    msg.extend_from_slice(responder_mldsa_pk);
     msg.extend_from_slice(initiator_kem_pk);
     msg.extend_from_slice(responder_kem_pk);
     msg.extend_from_slice(ciphertext);

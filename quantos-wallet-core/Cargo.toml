@@ -21,11 +21,10 @@ hex = "0.4"
 data-encoding = "2.5"
 chrono = { version = "0.4", features = ["serde", "wasmbind"] }
 
-# Pure Rust Dilithium-3 with WASM support
-# Note: quantos node uses pqcrypto-dilithium (C/PQClean).
-# pqc_dilithium 0.2 implements Dilithium-3 (NIST Round 3).
-# Interop with pqcrypto-dilithium should be tested.
-pqc_dilithium = { version = "0.2", features = ["wasm"] }
+# Pure Rust ML-DSA-65 (FIPS 204) with WASM support
+# Same algorithm as the quantos node (pqcrypto-mldsa).
+# ml-dsa is RustCrypto's pure-Rust implementation, WASM-compatible.
+ml-dsa = { version = "0.1", features = ["getrandom"] }
 
 # WASM-compatible random
 getrandom = { version = "0.2", features = ["js"] }

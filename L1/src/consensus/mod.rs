@@ -14,7 +14,7 @@
 //! │              Layer 2: Quantum Committees                     │
 //! │  1000 committees × 21 validators = 21,000 total validators  │
 //! │  VRF rotation using SPHINCS+ every 100ms                    │
-//! │  Dilithium-3 aggregated signatures (14/21 threshold)        │
+//! │  ML-DSA-65 aggregated signatures (14/21 threshold)        │
 //! ├─────────────────────────────────────────────────────────────┤
 //! │              Layer 1: Fast Path (DAG)                        │
 //! │  Parallel transaction inclusion without sequential blocks   │
@@ -25,7 +25,7 @@
 //!
 //! ## Consensus Phases
 //!
-//! 1. **Inclusion (0-10ms)**: TX signed with Dilithium-3, propagated via QUIC
+//! 1. **Inclusion (0-10ms)**: TX signed with ML-DSA-65, propagated via QUIC
 //! 2. **Pre-consensus (10-50ms)**: Committee votes with 14/21 threshold
 //! 3. **Ordering (50-100ms)**: Topological sort of DAG, conflict resolution
 //! 4. **Finality (~1s)**: Checkpoint with ML-DSA-65 signatures
@@ -40,6 +40,10 @@ pub mod dynamic_committee;
 pub mod pipelining;
 pub mod optimistic_responsiveness;
 pub mod view_change;
+pub mod safety_model;
+
+#[cfg(test)]
+mod adversarial_tests;
 
 pub use committee::*;
 pub use fast_path::*;

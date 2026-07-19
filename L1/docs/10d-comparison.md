@@ -37,7 +37,7 @@ Quantos combines a DAG mempool/fast-path (parallel inclusion) with pipelined BFT
 |-------|-----------|--------------------|
 | Ethereum | Per-gas auction (EIP-1559) | Sequential (per block) |
 | Solana | Low fixed fee + priority | Yes (Sealevel, access-list based) |
-| **Quantos** | **Zero-gas (stake-proportional CU quota + state rent)** | **Yes (dependency graph + MVCC + speculative + JIT)** |
+| **Quantos** | **Zero-gas (stake-proportional CU quota + state rent)** | **Yes (dependency graph + MVCC + speculative execution)** |
 
 Quantos charges no per-transaction gas; throughput is allocated by staked-QTS quota and persistent storage is priced via state rent, while execution within a shard is parallelised across cores.
 

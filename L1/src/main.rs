@@ -4,8 +4,8 @@
 //!
 //! ## Features
 //!
-//! - **Post-Quantum Security**: Dilithium-3, SPHINCS+, ML-DSA-65
-//! - **Massive Parallelization**: 1000+ shards, ~100M TPS
+//! - **Post-Quantum Security**: ML-DSA-65, SPHINCS+, hash-based VRF
+//! - **Massive Parallelization**: 1000+ shards, high-throughput parallel execution
 //! - **Dynamic Sharding**: Auto-scaling based on load
 //! - **Sidechains**: Application-specific chains
 //!
@@ -141,7 +141,7 @@ enum Commands {
         network: String,
     },
     
-    /// Generate a full validator key set (Dilithium + VRF + ML-DSA-65)
+    /// Generate a full validator key set (ML-DSA-65 + VRF + ML-DSA-65 finality)
     GenerateValidatorKeys {
         /// Output path for key file
         #[arg(short, long)]
@@ -303,7 +303,7 @@ async fn main() -> Result<()> {
         warn!("⚠ Validator mode requested but no key file found. Run `quantos generate-validator-keys` first.");
     } else if genesis.network == NetworkId::Devnet || genesis.network == NetworkId::Testnet {
         warn!("⚠ No validator key file found; generating ephemeral validator identity for local testing.");
-        let signing_key = crypto::DilithiumKeypair::generate()
+        let signing_key = crypto::MlDsa65Keypair::generate()
             .expect("Failed to generate validator signing key");
         let vrf_key = crypto::VRFKeypair::generate()
             .expect("Failed to generate validator VRF key");
@@ -662,7 +662,7 @@ fn export_genesis(output: &str, network: &str) -> Result<()> {
     Ok(())
 }
 
-/// Generates a full validator key set (Dilithium + VRF + ML-DSA-65).
+/// Generates a full validator key set (ML-DSA-65 + VRF).
 fn generate_validator_keys(output: &str, name: Option<&str>) -> Result<()> {
     println!("🔑 Generating post-quantum validator key set...");
 
@@ -792,10 +792,10 @@ fn show_info() -> Result<()> {
     println!("");
     println!("═══════════════════════════════════════════════════════════════");
     println!("  Features:");
-    println!("  ├─ Post-Quantum Cryptography (Dilithium-3, SPHINCS+, ML-DSA-65)");
+    println!("  ├─ Post-Quantum Cryptography (ML-DSA-65, SPHINCS+, ML-DSA-65)");
     println!("  ├─ DAG-based Consensus");
     println!("  ├─ Dynamic Sharding (up to 10,000 shards)");
-    println!("  ├─ ~100M TPS theoretical throughput");
+    println!("  ├─ High-throughput parallel execution (see benchmarks for measured verif/s)");
     println!("  ├─ zk-STARK Proofs for cross-shard verification");
     println!("  └─ WASM Smart Contracts");
     println!("");

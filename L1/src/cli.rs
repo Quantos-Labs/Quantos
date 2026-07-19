@@ -93,7 +93,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: ContractCmd,
     },
-    /// Generate a new Dilithium keypair
+    /// Generate a new ML-DSA-65 keypair
     Keygen,
 }
 
@@ -136,7 +136,7 @@ enum TxCmd {
     },
     /// Transfer tokens (server-side signing via qnt_sendTransaction)
     Transfer {
-        /// Hex-encoded Dilithium private key (QTS:...)
+        /// Hex-encoded ML-DSA-65 private key (QTS:...)
         #[arg(long)]
         privkey: String,
         /// Destination address (QTS:...)
@@ -154,7 +154,7 @@ enum TxCmd {
     },
     /// Stake tokens (server-side signing)
     Stake {
-        /// Hex-encoded Dilithium private key (QTS:...)
+        /// Hex-encoded ML-DSA-65 private key (QTS:...)
         #[arg(long)]
         privkey: String,
         /// Amount to stake in hex
@@ -163,7 +163,7 @@ enum TxCmd {
     },
     /// Unstake tokens (server-side signing)
     Unstake {
-        /// Hex-encoded Dilithium private key (QTS:...)
+        /// Hex-encoded ML-DSA-65 private key (QTS:...)
         #[arg(long)]
         privkey: String,
         /// Amount to unstake in hex

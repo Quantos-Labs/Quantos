@@ -4,7 +4,7 @@
 //! runtime operations.
 //!
 //! ## Pre-computed Values
-//! - NTT (Number Theoretic Transform) tables for Dilithium
+//! - NTT (Number Theoretic Transform) tables for ML-DSA-65
 //! - Hash lookup tables
 //! - Address derivation cache
 //! - Modular arithmetic tables
@@ -13,7 +13,7 @@ use once_cell::sync::Lazy;
 use dashmap::DashMap;
 use lru::LruCache;
 use std::sync::Mutex;
-use pqcrypto_dilithium::dilithium3;
+use pqcrypto_mldsa::mldsa65;
 use pqcrypto_traits::sign::PublicKey as _PQPublicKeyTrait;
 
 use crate::types::{Address, Hash, hash_data};
@@ -51,7 +51,7 @@ pub static VERIFY_CACHE: Lazy<VerifyCache> = Lazy::new(|| VerifyCache::new(200_0
 
 /// Parsed public key cache to avoid repeated `PublicKey::from_bytes` allocations.
 pub struct PublicKeyCache {
-    cache: Mutex<LruCache<Vec<u8>, dilithium3::PublicKey>>,
+    cache: Mutex<LruCache<Vec<u8>, mldsa65::PublicKey>>,
 }
 
 impl PublicKeyCache {
@@ -62,13 +62,13 @@ impl PublicKeyCache {
     }
 
     /// Get parsed public key by bytes, or parse and insert.
-    pub fn get_or_parse(&self, key: &[u8]) -> Option<dilithium3::PublicKey> {
+    pub fn get_or_parse(&self, key: &[u8]) -> Option<mldsa65::PublicKey> {
         let mut cache = self.cache.lock().unwrap();
         if let Some(pk) = cache.get(key) {
             return Some(pk.clone());
         }
 
-        match dilithium3::PublicKey::from_bytes(key) {
+        match mldsa65::PublicKey::from_bytes(key) {
             Ok(parsed) => {
                 cache.put(key.to_vec(), parsed.clone());
                 Some(parsed)
@@ -82,35 +82,35 @@ impl PublicKeyCache {
 
 pub static PUBLIC_KEY_CACHE: Lazy<PublicKeyCache> = Lazy::new(|| PublicKeyCache::new(50_000));
 
-/// Dilithium modulus q = 8380417
-pub const DILITHIUM_Q: i32 = 8380417;
-/// Dilithium N = 256
-pub const DILITHIUM_N: usize = 256;
+/// ML-DSA-65 modulus q = 8380417
+pub const MLDSA_Q: i32 = 8380417;
+/// ML-DSA-65 N = 256
+pub const MLDSA_N: usize = 256;
 
-/// Pre-computed NTT roots of unity for Dilithium.
+/// Pre-computed NTT roots of unity for ML-DSA-65.
 /// These values accelerate polynomial multiplication.
-pub static NTT_ROOTS: Lazy<[i32; DILITHIUM_N]> = Lazy::new(|| {
-    let mut roots = [0i32; DILITHIUM_N];
+pub static NTT_ROOTS: Lazy<[i32; MLDSA_N]> = Lazy::new(|| {
+    let mut roots = [0i32; MLDSA_N];
     let primitive_root = 1753; // Primitive 512th root of unity mod q
     
     let mut power = 1i64;
-    for i in 0..DILITHIUM_N {
+    for i in 0..MLDSA_N {
         roots[i] = power as i32;
-        power = (power * primitive_root as i64) % DILITHIUM_Q as i64;
+        power = (power * primitive_root as i64) % MLDSA_Q as i64;
     }
     
     roots
 });
 
 /// Pre-computed inverse NTT roots.
-pub static NTT_ROOTS_INV: Lazy<[i32; DILITHIUM_N]> = Lazy::new(|| {
-    let mut roots_inv = [0i32; DILITHIUM_N];
-    let inv_root = mod_inverse(1753, DILITHIUM_Q);
+pub static NTT_ROOTS_INV: Lazy<[i32; MLDSA_N]> = Lazy::new(|| {
+    let mut roots_inv = [0i32; MLDSA_N];
+    let inv_root = mod_inverse(1753, MLDSA_Q);
     
     let mut power = 1i64;
-    for i in 0..DILITHIUM_N {
+    for i in 0..MLDSA_N {
         roots_inv[i] = power as i32;
-        power = (power * inv_root as i64) % DILITHIUM_Q as i64;
+        power = (power * inv_root as i64) % MLDSA_Q as i64;
     }
     
     roots_inv
@@ -122,7 +122,7 @@ pub static MONTGOMERY_R: Lazy<i64> = Lazy::new(|| {
 });
 
 pub static MONTGOMERY_R_INV: Lazy<i32> = Lazy::new(|| {
-    mod_inverse((*MONTGOMERY_R % DILITHIUM_Q as i64) as i32, DILITHIUM_Q)
+    mod_inverse((*MONTGOMERY_R % MLDSA_Q as i64) as i32, MLDSA_Q)
 });
 
 /// Computes modular inverse using extended Euclidean algorithm.
@@ -329,19 +329,19 @@ impl BarrettConstants {
     }
 }
 
-/// Pre-computed Barrett constants for Dilithium.
-pub static BARRETT_DILITHIUM: Lazy<BarrettConstants> = Lazy::new(|| {
-    BarrettConstants::new(DILITHIUM_Q as u64)
+/// Pre-computed Barrett constants for ML-DSA-65.
+pub static BARRETT_MLDSA65: Lazy<BarrettConstants> = Lazy::new(|| {
+    BarrettConstants::new(MLDSA_Q as u64)
 });
 
 /// Accelerated NTT using pre-computed tables.
-pub fn fast_ntt(poly: &mut [i32; DILITHIUM_N]) {
+pub fn fast_ntt(poly: &mut [i32; MLDSA_N]) {
     let mut k = 0usize;
     let mut len = 128;
     
     while len >= 1 {
         let mut start = 0;
-        while start < DILITHIUM_N {
+        while start < MLDSA_N {
             let zeta = NTT_ROOTS[k];
             k += 1;
             
@@ -360,18 +360,18 @@ pub fn fast_ntt(poly: &mut [i32; DILITHIUM_N]) {
 /// Montgomery reduction.
 fn montgomery_reduce(a: i64) -> i32 {
     let t = (a as i32).wrapping_mul(-58728449); // -q^-1 mod 2^32
-    let t = a + (t as i64) * (DILITHIUM_Q as i64);
+    let t = a + (t as i64) * (MLDSA_Q as i64);
     (t >> 32) as i32
 }
 
 /// Accelerated inverse NTT.
-pub fn fast_ntt_inv(poly: &mut [i32; DILITHIUM_N]) {
-    let mut k = DILITHIUM_N - 1;
+pub fn fast_ntt_inv(poly: &mut [i32; MLDSA_N]) {
+    let mut k = MLDSA_N - 1;
     let mut len = 1;
     
-    while len < DILITHIUM_N {
+    while len < MLDSA_N {
         let mut start = 0;
-        while start < DILITHIUM_N {
+        while start < MLDSA_N {
             let zeta = NTT_ROOTS_INV[k];
             k = k.wrapping_sub(1);
             
@@ -426,12 +426,12 @@ mod tests {
 
     #[test]
     fn test_barrett_reduction() {
-        let constants = BarrettConstants::new(DILITHIUM_Q as u64);
+        let constants = BarrettConstants::new(MLDSA_Q as u64);
         
         let a = 1234567890u64;
         let result = constants.reduce(a);
         
-        assert_eq!(result, a % DILITHIUM_Q as u64);
+        assert_eq!(result, a % MLDSA_Q as u64);
     }
 
     #[test]
@@ -443,8 +443,8 @@ mod tests {
 
     #[test]
     fn test_mod_inverse() {
-        let inv = mod_inverse(17, DILITHIUM_Q);
-        let product = (17i64 * inv as i64) % DILITHIUM_Q as i64;
+        let inv = mod_inverse(17, MLDSA_Q);
+        let product = (17i64 * inv as i64) % MLDSA_Q as i64;
         assert_eq!(product, 1);
     }
 }

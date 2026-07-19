@@ -4,7 +4,7 @@ use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng as AesOsRng},
     Aes256Gcm, Nonce,
 };
-use pqcrypto_dilithium::dilithium3;
+use pqcrypto_mldsa::mldsa65;
 use pqcrypto_traits::sign::{DetachedSignature, PublicKey, SecretKey, SignedMessage};
 use sha3::{Digest, Sha3_256};
 use zeroize::Zeroize;
@@ -15,8 +15,8 @@ use crate::types::{Amount, SignedTransaction, Transaction, TransactionType, VmKi
 const DOMAIN_TX: &[u8] = b"QUANTOS_TX_V1";
 
 pub const PK_SIZE: usize = 1952;
-pub const SK_SIZE: usize = 4032; // pqcrypto-dilithium actual size
-pub const SIG_SIZE: usize = 3293;
+pub const SK_SIZE: usize = 4032; // pqcrypto-mldsa actual size
+pub const SIG_SIZE: usize = 3309;
 
 // ── Keypair ───────────────────────────────────────────────────────────────────
 
@@ -28,15 +28,15 @@ impl Drop for ZeroizedSecretKey {
     }
 }
 
-pub struct DilithiumKeypair {
+pub struct MlDsa65Keypair {
     pub public_key: Vec<u8>,
     pub secret_key: ZeroizedSecretKey,
     pub address: [u8; 32],
 }
 
-impl DilithiumKeypair {
+impl MlDsa65Keypair {
     pub fn generate() -> WalletResult<Self> {
-        let (pk, sk) = dilithium3::keypair();
+        let (pk, sk) = mldsa65::keypair();
         let pk_bytes = pk.as_bytes().to_vec();
         let sk_bytes = sk.as_bytes().to_vec();
         let address = derive_address(&pk_bytes);
@@ -59,16 +59,11 @@ impl DilithiumKeypair {
         }
         
         // Reconstruct keypair from secret key to get the correct public key
-        let sk = dilithium3::SecretKey::from_bytes(&sk_bytes)
+        let sk = mldsa65::SecretKey::from_bytes(&sk_bytes)
             .map_err(|e| WalletError::InvalidSecretKey(format!("Invalid SK bytes: {:?}", e)))?;
         
-        // Generate a dummy keypair to get the public key derivation
-        // The secret key already contains the public key, we just need to extract it properly
-        // For pqcrypto-dilithium, we need to sign a dummy message to verify the key works
-        // then extract the public key from the secret key structure
-        
         // Extract public key from secret key bytes.
-        // In pqcrypto-dilithium, the SK contains the PK at the end.
+        // In pqcrypto-mldsa, the SK contains the PK at the end.
         let sk_len = sk_bytes.len();
         let pk_bytes = sk_bytes[sk_len - PK_SIZE..].to_vec();
         let address = derive_address(&pk_bytes);
@@ -88,9 +83,9 @@ impl DilithiumKeypair {
             .map_err(|e| WalletError::InvalidSecretKey(format!("Bad PK hex: {}", e)))?;
 
         // Validate both keys can be parsed by pqcrypto
-        let _sk = dilithium3::SecretKey::from_bytes(&sk_bytes)
+        let _sk = mldsa65::SecretKey::from_bytes(&sk_bytes)
             .map_err(|e| WalletError::InvalidSecretKey(format!("Invalid SK: {:?}", e)))?;
-        let _pk = dilithium3::PublicKey::from_bytes(&pk_bytes)
+        let _pk = mldsa65::PublicKey::from_bytes(&pk_bytes)
             .map_err(|e| WalletError::InvalidSecretKey(format!("Invalid PK: {:?}", e)))?;
 
         let address = derive_address(&pk_bytes);
@@ -102,17 +97,17 @@ impl DilithiumKeypair {
     }
 
     pub fn sign(&self, data: &[u8]) -> WalletResult<Vec<u8>> {
-        let sk = dilithium3::SecretKey::from_bytes(&self.secret_key.0)
+        let sk = mldsa65::SecretKey::from_bytes(&self.secret_key.0)
             .map_err(|e| WalletError::CryptoError(format!("Invalid SK: {:?}", e)))?;
-        let sig = dilithium3::detached_sign(data, &sk);
+        let sig = mldsa65::detached_sign(data, &sk);
         let sig_bytes = sig.as_bytes().to_vec();
 
         Ok(sig_bytes)
     }
 }
 
-/// Verify a Dilithium-3 detached signature against a public key.
-pub fn verify_dilithium_signature(
+/// Verify an ML-DSA-65 detached signature against a public key.
+pub fn verify_ml_dsa_65_signature(
     message: &[u8],
     signature_hex: &str,
     public_key_hex: &str,
@@ -122,12 +117,12 @@ pub fn verify_dilithium_signature(
     let pk_bytes = hex::decode(public_key_hex)
         .map_err(|e| WalletError::CryptoError(format!("Bad public key hex: {}", e)))?;
 
-    let sig = dilithium3::DetachedSignature::from_bytes(&sig_bytes)
+    let sig = mldsa65::DetachedSignature::from_bytes(&sig_bytes)
         .map_err(|e| WalletError::CryptoError(format!("Invalid signature: {:?}", e)))?;
-    let pk = dilithium3::PublicKey::from_bytes(&pk_bytes)
+    let pk = mldsa65::PublicKey::from_bytes(&pk_bytes)
         .map_err(|e| WalletError::CryptoError(format!("Invalid public key: {:?}", e)))?;
 
-    match dilithium3::verify_detached_signature(&sig, message, &pk) {
+    match mldsa65::verify_detached_signature(&sig, message, &pk) {
         Ok(()) => Ok(true),
         Err(_) => Ok(false),
     }
@@ -274,7 +269,7 @@ pub fn validate_pin(pin: &str) -> WalletResult<()> {
 // ── Transaction building ───────────────────────────────────────────────────────
 
 pub fn build_signed_transaction(
-    keypair: &DilithiumKeypair,
+    keypair: &MlDsa65Keypair,
     tx_type: TransactionType,
     to: [u8; 32],
     amount: u128,
@@ -327,7 +322,7 @@ pub fn build_signed_transaction(
 }
 
 pub fn build_signed_transaction_with_data(
-    keypair: &DilithiumKeypair,
+    keypair: &MlDsa65Keypair,
     tx_type: TransactionType,
     to: [u8; 32],
     amount: u128,

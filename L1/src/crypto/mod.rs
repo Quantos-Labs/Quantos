@@ -7,9 +7,7 @@
 //!
 //! | Algorithm | Usage | Key Size | Signature Size |
 //! |-----------|-------|----------|----------------|
-//! | **Dilithium-3** | Transaction signatures | 1952 bytes | 3293 bytes |
-//! | **SPHINCS+** | VRF for committee selection | 32 bytes | 17088 bytes |
-//! | **ML-DSA-65** | Checkpoint finality (FIPS 204) | 1952 bytes | 3309 bytes |
+//! | **ML-DSA-65** | Transaction & checkpoint signatures (FIPS 204) | 1952 bytes | 3309 bytes |
 //!
 //! ## Security Considerations
 //!
@@ -20,10 +18,10 @@
 //! ## Example
 //!
 //! ```rust,ignore
-//! use quantos::crypto::{DilithiumKeypair, sign_dilithium, verify_dilithium};
+//! use quantos::crypto::{MlDsa65Keypair, sign_ml_dsa_65, verify_ml_dsa_65};
 //!
 //! // Generate a keypair
-//! let keypair = DilithiumKeypair::generate()?;
+//! let keypair = MlDsa65Keypair::generate()?;
 //!
 //! // Sign a message
 //! let message = b"Hello, Quantos!";
@@ -34,12 +32,10 @@
 //! assert!(valid);
 //! ```
 
-mod dilithium;
 mod kyber_kem;
 mod sphincs;
 mod ml_dsa;
 mod vrf;
-mod qrng;
 mod qr_vrf;
 pub mod domains;
 mod hash;
@@ -57,19 +53,6 @@ pub mod batch_verify;
 pub mod signature_aggregation;
 pub mod adaptive_pqc;
 
-#[cfg(feature = "experimental-threshold-mlkem")]
-#[doc(hidden)]
-pub mod mlkem_core;
-#[cfg(feature = "experimental-threshold-mlkem")]
-#[doc(hidden)]
-mod shamir_zq;
-#[cfg(feature = "experimental-threshold-mlkem")]
-#[doc(hidden)]
-mod lattice_nizk;
-#[cfg(feature = "experimental-threshold-mlkem")]
-#[doc(hidden)]
-pub mod threshold_mlkem;
-
 pub use domains::{with_domain, DOMAIN_TX, DOMAIN_VERTEX, DOMAIN_COMMITTEE_VOTE,
     DOMAIN_CHECKPOINT, DOMAIN_VIEW_CHANGE, DOMAIN_PIPELINE_VOTE,
     DOMAIN_VRF_PRF, DOMAIN_VRF_OUTPUT, DOMAIN_VRF_PROVE,
@@ -77,12 +60,10 @@ pub use domains::{with_domain, DOMAIN_TX, DOMAIN_VERTEX, DOMAIN_COMMITTEE_VOTE,
     DOMAIN_SLASH_DOUBLE_SIGN, DOMAIN_SLASH_EQUIVOC, DOMAIN_SLASH_INVALID_BLOCK,
     DOMAIN_SLASH_FRONT_RUN,
     DOMAIN_PQ_PEER_ID, DOMAIN_PQ_KEM_HANDSHAKE};
-pub use dilithium::*;
 pub use kyber_kem::*;
 pub use sphincs::*;
 pub use ml_dsa::*;
 pub use vrf::*;
-pub use qrng::*;
 pub use qr_vrf::*;
 pub use hash::*;
 pub use keypair::*;

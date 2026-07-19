@@ -28,8 +28,7 @@ The design of Quantos draws on the following standards and peer-reviewed literat
 
 12. E. Ben-Sasson, I. Bentov, Y. Horesh, M. Riabzev. *Scalable, Transparent, and Post-Quantum Secure Computational Integrity (STARKs).* IACR ePrint, 2018. (Basis for VRF proof-of-knowledge and L0 aggregation.)
 13. S. Micali, M. Rabin, S. Vadhan. *Verifiable Random Functions.* FOCS, 1999.
-14. A. Shamir. *How to Share a Secret.* Communications of the ACM, 1979. (Threshold ML-KEM secret sharing.)
-15. A. Fiat, A. Shamir. *How to Prove Yourself: Practical Solutions to Identification and Signature Problems.* CRYPTO, 1986. (Non-interactive proof transform.)
+14. A. Fiat, A. Shamir. *How to Prove Yourself: Practical Solutions to Identification and Signature Problems.* CRYPTO, 1986. (Non-interactive proof transform.)
 
 ## 32.4 Hash-Based Signatures and Accumulators
 

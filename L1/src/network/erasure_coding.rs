@@ -302,7 +302,8 @@ impl ReedSolomonCodec {
             // Fast path: just concatenate data shards
             let mut result = Vec::with_capacity(shard_size * k);
             for i in 0..k {
-                let shard = shards.iter().find(|s| s.index == i).unwrap();
+                let shard = shards.iter().find(|s| s.index == i)
+                    .ok_or(ErasureCodingError::InvalidShardIndex(i))?;
                 result.extend_from_slice(&shard.data);
             }
             result.truncate(shards[0].original_size);

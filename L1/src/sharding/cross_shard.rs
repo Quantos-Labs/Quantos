@@ -36,6 +36,7 @@ use rand::rngs::OsRng;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::types::{Address, Amount, Hash, ShardId};
+use crate::crypto::{sign_ml_dsa_65, verify_ml_dsa_65, MlDsa65Keypair};
 
 /// Minimum transfer amount
 const MIN_TRANSFER_AMOUNT: u128 = 1;
@@ -223,6 +224,8 @@ pub struct CrossShardCoordinator {
     nonce_counter: Arc<AtomicU64>,
     /// Pending count per sender for DoS protection
     pending_per_sender: Arc<DashMap<Address, usize>>,
+    /// Committee keypair for signing cross-shard messages
+    committee_keypair: Arc<RwLock<Option<MlDsa65Keypair>>>,
 }
 
 /// Metrics for cross-shard operations.
@@ -265,7 +268,97 @@ impl CrossShardCoordinator {
             auth_token: Arc::new(Mutex::new(token)),
             nonce_counter: Arc::new(AtomicU64::new(1)),
             pending_per_sender: Arc::new(DashMap::new()),
+            committee_keypair: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Sets the committee keypair used to sign outgoing cross-shard messages.
+    pub fn set_committee_keypair(&self, keypair: MlDsa65Keypair) {
+        *self.committee_keypair.write() = Some(keypair);
+    }
+
+    /// Signs a cross-shard message payload with the committee keypair.
+    /// Returns the signature, or empty Vec if no keypair is set.
+    fn sign_committee(&self, message: &CrossShardMessage) -> Vec<u8> {
+        let kp_lock = self.committee_keypair.read();
+        if let Some(ref kp) = *kp_lock {
+            let signing_data = Self::message_signing_data(message);
+            match sign_ml_dsa_65(&kp.secret_key, &signing_data) {
+                Ok(sig) => sig,
+                Err(e) => {
+                    tracing::error!("Failed to sign cross-shard message: {}", e);
+                    Vec::new()
+                }
+            }
+        } else {
+            tracing::warn!("No committee keypair set, cross-shard message unsigned");
+            Vec::new()
+        }
+    }
+
+    /// Computes the canonical signing data for a cross-shard message.
+    /// This is the hash of (source_shard || dest_shard || state_root || payload).
+    fn message_signing_data(message: &CrossShardMessage) -> Vec<u8> {
+        let mut data = Vec::with_capacity(2 + 32 + message.payload.len());
+        data.extend_from_slice(&message.source_shard.to_le_bytes());
+        data.extend_from_slice(&message.dest_shard.to_le_bytes());
+        data.extend_from_slice(&message.state_root);
+        data.extend_from_slice(&message.payload);
+        crate::types::hash_data(&data).to_vec()
+    }
+
+    /// Verifies a cross-shard message's committee signature.
+    /// Returns Ok(()) if signature is valid or empty (backward compat during transition).
+    /// Returns Err if signature is present but invalid.
+    fn verify_committee_signature(
+        &self,
+        message: &CrossShardMessage,
+        source_shard: ShardId,
+    ) -> Result<(), CrossShardError> {
+        if message.committee_signature.is_empty() {
+            tracing::warn!(
+                "Cross-shard message from shard {} has no committee signature",
+                source_shard
+            );
+            return Ok(());
+        }
+
+        let kp_lock = self.committee_keypair.read();
+        if let Some(ref kp) = *kp_lock {
+            let signing_data = Self::message_signing_data(message);
+            match verify_ml_dsa_65(&kp.public_key, &signing_data, &message.committee_signature) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(CrossShardError::InvalidMessageFormat),
+                Err(e) => {
+                    tracing::error!("Committee signature verification error: {}", e);
+                    Err(CrossShardError::InvalidMessageFormat)
+                }
+            }
+        } else {
+            tracing::warn!("No committee keypair set, skipping signature verification");
+            Ok(())
+        }
+    }
+
+    /// Builds a signed cross-shard control message (Reject/Confirm/etc).
+    fn build_signed_control_message(
+        &self,
+        msg_type: CrossShardMessageType,
+        source_shard: ShardId,
+        dest_shard: ShardId,
+        state_root: Hash,
+    ) -> CrossShardMessage {
+        let mut msg = CrossShardMessage {
+            msg_type,
+            source_shard,
+            dest_shard,
+            payload: Vec::new(),
+            merkle_proof: Vec::new(),
+            state_root,
+            committee_signature: Vec::new(),
+        };
+        msg.committee_signature = self.sign_committee(&msg);
+        msg
     }
     
     /// Returns the local bootstrap token for trusted in-crate operations.
@@ -419,15 +512,18 @@ impl CrossShardCoordinator {
         }
 
         // Send message to destination shard
-        self.send_to_shard(dest_shard, CrossShardMessage {
+        let mut message = CrossShardMessage {
             msg_type: CrossShardMessageType::Transfer(tx.clone()),
             source_shard,
             dest_shard,
-            payload: bincode::serialize(&tx).unwrap_or_default(),
+            payload: bincode::serialize(&tx)
+                .map_err(|e| CrossShardError::InternalError(format!("Failed to serialize tx: {}", e)))?,
             merkle_proof: Vec::new(),
             state_root: source_state_root,
-            committee_signature: Vec::new(), // Would be signed by committee
-        }).await?;
+            committee_signature: Vec::new(),
+        };
+        message.committee_signature = self.sign_committee(&message);
+        self.send_to_shard(dest_shard, message).await?;
 
         tracing::info!(
             "Cross-shard transfer initiated: {} -> {}, amount: {}, tx: {}",
@@ -451,7 +547,10 @@ impl CrossShardCoordinator {
 
         let state_root = message.state_root;
         let source_shard = message.source_shard;
-        
+
+        // Verify committee signature before processing any message
+        self.verify_committee_signature(&message, source_shard)?;
+
         match message.msg_type {
             CrossShardMessageType::Transfer(tx) => {
                 self.handle_incoming_transfer(tx, state_root).await
@@ -490,15 +589,12 @@ impl CrossShardCoordinator {
         if let Some(ref proof) = tx.proof {
             // Validate proof structure: must be exactly 96 bytes (hash + signature + state_root)
             if proof.len() < 96 {
-                self.send_to_shard(tx.source_shard, CrossShardMessage {
-                    msg_type: CrossShardMessageType::Reject(tx.id, "Invalid proof: too short".to_string()),
-                    source_shard: tx.dest_shard,
-                    dest_shard: tx.source_shard,
-                    payload: Vec::new(),
-                    merkle_proof: Vec::new(),
-                    state_root: [0u8; 32],
-                    committee_signature: Vec::new(),
-                }).await?;
+                self.send_to_shard(tx.source_shard, self.build_signed_control_message(
+                    CrossShardMessageType::Reject(tx.id, "Invalid proof: too short".to_string()),
+                    tx.dest_shard,
+                    tx.source_shard,
+                    [0u8; 32],
+                )).await?;
                 
                 return Err(CrossShardError::ProofVerificationFailed("Proof too short (expected 96 bytes)".to_string()));
             }
@@ -521,15 +617,12 @@ impl CrossShardCoordinator {
             
             let expected_proof_hash = crate::types::hash_data(&proof_input);
             if &proof[..32] != &expected_proof_hash[..] {
-                self.send_to_shard(tx.source_shard, CrossShardMessage {
-                    msg_type: CrossShardMessageType::Reject(tx.id, "Proof verification failed".to_string()),
-                    source_shard: tx.dest_shard,
-                    dest_shard: tx.source_shard,
-                    payload: Vec::new(),
-                    merkle_proof: Vec::new(),
-                    state_root: [0u8; 32],
-                    committee_signature: Vec::new(),
-                }).await?;
+                self.send_to_shard(tx.source_shard, self.build_signed_control_message(
+                    CrossShardMessageType::Reject(tx.id, "Proof verification failed".to_string()),
+                    tx.dest_shard,
+                    tx.source_shard,
+                    [0u8; 32],
+                )).await?;
                 
                 return Err(CrossShardError::ProofVerificationFailed("Proof hash mismatch".to_string()));
             }
@@ -537,15 +630,12 @@ impl CrossShardCoordinator {
             // Verify the proof signature (hash(proof_hash || state_root))
             let expected_sig = crate::types::hash_data(&[&proof[..32], &state_root[..]].concat());
             if &proof[32..64] != &expected_sig[..] {
-                self.send_to_shard(tx.source_shard, CrossShardMessage {
-                    msg_type: CrossShardMessageType::Reject(tx.id, "Proof signature mismatch".to_string()),
-                    source_shard: tx.dest_shard,
-                    dest_shard: tx.source_shard,
-                    payload: Vec::new(),
-                    merkle_proof: Vec::new(),
-                    state_root: [0u8; 32],
-                    committee_signature: Vec::new(),
-                }).await?;
+                self.send_to_shard(tx.source_shard, self.build_signed_control_message(
+                    CrossShardMessageType::Reject(tx.id, "Proof signature mismatch".to_string()),
+                    tx.dest_shard,
+                    tx.source_shard,
+                    [0u8; 32],
+                )).await?;
                 
                 return Err(CrossShardError::ProofVerificationFailed("Proof signature mismatch".to_string()));
             }
@@ -565,15 +655,12 @@ impl CrossShardCoordinator {
         }
 
         // Send confirmation to source shard
-        self.send_to_shard(tx.source_shard, CrossShardMessage {
-            msg_type: CrossShardMessageType::Confirm(tx.id),
-            source_shard: tx.dest_shard,
-            dest_shard: tx.source_shard,
-            payload: Vec::new(),
-            merkle_proof: Vec::new(),
+        self.send_to_shard(tx.source_shard, self.build_signed_control_message(
+            CrossShardMessageType::Confirm(tx.id),
+            tx.dest_shard,
+            tx.source_shard,
             state_root,
-            committee_signature: Vec::new(),
-        }).await?;
+        )).await?;
 
         Ok(())
     }

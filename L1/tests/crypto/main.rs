@@ -35,40 +35,40 @@ fn test_sha3_256_length() {
 }
 
 // ══════════════════════════════════════════════════════════
-//  Dilithium Keypair
+//  ML-DSA-65 Keypair
 // ══════════════════════════════════════════════════════════
 
 #[test]
-fn test_dilithium_keypair_generation() {
-    let kp = DilithiumKeypair::generate().unwrap();
+fn test_mldsa65_keypair_generation() {
+    let kp = MlDsa65Keypair::generate().unwrap();
     assert!(!kp.public_key.is_empty());
     assert!(!kp.secret_key.is_empty());
 }
 
 #[test]
-fn test_dilithium_keypair_unique() {
-    let kp1 = DilithiumKeypair::generate().unwrap();
-    let kp2 = DilithiumKeypair::generate().unwrap();
+fn test_mldsa65_keypair_unique() {
+    let kp1 = MlDsa65Keypair::generate().unwrap();
+    let kp2 = MlDsa65Keypair::generate().unwrap();
     assert_ne!(kp1.public_key, kp2.public_key);
 }
 
 #[test]
-fn test_dilithium_sign_verify() {
-    let kp = DilithiumKeypair::generate().unwrap();
+fn test_mldsa65_sign_verify() {
+    let kp = MlDsa65Keypair::generate().unwrap();
     let message = b"quantos transaction data";
     let signature = kp.sign(message).unwrap();
     assert!(!signature.is_empty());
 
-    let valid = verify_dilithium(&kp.public_key, message, &signature);
+    let valid = verify_ml_dsa_65(&kp.public_key, message, &signature);
     assert!(valid.is_ok());
     assert!(valid.unwrap());
 }
 
 #[test]
-fn test_dilithium_wrong_message() {
-    let kp = DilithiumKeypair::generate().unwrap();
+fn test_mldsa65_wrong_message() {
+    let kp = MlDsa65Keypair::generate().unwrap();
     let signature = kp.sign(b"original message").unwrap();
-    let valid = verify_dilithium(&kp.public_key, b"wrong message", &signature);
+    let valid = verify_ml_dsa_65(&kp.public_key, b"wrong message", &signature);
     // Should be Ok(false) or Err
     match valid {
         Ok(v) => assert!(!v),
@@ -77,12 +77,12 @@ fn test_dilithium_wrong_message() {
 }
 
 #[test]
-fn test_dilithium_wrong_key() {
-    let kp1 = DilithiumKeypair::generate().unwrap();
-    let kp2 = DilithiumKeypair::generate().unwrap();
+fn test_mldsa65_wrong_key() {
+    let kp1 = MlDsa65Keypair::generate().unwrap();
+    let kp2 = MlDsa65Keypair::generate().unwrap();
     let message = b"test message";
     let signature = kp1.sign(message).unwrap();
-    let valid = verify_dilithium(&kp2.public_key, message, &signature);
+    let valid = verify_ml_dsa_65(&kp2.public_key, message, &signature);
     match valid {
         Ok(v) => assert!(!v),
         Err(_) => {}
@@ -90,10 +90,10 @@ fn test_dilithium_wrong_key() {
 }
 
 #[test]
-fn test_dilithium_empty_message() {
-    let kp = DilithiumKeypair::generate().unwrap();
+fn test_mldsa65_empty_message() {
+    let kp = MlDsa65Keypair::generate().unwrap();
     let signature = kp.sign(b"").unwrap();
-    let valid = verify_dilithium(&kp.public_key, b"", &signature);
+    let valid = verify_ml_dsa_65(&kp.public_key, b"", &signature);
     assert!(valid.is_ok());
     assert!(valid.unwrap());
 }
@@ -198,8 +198,8 @@ fn test_vrf_proof_committee_selection() {
 // ══════════════════════════════════════════════════════════
 
 #[test]
-fn test_dilithium_address_deterministic() {
-    let kp = DilithiumKeypair::generate().unwrap();
+fn test_mldsa65_address_deterministic() {
+    let kp = MlDsa65Keypair::generate().unwrap();
     let a1 = kp.address();
     let a2 = kp.address();
     assert_eq!(a1, a2);
@@ -208,7 +208,7 @@ fn test_dilithium_address_deterministic() {
 
 #[test]
 fn test_public_key_to_address() {
-    let kp = DilithiumKeypair::generate().unwrap();
+    let kp = MlDsa65Keypair::generate().unwrap();
     let addr = public_key_to_address(&kp.public_key);
     assert_eq!(addr, kp.address());
 }
@@ -229,8 +229,8 @@ fn test_compact_block_signature_end_to_end() {
     let block_hash = b"block_hash_abcdef1234567890abcdef";
 
     // Generate real signatures
-    let keypairs: Vec<DilithiumKeypair> = (0..num_signers)
-        .map(|_| DilithiumKeypair::generate().unwrap())
+    let keypairs: Vec<MlDsa65Keypair> = (0..num_signers)
+        .map(|_| MlDsa65Keypair::generate().unwrap())
         .collect();
 
     let signatures: Vec<Vec<u8>> = keypairs
@@ -270,9 +270,9 @@ fn test_compact_block_signature_end_to_end() {
 #[test]
 fn test_compression_metrics_realistic() {
     // BFT quorum for 800-validator committee: 2/3 + 1 = 534
-    let m = CompressionMetrics::dilithium(534, 800);
+    let m = CompressionMetrics::mldsa65(534, 800);
 
-    assert!(m.individual_bytes > 2_000_000, "534 Dilithium sigs > 2 MB");
+    assert!(m.individual_bytes > 2_000_000, "534 ML-DSA-65 sigs > 2 MB");
     assert!(m.compact_bytes < 200, "compact < 200 bytes");
     assert!(m.ratio > 10_000.0, "ratio > 10000x");
     assert!(m.savings_percent > 99.99, "savings > 99.99%");

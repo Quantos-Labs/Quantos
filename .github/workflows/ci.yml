@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    name: Format check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy lints
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            build-essential clang cmake libclang-dev libssl-dev pkg-config protobuf-compiler
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  build:
+    name: Build (release)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            build-essential clang cmake libclang-dev libssl-dev pkg-config protobuf-compiler
+      - name: Build (locked, release)
+        run: cargo build --release --locked --workspace
+
+  test:
+    name: Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            build-essential clang cmake libclang-dev libssl-dev pkg-config protobuf-compiler
+      - name: Run library tests
+        run: cargo test --lib --workspace --locked
+      - name: Run adversarial consensus tests
+        run: cargo test --lib --locked -- consensus::adversarial_tests
+
+  fuzz-smoke:
+    name: Fuzz targets (build + 10s smoke)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            build-essential clang cmake libclang-dev libssl-dev pkg-config protobuf-compiler
+      - name: Build fuzz targets
+        working-directory: L1
+        run: cargo +nightly fuzz build
+      - name: Smoke test each target (10s)
+        working-directory: L1
+        run: |
+          for target in fuzz_tx_deserialize fuzz_tx_prefilter fuzz_network_message fuzz_rlp_decode fuzz_chain_proof_json; do
+            echo "=== Fuzzing $target ==="
+            cargo +nightly fuzz run "$target" -- -max_total_time=10 -max_len=4096
+          done
+
+  security-audit:
+    name: Security audit
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      - name: Run audit
+        run: cargo audit --deny warnings

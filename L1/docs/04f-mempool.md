@@ -28,7 +28,7 @@ The first confirmation a user perceives (~50 ms) is the committee pre-confirmati
 
 ## 14.3 Encrypted Mempool (Anti-Front-Running)
 
-The encrypted mempool (`mempool/encrypted_mempool.rs`) hides transaction *content* until ordering is fixed, defeating front-running and sandwich attacks. Transactions are encrypted under threshold ML-KEM-768 (Cryptographic Primitives section): the committee can only decrypt a transaction *after* its position in the order has been committed, so a block producer cannot read pending transactions to reorder them for profit. Decryption requires a `t-of-n` committee subset, each contributing a NIZK-proven partial decryption.
+The encrypted mempool (`mempool/encrypted_mempool.rs`) hides transaction *content* until ordering is fixed, defeating front-running and sandwich attacks. Transactions are encrypted under ML-KEM-768 (FIPS 203). The **mainnet default** uses the accountable-leader front-running protection (`mempool/accountable_leader.rs`): canonical order is determined by `H(ordering_beacon ‖ tx_hash)`, and any deviation is slashable as proven front-running.
 
 ## 14.4 Fair Ordering
 

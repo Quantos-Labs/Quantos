@@ -231,7 +231,7 @@ impl SimdVerificationBatch {
             .zip(self.messages.par_iter())
             .zip(self.signatures.par_iter())
             .map(|((pk, msg), sig)| {
-                crate::crypto::verify_dilithium(pk, msg, sig)
+                crate::crypto::verify_ml_dsa_65(pk, msg, sig)
                     .unwrap_or(false)
             })
             .collect()
@@ -282,9 +282,9 @@ mod tests {
 
     #[test]
     fn test_simd_verification_batch() {
-        use crate::crypto::DilithiumKeypair;
+        use crate::crypto::MlDsa65Keypair;
         
-        let keypair = DilithiumKeypair::generate().unwrap();
+        let keypair = MlDsa65Keypair::generate().unwrap();
         let mut batch = SimdVerificationBatch::new();
         
         for i in 0..4 {

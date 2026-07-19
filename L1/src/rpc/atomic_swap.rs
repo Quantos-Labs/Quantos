@@ -113,7 +113,7 @@ impl AtomicSwapHandler {
                 }
                 // Verify the signature is valid
                 let signing_data = tx.transaction.signing_data();
-                match crate::crypto::verify_dilithium(
+                match crate::crypto::verify_ml_dsa_65(
                     &tx.transaction.public_key,
                     &signing_data,
                     &tx.transaction.signature,

@@ -14,10 +14,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use crossbeam_queue::ArrayQueue;
 
-/// Size constants for Dilithium-3
-pub const DILITHIUM_PUBLIC_KEY_SIZE: usize = 1952;
-pub const DILITHIUM_SECRET_KEY_SIZE: usize = 4000;
-pub const DILITHIUM_SIGNATURE_SIZE: usize = 3293;
+/// Size constants for ML-DSA-65 (re-exported from ml_dsa module)
+pub use crate::crypto::ml_dsa::{MLDSA65_PUBLIC_KEY_SIZE, MLDSA65_SECRET_KEY_SIZE, MLDSA65_SIGNATURE_SIZE};
 pub const HASH_SIZE: usize = 32;
 
 /// A pooled buffer that returns to pool on drop.
@@ -151,7 +149,7 @@ impl BufferPool {
 // Thread-local memory pool for maximum performance.
 thread_local! {
     static SIGNATURE_POOL: RefCell<Vec<Vec<u8>>> = RefCell::new(
-        (0..16).map(|_| vec![0u8; DILITHIUM_SIGNATURE_SIZE]).collect()
+        (0..16).map(|_| vec![0u8; MLDSA65_SIGNATURE_SIZE]).collect()
     );
     
     static HASH_POOL: RefCell<Vec<Vec<u8>>> = RefCell::new(
@@ -159,20 +157,20 @@ thread_local! {
     );
     
     static PUBKEY_POOL: RefCell<Vec<Vec<u8>>> = RefCell::new(
-        (0..16).map(|_| vec![0u8; DILITHIUM_PUBLIC_KEY_SIZE]).collect()
+        (0..16).map(|_| vec![0u8; MLDSA65_PUBLIC_KEY_SIZE]).collect()
     );
 }
 
 /// Gets a signature buffer from thread-local pool.
 pub fn get_signature_buffer() -> Vec<u8> {
     SIGNATURE_POOL.with(|pool| {
-        pool.borrow_mut().pop().unwrap_or_else(|| vec![0u8; DILITHIUM_SIGNATURE_SIZE])
+        pool.borrow_mut().pop().unwrap_or_else(|| vec![0u8; MLDSA65_SIGNATURE_SIZE])
     })
 }
 
 /// Returns a signature buffer to thread-local pool.
 pub fn return_signature_buffer(mut buffer: Vec<u8>) {
-    if buffer.len() == DILITHIUM_SIGNATURE_SIZE {
+    if buffer.len() == MLDSA65_SIGNATURE_SIZE {
         buffer.fill(0);
         SIGNATURE_POOL.with(|pool| {
             let mut p = pool.borrow_mut();
@@ -207,13 +205,13 @@ pub fn return_hash_buffer(mut buffer: Vec<u8>) {
 /// Gets a public key buffer from thread-local pool.
 pub fn get_pubkey_buffer() -> Vec<u8> {
     PUBKEY_POOL.with(|pool| {
-        pool.borrow_mut().pop().unwrap_or_else(|| vec![0u8; DILITHIUM_PUBLIC_KEY_SIZE])
+        pool.borrow_mut().pop().unwrap_or_else(|| vec![0u8; MLDSA65_PUBLIC_KEY_SIZE])
     })
 }
 
 /// Returns a public key buffer to thread-local pool.
 pub fn return_pubkey_buffer(mut buffer: Vec<u8>) {
-    if buffer.len() == DILITHIUM_PUBLIC_KEY_SIZE {
+    if buffer.len() == MLDSA65_PUBLIC_KEY_SIZE {
         buffer.fill(0);
         PUBKEY_POOL.with(|pool| {
             let mut p = pool.borrow_mut();
@@ -236,9 +234,9 @@ impl GlobalPools {
     /// Creates new global pools with specified capacities.
     pub fn new(capacity: usize) -> Self {
         Self {
-            signatures: BufferPool::new(DILITHIUM_SIGNATURE_SIZE, capacity),
+            signatures: BufferPool::new(MLDSA65_SIGNATURE_SIZE, capacity),
             hashes: BufferPool::new(HASH_SIZE, capacity * 4),
-            public_keys: BufferPool::new(DILITHIUM_PUBLIC_KEY_SIZE, capacity),
+            public_keys: BufferPool::new(MLDSA65_PUBLIC_KEY_SIZE, capacity),
             messages: BufferPool::new(1024, capacity * 2), // 1KB messages
         }
     }
@@ -300,9 +298,9 @@ pub struct PoolStats {
 impl PoolStats {
     /// Calculates total memory used by pools.
     pub fn total_memory_bytes(&self) -> usize {
-        self.signatures_capacity * DILITHIUM_SIGNATURE_SIZE +
+        self.signatures_capacity * MLDSA65_SIGNATURE_SIZE +
         self.hashes_capacity * HASH_SIZE +
-        self.public_keys_capacity * DILITHIUM_PUBLIC_KEY_SIZE +
+        self.public_keys_capacity * MLDSA65_PUBLIC_KEY_SIZE +
         self.messages_capacity * 1024
     }
 }
@@ -334,12 +332,12 @@ mod tests {
     #[test]
     fn test_thread_local_pool() {
         let buf1 = get_signature_buffer();
-        assert_eq!(buf1.len(), DILITHIUM_SIGNATURE_SIZE);
+        assert_eq!(buf1.len(), MLDSA65_SIGNATURE_SIZE);
         
         return_signature_buffer(buf1);
         
         let buf2 = get_signature_buffer();
-        assert_eq!(buf2.len(), DILITHIUM_SIGNATURE_SIZE);
+        assert_eq!(buf2.len(), MLDSA65_SIGNATURE_SIZE);
     }
 
     #[test]
@@ -350,9 +348,9 @@ mod tests {
         let hash = pools.get_hash();
         let pk = pools.get_public_key();
         
-        assert_eq!(sig.len(), DILITHIUM_SIGNATURE_SIZE);
+        assert_eq!(sig.len(), MLDSA65_SIGNATURE_SIZE);
         assert_eq!(hash.len(), HASH_SIZE);
-        assert_eq!(pk.len(), DILITHIUM_PUBLIC_KEY_SIZE);
+        assert_eq!(pk.len(), MLDSA65_PUBLIC_KEY_SIZE);
         
         let stats = pools.stats();
         println!("Total pool memory: {} bytes", stats.total_memory_bytes());

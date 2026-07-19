@@ -61,7 +61,7 @@ impl NetworkId {
 pub struct GenesisValidator {
     /// Validator address (derived from public key)
     pub address: String,
-    /// Dilithium public key (hex encoded)
+    /// ML-DSA-65 public key (hex encoded)
     pub public_key: String,
     /// Initial stake amount in smallest units (1 QTS = 10^18 units)
     pub stake: u128,
@@ -215,7 +215,7 @@ impl GenesisConfig {
         // NOTE: These are NOT deterministic — export genesis to JSON for reuse
         let mut validators = Vec::with_capacity(4);
         for i in 0..4 {
-            let keypair = crate::crypto::DilithiumKeypair::generate()
+            let keypair = crate::crypto::MlDsa65Keypair::generate()
                 .map_err(|e| GenesisError::ValidationError(
                     format!("Failed to generate validator key {}: {}", i, e)
                 ))?;
@@ -290,7 +290,7 @@ impl GenesisConfig {
         let chain_id: u64 = 3;
         
         // Generate random devnet validator key
-        let keypair = crate::crypto::DilithiumKeypair::generate()
+        let keypair = crate::crypto::MlDsa65Keypair::generate()
             .map_err(|e| GenesisError::ValidationError(
                 format!("Failed to generate devnet validator key: {}", e)
             ))?;

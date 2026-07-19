@@ -1,0 +1,95 @@
+name: Reproducible Build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  reproducible-docker:
+    name: Docker reproducible build + hash
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set build metadata
+        id: meta
+        run: |
+          echo "git_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "git_tag=$(git describe --tags --always --dirty 2>/dev/null || echo unknown)" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker image (reproducible)
+        run: |
+          docker build \
+            --no-cache \
+            --build-arg GIT_SHA=${{ steps.meta.outputs.git_sha }} \
+            --build-arg GIT_TAG=${{ steps.meta.outputs.git_tag }} \
+            --build-arg BUILD_DATE=${{ steps.meta.outputs.build_date }} \
+            -t quantos:reproducible \
+            -f L1/Dockerfile \
+            .
+
+      - name: Extract binary hashes
+        run: |
+          echo "=== Binary hashes (inside container) ==="
+          docker run --rm --entrypoint sh quantos:reproducible -c \
+            'sha256sum /usr/local/bin/quantos /usr/local/bin/quantos-cli'
+          echo ""
+          echo "=== Image digest ==="
+          docker inspect --format='{{index .RepoDigests 0}}' quantos:reproducible 2>/dev/null || true
+          docker images quantos:reproducible --digests
+
+      - name: Save hashes to artifact
+        run: |
+          mkdir -p artifacts
+          docker run --rm --entrypoint sh quantos:reproducible -c \
+            'sha256sum /usr/local/bin/quantos /usr/local/bin/quantos-cli' > artifacts/binary-hashes.txt
+          {
+            echo "Git SHA: ${{ steps.meta.outputs.git_sha }}"
+            echo "Git Tag: ${{ steps.meta.outputs.git_tag }}"
+            echo "Build Date: ${{ steps.meta.outputs.build_date }}"
+            echo ""
+            cat artifacts/binary-hashes.txt
+          } > artifacts/build-info.txt
+          cat artifacts/build-info.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reproducible-build-hashes
+          path: artifacts/
+          if-no-files-found: error
+
+  reproducible-cargo:
+    name: Cargo reproducible build + hash
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            build-essential clang cmake libclang-dev libssl-dev pkg-config protobuf-compiler
+
+      - name: Reproducible cargo build
+        env:
+          SOURCE_DATE_EPOCH: "0"
+          RUSTFLAGS: "-C remap-path-prefix=${{ github.workspace }}="
+        run: cargo build --release --locked --frozen --bin quantos --bin quantos-cli
+
+      - name: Hash binaries
+        run: |
+          mkdir -p artifacts
+          sha256sum target/release/quantos target/release/quantos-cli > artifacts/cargo-binary-hashes.txt
+          cat artifacts/cargo-binary-hashes.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cargo-build-hashes
+          path: artifacts/
+          if-no-files-found: error

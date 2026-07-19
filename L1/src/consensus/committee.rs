@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 
 use crate::consensus::{ConsensusError, ConsensusResult};
-use crate::crypto::{VRFProof, CommitteeRandomnessGenerator, PartialVRFProof, verify_dilithium};
+use crate::crypto::{VRFProof, CommitteeRandomnessGenerator, PartialVRFProof, verify_ml_dsa_65};
 use crate::types::{
     Address, CommitteeVote, Hash, 
     ShardId, Validator, ValidatorSet,
@@ -263,6 +263,10 @@ impl CommitteeManager {
         self.get_committee(epoch, committee_id)
     }
 
+    pub fn num_committees(&self) -> u16 {
+        self.num_committees
+    }
+
     pub fn is_committee_member(&self, epoch: u64, committee_id: u16, address: &Address) -> bool {
         self.get_committee(epoch, committee_id)
             .map(|c| c.has_member(address))
@@ -292,7 +296,7 @@ impl CommitteeManager {
             return Ok(false);
         }
 
-        let valid = verify_dilithium(
+        let valid = verify_ml_dsa_65(
             &validator.public_key,
             &vote.signing_data(),
             &vote.signature,

@@ -281,7 +281,7 @@ pub struct OperatorSignature {
     /// Operator address
     pub operator: Address,
     
-    /// Dilithium signature
+    /// ML-DSA-65 signature
     pub signature: Vec<u8>,
 }
 
@@ -473,7 +473,7 @@ impl SidechainRegistry {
         
         // Verify signature matches operator's public key
         let message = format!("register_operator:{}:{}", hex::encode(sidechain_id), hex::encode(&operator.address));
-        match crate::crypto::verify_dilithium(&operator.public_key, message.as_bytes(), operator_signature) {
+        match crate::crypto::verify_ml_dsa_65(&operator.public_key, message.as_bytes(), operator_signature) {
             Ok(true) => {},
             _ => return Err(SidechainError::InvalidSignature("Operator signature verification failed".into())),
         }
@@ -579,7 +579,7 @@ impl SidechainRegistry {
                         continue;
                     }
                     
-                    match crate::crypto::verify_dilithium(&op.public_key, &commitment_message, &sig.signature) {
+                    match crate::crypto::verify_ml_dsa_65(&op.public_key, &commitment_message, &sig.signature) {
                         Ok(true) => valid_signatures += 1,
                         _ => tracing::warn!("Invalid signature from operator {}", hex::encode(&sig.operator[..4])),
                     }

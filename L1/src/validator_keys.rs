@@ -3,7 +3,7 @@
 //! Production-grade persistence for validator identity keys.
 //! Each validator owns a unique set of three post-quantum keypairs:
 //!
-//! - **Dilithium-3** (`signing`) — vertex signatures, transaction auth, P2P identity.
+//! - **ML-DSA-65** (`signing`) — vertex signatures, transaction auth, P2P identity.
 //! - **SPHINCS+ / QR-VRF** (`vrf`) — committee selection and sortition.
 //! - **ML-DSA-65** (`finality`) — checkpoint finality signatures (FIPS 204).
 //!
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::{DilithiumKeypair, MlDsa65Keypair, VRFKeypair};
+use crate::crypto::{MlDsa65Keypair, VRFKeypair};
 use crate::types::{Address, hash_data};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,8 +40,8 @@ pub struct ValidatorKeySet {
 impl ValidatorKeySet {
     /// Generate a fresh validator key set from a secure RNG.
     pub fn generate(name: Option<String>) -> anyhow::Result<Self> {
-        let signing = DilithiumKeypair::generate()
-            .map_err(|e| anyhow::anyhow!("Dilithium key generation failed: {:?}", e))?;
+        let signing = MlDsa65Keypair::generate()
+            .map_err(|e| anyhow::anyhow!("ML-DSA-65 key generation failed: {:?}", e))?;
         let vrf = VRFKeypair::generate()
             .map_err(|e| anyhow::anyhow!("VRF key generation failed: {:?}", e))?;
         let finality = MlDsa65Keypair::generate()
@@ -57,7 +57,7 @@ impl ValidatorKeySet {
             address: qts_address,
             address_hex,
             signing: KeypairJson {
-                algorithm: "dilithium3".to_string(),
+                algorithm: "ml-dsa-65".to_string(),
                 public_key: hex::encode(&signing.public_key),
                 secret_key: hex::encode(&signing.secret_key),
             },
@@ -107,13 +107,13 @@ impl ValidatorKeySet {
         Path::new(datadir).join("validator_keys.json")
     }
 
-    /// Reconstruct the Dilithium keypair from the stored public and secret keys.
-    pub fn signing_keypair(&self) -> anyhow::Result<DilithiumKeypair> {
+    /// Reconstruct the ML-DSA-65 signing keypair from stored public and secret keys.
+    pub fn signing_keypair(&self) -> anyhow::Result<MlDsa65Keypair> {
         let public_key = hex::decode(&self.signing.public_key)
             .map_err(|e| anyhow::anyhow!("Invalid signing public key: {e}"))?;
         let secret_key = hex::decode(&self.signing.secret_key)
             .map_err(|e| anyhow::anyhow!("Invalid signing secret key: {e}"))?;
-        DilithiumKeypair::from_keys(&public_key, &secret_key)
+        MlDsa65Keypair::from_keys(&public_key, &secret_key)
             .map_err(|e| anyhow::anyhow!("Failed to load signing keypair: {e:?}"))
     }
 

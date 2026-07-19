@@ -1,7 +1,7 @@
 //! # Quantos - Post-Quantum L1 Blockchain
 //!
 //! Quantos is a revolutionary Layer 1 blockchain featuring:
-//! - **Post-Quantum Cryptography**: Dilithium-3, SPHINCS+, ML-DSA-65
+//! - **Post-Quantum Cryptography**: ML-DSA-65, SPHINCS+, ML-DSA-65
 //! - **DAG-based Consensus**: Parallel transaction processing
 //! - **Massive Parallelization**: 1000+ shards, optimistic execution
 //! - **Dynamic Sharding**: Auto-scaling based on load
@@ -69,7 +69,7 @@ pub use config::version;
 /// Prelude module for convenient imports
 pub mod prelude {
     pub use crate::consensus::QuantosConsensus;
-    pub use crate::crypto::{DilithiumKeypair, MlDsa65Keypair, VRFKeypair};
+    pub use crate::crypto::{MlDsa65Keypair, VRFKeypair};
     pub use crate::state::StateManager;
     pub use crate::storage::Storage;
     pub use crate::types::*;

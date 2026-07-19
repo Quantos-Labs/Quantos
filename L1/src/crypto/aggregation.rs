@@ -1,6 +1,6 @@
 //! # Signature Aggregation
 //!
-//! BLS-like signature aggregation for Quantos using Dilithium.
+//! BLS-like signature aggregation for Quantos using ML-DSA-65.
 //! Aggregates multiple signatures into a compact representation.
 //!
 //! ## Benefits
@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use rayon::prelude::*;
 
-use crate::crypto::{verify_dilithium, CryptoError, CryptoResult};
+use crate::crypto::{verify_ml_dsa_65, CryptoError, CryptoResult};
 use crate::types::Hash;
 
 /// Maximum signatures that can be aggregated
@@ -333,7 +333,7 @@ pub fn verify_aggregated_signature(
         .par_iter()
         .zip(public_keys.par_iter())
         .map(|(sig, pubkey)| {
-            verify_dilithium(pubkey, message, sig).unwrap_or(false)
+            verify_ml_dsa_65(pubkey, message, sig).unwrap_or(false)
         })
         .collect();
     
@@ -344,13 +344,13 @@ pub fn verify_aggregated_signature(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::DilithiumKeypair;
+    use crate::crypto::MlDsa65Keypair;
 
     #[test]
     fn test_aggregated_signature() {
         let mut agg = BatchAggregatedSignature::new();
         
-        let keypair = DilithiumKeypair::generate().unwrap();
+        let keypair = MlDsa65Keypair::generate().unwrap();
         let message = b"test message";
         let sig = keypair.sign(message).unwrap();
 
@@ -371,7 +371,7 @@ mod tests {
     #[test]
     fn test_space_savings() {
         let mut agg = BatchAggregatedSignature::new();
-        let keypair = DilithiumKeypair::generate().unwrap();
+        let keypair = MlDsa65Keypair::generate().unwrap();
         let sig = keypair.sign(b"test").unwrap();
 
         for i in 0..10 {

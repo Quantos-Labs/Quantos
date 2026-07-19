@@ -2,11 +2,11 @@
 
 **Post-Quantum L1 Blockchain with Massive Parallelization, Dynamic Sharding & Sidechains**
 
-Quantos is a next-generation Layer 1 blockchain designed for the post-quantum era, featuring ~100M TPS through parallel DAG execution, dynamic sharding, application-specific sidechains, and NIST-standardized post-quantum cryptography.
+Quantos is a next-generation Layer 1 blockchain designed for the post-quantum era, featuring high-throughput parallel DAG execution, dynamic sharding, application-specific sidechains, and NIST-standardized post-quantum cryptography.
 
 ## Key Features
 
-- **Post-Quantum Cryptography** — ML-DSA-65 (FIPS 204), ML-KEM-768 (FIPS 203), hash-based VRF (SHAKE256), SPHINCS+, and Dilithium across all signing, encryption, and randomness operations
+- **Post-Quantum Cryptography** — ML-DSA-65 (FIPS 204), ML-KEM-768 (FIPS 203), hash-based VRF (SHAKE256), SPHINCS+, and ML-DSA-65 across all signing, encryption, and randomness operations
 - **3-Layer Hybrid Consensus** — DAG fast path (~50ms pre-confirmation), quantum committees with VRF rotation (1000 committees x 21 validators), and ML-DSA-65 finality anchors (~1s finality)
 - **Dynamic Sharding** — 1000 shards with cross-shard atomic transactions, self-healing, and STARK-accelerated validity proofs
 - **STACC Scheduler** — Shared Transaction Access & Concurrency Control with fair queuing, anti-spam quotas, and state rent
@@ -47,7 +47,7 @@ Quantos is a next-generation Layer 1 blockchain designed for the post-quantum er
 |-----------|-------|----------------|
 | **ML-DSA-65** | Transaction, vertex & checkpoint signatures | FIPS 204, NIST level 3 |
 | **ML-KEM-768** | Encrypted mempool, P2P handshake | FIPS 203, NIST level 3 |
-| **Dilithium-3** | Legacy/compatibility signatures | NIST Round 3 |
+| **ML-DSA-65** | Legacy/compatibility signatures | NIST Round 3 |
 | **SPHINCS+** | Hash-based fallback signatures | NIST level 3 |
 | **Hash-based VRF** | Committee selection randomness | SHAKE256, quantum-resistant |
 | **SHA3-256/SHAKE256** | Hashing | Quantum-resistant |
@@ -79,7 +79,7 @@ Quantos/
 ├── L1/                            # Blockchain core (Rust)
 │   ├── src/
 │   │   ├── consensus/             # 3-layer hybrid consensus, committees, slashing, view change
-│   │   ├── crypto/                # ML-DSA, ML-KEM, Dilithium, SPHINCS+, VRF, NIZK, threshold
+│   │   ├── crypto/                # ML-DSA, ML-KEM, ML-DSA-65, SPHINCS+, VRF, NIZK, threshold
 │   │   ├── network/               # PQ P2P, turbo gossip, erasure coding, NAT traversal
 │   │   ├── vm/                    # EVM (revm), WASM (wasmer), JIT, MVCC, speculative exec
 │   │   ├── state/                 # State manager, STM, compression, archival pruning

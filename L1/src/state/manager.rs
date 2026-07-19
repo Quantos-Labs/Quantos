@@ -7,7 +7,7 @@ use parking_lot::{RwLock, Mutex};
 use rand::rngs::OsRng;
 use rand::RngCore;
 
-use crate::crypto::{verify_dilithium, public_key_to_address};
+use crate::crypto::{verify_ml_dsa_65, public_key_to_address};
 use crate::state::{StateError, StateResult, QuantumStateCompressor};
 use crate::storage::Storage;
 use crate::types::{
@@ -307,12 +307,12 @@ impl StateManager {
             return Err(StateError::InvalidSignature);
         }
 
-        let valid = verify_dilithium(
+        let valid = verify_ml_dsa_65(
             &tx.transaction.public_key,
             &tx.transaction.signing_data(),
             &tx.transaction.signature,
         ).map_err(|e| {
-            tracing::error!("validate_tx: dilithium verify error: {:?}, tx_type={:?}", e, tx.transaction.tx_type);
+            tracing::error!("validate_tx: ml-dsa-65 verify error: {:?}, tx_type={:?}", e, tx.transaction.tx_type);
             StateError::InvalidSignature
         })?;
 
@@ -834,7 +834,7 @@ impl StateManager {
             return Err(StateError::InvalidSignature);
         }
 
-        let valid = verify_dilithium(
+        let valid = verify_ml_dsa_65(
             &tx.transaction.public_key,
             &tx.transaction.signing_data(),
             &tx.transaction.signature,

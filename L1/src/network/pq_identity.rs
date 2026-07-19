@@ -1,14 +1,14 @@
-//! Canonical Quantos [`PeerId`]: SHA2-256 multihash over domain-separated Dilithium public key material.
+//! Canonical Quantos [`PeerId`]: SHA2-256 multihash over domain-separated ML-DSA-65 public key material.
 
 use sha2::{Digest, Sha256};
 
 use crate::crypto::{with_domain, DOMAIN_PQ_PEER_ID};
 use crate::network::peer_id::{PeerId, PEER_ID_RAW_LEN};
 
-/// Deterministic [`PeerId`] for a Dilithium-3 ML-DSA public key.
+/// Deterministic [`PeerId`] for a ML-DSA-65 ML-DSA public key.
 #[must_use]
-pub fn peer_id_from_dilithium_public_key(dilithium_pk: &[u8]) -> PeerId {
-    let preimage = with_domain(DOMAIN_PQ_PEER_ID, dilithium_pk);
+pub fn peer_id_from_mldsa_public_key(mldsa_pk: &[u8]) -> PeerId {
+    let preimage = with_domain(DOMAIN_PQ_PEER_ID, mldsa_pk);
     let digest = Sha256::digest(preimage);
     let mut raw = [0u8; PEER_ID_RAW_LEN];
     raw[0] = 0x12;

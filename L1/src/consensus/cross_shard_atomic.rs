@@ -31,7 +31,7 @@ use crate::types::{Address, Hash, ShardId, SignedTransaction};
 use crate::state::StateManager;
 use crate::dag::DAGGraph;
 use crate::zk::{StarkProver, CrossShardInputs};
-use crate::crypto::{sha3_256, verify_dilithium, with_domain, DilithiumKeypair, DOMAIN_CSAP_VOTE, DOMAIN_CSAP_ACK};
+use crate::crypto::{sha3_256, verify_ml_dsa_65, with_domain, MlDsa65Keypair, DOMAIN_CSAP_VOTE, DOMAIN_CSAP_ACK};
 use crate::consensus::CommitteeManager;
 
 /// Maximum shards involved in single atomic operation
@@ -60,7 +60,7 @@ pub struct CrossShardAtomicProtocol {
     /// Current epoch for committee queries
     current_epoch: Arc<RwLock<u64>>,
     /// Node's signing keypair for protocol messages
-    node_keypair: Arc<DilithiumKeypair>,
+    node_keypair: Arc<MlDsa65Keypair>,
     /// Message channels to validators (validator_address -> sender)
     validator_channels: Arc<DashMap<Address, mpsc::Sender<ProtocolMessage>>>,
     /// Pending vote responses
@@ -72,7 +72,7 @@ impl CrossShardAtomicProtocol {
         dag: Arc<DAGGraph>, 
         state_manager: StateManager,
         committee_manager: Arc<CommitteeManager>,
-        node_keypair: DilithiumKeypair,
+        node_keypair: MlDsa65Keypair,
     ) -> Self {
         Self {
             lock_manager: Arc::new(DistributedLockManager::new(committee_manager.clone())),
@@ -266,7 +266,7 @@ impl CrossShardAtomicProtocol {
             return Err(AtomicError::NotCommitteeMember);
         }
         
-        // Fetch the validator's Dilithium public key from the validator registry.
+        // Fetch the validator's ML-DSA-65 public key from the validator registry.
         let validator_set = self.committee_manager.get_validator_set();
         let pubkey = validator_set
             .get_validator(&vote.validator)
@@ -274,7 +274,7 @@ impl CrossShardAtomicProtocol {
             .ok_or(AtomicError::UnauthorizedSender)?;
         
         let payload = Self::vote_signing_payload(&vote.atomic_id, vote.shard_id, vote.approved);
-        let valid = verify_dilithium(&pubkey, &payload, &vote.signature)
+        let valid = verify_ml_dsa_65(&pubkey, &payload, &vote.signature)
             .map_err(|e| AtomicError::SigningFailed(format!("vote sig verify error: {}", e)))?;
         if !valid {
             return Err(AtomicError::UnauthorizedSender);
@@ -291,7 +291,7 @@ impl CrossShardAtomicProtocol {
             return Err(AtomicError::NotCommitteeMember);
         }
         
-        // Fetch the validator's Dilithium public key from the validator registry.
+        // Fetch the validator's ML-DSA-65 public key from the validator registry.
         let validator_set = self.committee_manager.get_validator_set();
         let pubkey = validator_set
             .get_validator(&ack.validator)
@@ -299,7 +299,7 @@ impl CrossShardAtomicProtocol {
             .ok_or(AtomicError::UnauthorizedSender)?;
         
         let payload = Self::ack_signing_payload(&ack.atomic_id, ack.shard_id);
-        let valid = verify_dilithium(&pubkey, &payload, &ack.signature)
+        let valid = verify_ml_dsa_65(&pubkey, &payload, &ack.signature)
             .map_err(|e| AtomicError::SigningFailed(format!("ack sig verify error: {}", e)))?;
         if !valid {
             return Err(AtomicError::UnauthorizedSender);

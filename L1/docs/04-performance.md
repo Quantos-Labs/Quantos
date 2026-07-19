@@ -32,7 +32,6 @@ Per-shard throughput is not achieved by a single trick but by stacking several p
 
 - **Inter-shard parallelism** (Dynamic Sharding section): independent shards execute simultaneously; aggregate throughput scales with active shard count.
 - **Intra-shard execution parallelism** (Virtual Machine section): within a shard, the transaction dependency graph, MVCC snapshot isolation, and speculative execution let non-conflicting transactions run concurrently across cores instead of sequentially.
-- **JIT compilation** (Virtual Machine section): hot contract paths are compiled to native code, removing interpreter overhead for the most-executed contracts.
 - **Signature compaction** (Post-Quantum Cryptography section): two-tier aggregation shrinks committee signatures from megabytes to ~130 bytes, removing what would otherwise be the dominant block-propagation cost.
 - **Crypto acceleration**: SIMD lattice arithmetic, precomputed NTT tables, and zero-copy verification paths reduce the per-signature CPU cost.
 

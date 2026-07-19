@@ -55,6 +55,16 @@ impl PeerId {
         let v = bs58::decode(s).into_vec().map_err(PeerIdParseError::BadBase58)?;
         Self::try_from_multihash_slice(&v)
     }
+
+    /// Generates a random PeerId. Test-only helper.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[must_use]
+    pub fn random() -> Self {
+        use rand::RngCore;
+        let mut raw = [0u8; PEER_ID_RAW_LEN];
+        rand::thread_rng().fill_bytes(&mut raw);
+        Self(raw)
+    }
 }
 
 impl fmt::Display for PeerId {

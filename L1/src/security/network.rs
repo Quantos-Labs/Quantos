@@ -480,8 +480,8 @@ impl MitmProtection {
                 return false;
             }
             
-            // Verify signature using Dilithium post-quantum signature
-            match crate::crypto::verify_dilithium(&cert.public_key, message, signature) {
+            // Verify signature using ML-DSA-65 post-quantum signature
+            match crate::crypto::verify_ml_dsa_65(&cert.public_key, message, signature) {
                 Ok(valid) => {
                     if !valid {
                         tracing::warn!("Invalid signature from validator {}", id);

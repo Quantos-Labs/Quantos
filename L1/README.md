@@ -2,7 +2,7 @@
 
 **Post-Quantum L1 Blockchain with Massive Parallelization, Dynamic Sharding & Sidechains**
 
-Quantos is a revolutionary Layer 1 blockchain featuring ~100M TPS through parallel DAG execution, dynamic sharding, and application-specific sidechains.
+Quantos is a revolutionary Layer 1 blockchain featuring high-throughput parallel DAG execution, dynamic sharding, and application-specific sidechains.
 
 ## Architecture
 
@@ -51,7 +51,7 @@ quantos/
 │   ├── main.rs              # Entry point & node configuration
 │   ├── crypto/              # Post-quantum cryptography
 │   │   ├── ml_dsa.rs        # ML-DSA-65 signatures (FIPS 204)
-│   │   ├── mlkem_core.rs    # ML-KEM-768 (FIPS 203)
+│   │   ├── kyber_kem.rs     # ML-KEM-768 (FIPS 203)
 │   │   ├── vrf_hashbased.rs # Hash-based VRF (SHAKE256)
 │   │   ├── vrf.rs           # Verifiable Random Function
 │   │   ├── hash.rs          # SHA3, SHAKE256, Merkle trees
@@ -164,7 +164,7 @@ curl -X POST http://localhost:8545 \
 ## Transaction Flow
 
 ```
-1. User signs TX with Dilithium-3
+1. User signs TX with ML-DSA-65
            ↓
 2. TX propagated via gossip (QUIC)
            ↓

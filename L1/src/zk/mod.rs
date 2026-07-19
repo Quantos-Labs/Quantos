@@ -387,7 +387,10 @@ impl StarkProver {
             id: proof_id,
             proof_type: ProofType::StateTransition,
             proof_data: proof_data.clone(),
-            public_inputs: bincode::serialize(inputs).unwrap_or_default(),
+            public_inputs: bincode::serialize(inputs).unwrap_or_else(|e| {
+                tracing::error!("Failed to serialize public inputs: {}", e);
+                Vec::new()
+            }),
             size: proof_data.len(),
             generation_time_ms: generation_time,
             verification_time_us: self.estimate_verification_time(proof_data.len()),
@@ -450,7 +453,10 @@ impl StarkProver {
             id: proof_id,
             proof_type: ProofType::CrossShard,
             proof_data: proof_data.clone(),
-            public_inputs: bincode::serialize(inputs).unwrap_or_default(),
+            public_inputs: bincode::serialize(inputs).unwrap_or_else(|e| {
+                tracing::error!("Failed to serialize public inputs: {}", e);
+                Vec::new()
+            }),
             size: proof_data.len(),
             generation_time_ms: generation_time,
             verification_time_us: self.estimate_verification_time(proof_data.len()),
@@ -649,7 +655,10 @@ impl StarkProver {
             id: proof_id,
             proof_type: ProofType::ValidatorTransition,
             proof_data: proof_data.clone(),
-            public_inputs: bincode::serialize(&inputs).unwrap_or_default(),
+            public_inputs: bincode::serialize(&inputs).unwrap_or_else(|e| {
+                tracing::error!("Failed to serialize public inputs: {}", e);
+                Vec::new()
+            }),
             size: proof_data.len(),
             generation_time_ms: generation_time,
             verification_time_us: self.estimate_verification_time(proof_data.len()),
@@ -819,7 +828,10 @@ impl StarkProver {
             id: proof_id,
             proof_type: ProofType::PrivateTransfer,
             proof_data: proof_data.clone(),
-            public_inputs: bincode::serialize(inputs).unwrap_or_default(),
+            public_inputs: bincode::serialize(inputs).unwrap_or_else(|e| {
+                tracing::error!("Failed to serialize public inputs: {}", e);
+                Vec::new()
+            }),
             size: proof_data.len(),
             generation_time_ms: generation_time,
             verification_time_us: self.estimate_verification_time(proof_data.len()),
@@ -878,7 +890,10 @@ impl StarkProver {
             id: proof_id,
             proof_type: ProofType::Aggregated,
             proof_data: aggregated_data.clone(),
-            public_inputs: bincode::serialize(&combined_inputs).unwrap_or_default(),
+            public_inputs: bincode::serialize(&combined_inputs).unwrap_or_else(|e| {
+                tracing::error!("Failed to serialize combined inputs: {}", e);
+                Vec::new()
+            }),
             size: aggregated_data.len(),
             generation_time_ms: generation_time,
             verification_time_us: self.estimate_verification_time(aggregated_data.len()),

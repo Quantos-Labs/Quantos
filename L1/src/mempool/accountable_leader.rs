@@ -1,6 +1,6 @@
 //! # Front-Running Protection with Accountable Leader
 //!
-//! **Mainnet default** mempool policy when threshold ML-KEM is not enabled.
+//! **Mainnet default** mempool policy.
 //!
 //! Instead of encrypting transactions, this mode relies on:
 //! - A **rotating block proposer** selected deterministically from the active
@@ -12,9 +12,8 @@
 //!   transaction list; any deviation from the canonical order is slashable as
 //!   proven front-running (`OffenseType::FrontRunning`).
 //!
-//! This uses only standard primitives (hash-based ordering, Dilithium signatures,
-//! existing slashing pipeline) and is safe to ship before an external audit of
-//! threshold ML-KEM.
+//! This uses only standard primitives (hash-based ordering, ML-DSA-65 signatures,
+//! existing slashing pipeline).
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -57,7 +56,7 @@ pub struct LeaderBlockOrder {
     pub tx_order: Vec<Hash>,
     /// Ordering beacon used for this block (must match chain randomness).
     pub ordering_beacon: Hash,
-    /// Dilithium signature over the order binding.
+    /// ML-DSA-65 signature over the order binding.
     pub signature: Vec<u8>,
 }
 

@@ -1,12 +1,12 @@
 use crate::crypto::{
-    CryptoResult, DilithiumKeypair, MlDsa65Keypair, VRFKeypair,
+    CryptoResult, MlDsa65Keypair, VRFKeypair,
 };
 use crate::types::Address;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
 pub struct ValidatorKeys {
-    pub signing_key: DilithiumKeypair,
+    pub signing_key: MlDsa65Keypair,
     pub vrf_key: VRFKeypair,
     pub finality_key: MlDsa65Keypair,
 }
@@ -14,7 +14,7 @@ pub struct ValidatorKeys {
 impl ValidatorKeys {
     pub fn generate() -> CryptoResult<Self> {
         Ok(Self {
-            signing_key: DilithiumKeypair::generate()?,
+            signing_key: MlDsa65Keypair::generate()?,
             vrf_key: VRFKeypair::generate()?,
             finality_key: MlDsa65Keypair::generate()?,
         })
@@ -41,30 +41,30 @@ pub struct ValidatorPublicKeys {
 }
 
 pub struct AccountKeypair {
-    pub dilithium: DilithiumKeypair,
+    pub mldsa: MlDsa65Keypair,
 }
 
 impl AccountKeypair {
     pub fn generate() -> CryptoResult<Self> {
         Ok(Self {
-            dilithium: DilithiumKeypair::generate()?,
+            mldsa: MlDsa65Keypair::generate()?,
         })
     }
 
     pub fn address(&self) -> Address {
-        self.dilithium.address()
+        self.mldsa.address()
     }
 
     pub fn public_key(&self) -> &[u8] {
-        &self.dilithium.public_key
+        &self.mldsa.public_key
     }
 
     pub fn sign(&self, message: &[u8]) -> CryptoResult<Vec<u8>> {
-        self.dilithium.sign(message)
+        self.mldsa.sign(message)
     }
 
     pub fn verify(&self, message: &[u8], signature: &[u8]) -> CryptoResult<bool> {
-        self.dilithium.verify(message, signature)
+        self.mldsa.verify(message, signature)
     }
 }
 
@@ -74,8 +74,8 @@ pub struct SerializableKeypair {
     pub secret_key: Vec<u8>,
 }
 
-impl From<&DilithiumKeypair> for SerializableKeypair {
-    fn from(keypair: &DilithiumKeypair) -> Self {
+impl From<&MlDsa65Keypair> for SerializableKeypair {
+    fn from(keypair: &MlDsa65Keypair) -> Self {
         Self {
             public_key: keypair.public_key.clone(),
             secret_key: keypair.secret_key.clone(),
@@ -83,7 +83,7 @@ impl From<&DilithiumKeypair> for SerializableKeypair {
     }
 }
 
-impl TryFrom<SerializableKeypair> for DilithiumKeypair {
+impl TryFrom<SerializableKeypair> for MlDsa65Keypair {
     type Error = crate::crypto::CryptoError;
 
     fn try_from(value: SerializableKeypair) -> Result<Self, Self::Error> {

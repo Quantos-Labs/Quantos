@@ -26,7 +26,7 @@ use tracing::warn;
 /// Maximum transactions per shard index
 const MAX_SHARD_TXS: usize = 10_000;
 
-use crate::crypto::verify_dilithium;
+use crate::crypto::verify_ml_dsa_65;
 use crate::network::prefilter_tx_bytes;
 use crate::state::StateManager;
 use crate::stacc::{ActivationLedger, ACTIVATION_DEPOSIT, QuotaManager};
@@ -174,12 +174,14 @@ impl Mempool {
     fn validate_transaction(&self, tx: &SignedTransaction) -> MempoolResult<()> {
         let signing_data = tx.transaction.signing_data();
         // Stateless prefilter to drop obvious garbage before expensive verify
-        if let Err(e) = prefilter_tx_bytes(&bincode::serialize(&tx).unwrap_or_default()) {
+        let tx_bytes = bincode::serialize(&tx)
+            .map_err(|e| MempoolError::InvalidTransaction(format!("Failed to serialize: {}", e)))?;
+        if let Err(e) = prefilter_tx_bytes(&tx_bytes) {
             tracing::warn!("Prefilter rejected tx: {}", e);
             return Err(MempoolError::InvalidTransaction(format!("Prefilter: {}", e)));
         }
         // Use batched verification worker to reduce per-tx overhead
-        let valid = crate::crypto::verify_dilithium_batch(
+        let valid = crate::crypto::verify_ml_dsa_65_batch(
             tx.transaction.public_key.clone(),
             signing_data.clone(),
             tx.transaction.signature.clone(),
@@ -513,15 +515,15 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
     use crate::storage::Storage;
-    use crate::crypto::DilithiumKeypair;
+    use crate::crypto::MlDsa65Keypair;
     use crate::types::{Amount, Transaction, TransactionType};
 
-    fn create_test_tx(keypair: &DilithiumKeypair, nonce: u64, shard_id: ShardId) -> SignedTransaction {
+    fn create_test_tx(keypair: &MlDsa65Keypair, nonce: u64, shard_id: ShardId) -> SignedTransaction {
         create_test_tx_to(keypair, nonce, shard_id, [2u8; 32])
     }
 
     fn create_test_tx_to(
-        keypair: &DilithiumKeypair,
+        keypair: &MlDsa65Keypair,
         nonce: u64,
         shard_id: ShardId,
         to: Address,
@@ -552,7 +554,7 @@ mod tests {
         let state = StateManager::new(storage);
         let mempool = Mempool::new(state, 1000, false);
 
-        let keypair = DilithiumKeypair::generate().unwrap();
+        let keypair = MlDsa65Keypair::generate().unwrap();
         let tx = create_test_tx(&keypair, 0, 0);
         let hash = tx.hash;
 
@@ -570,7 +572,7 @@ mod tests {
         let state = StateManager::new(storage);
         let mempool = Mempool::new(state, 1000, false);
 
-        let keypair = DilithiumKeypair::generate().unwrap();
+        let keypair = MlDsa65Keypair::generate().unwrap();
         let tx0 = create_test_tx(&keypair, 0, 0);
         let tx1 = create_test_tx(&keypair, 1, 0);
 
@@ -591,8 +593,8 @@ mod tests {
         let state = StateManager::new(storage);
         let mempool = Mempool::new(state, 1000, false);
 
-        let key_a = DilithiumKeypair::generate().unwrap();
-        let key_b = DilithiumKeypair::generate().unwrap();
+        let key_a = MlDsa65Keypair::generate().unwrap();
+        let key_b = MlDsa65Keypair::generate().unwrap();
         let shared_to: Address = [9u8; 32];
 
         let tx_a = create_test_tx_to(&key_a, 0, 0, shared_to);

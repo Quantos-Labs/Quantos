@@ -31,7 +31,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::types::{Hash, ShardId, Slot};
-use crate::crypto::{verify_dilithium, verify_dilithium_batch};
+use crate::crypto::{verify_ml_dsa_65, verify_ml_dsa_65_batch};
 use super::{SyncError, SyncResult};
 
 /// Maximum total memory for chunks (1GB)
@@ -612,7 +612,7 @@ impl SnapshotManager {
         }).collect();
 
         let results = batch.iter().map(|(pubkey, message, signature)| {
-            verify_dilithium_batch(pubkey.clone(), message.clone(), signature.clone())
+            verify_ml_dsa_65_batch(pubkey.clone(), message.clone(), signature.clone())
         }).collect::<Vec<bool>>();
 
         for (sig, valid) in manifest.signatures.iter().zip(results.iter()) {

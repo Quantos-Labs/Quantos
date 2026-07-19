@@ -2,7 +2,7 @@ use std::sync::mpsc::{channel, Sender, Receiver};
 use std::thread;
 use std::time::Duration;
 use once_cell::sync::Lazy;
-use crate::crypto::batch_verify::DilithiumBatchVerifier;
+use crate::crypto::batch_verify::MlDsa65BatchVerifier;
 
 /// A single verification request
 pub struct VerifyReq {
@@ -20,7 +20,7 @@ impl VerifyWorker {
     pub fn new() -> Self {
         let (tx, rx): (Sender<VerifyReq>, Receiver<VerifyReq>) = channel();
         thread::spawn(move || {
-            let verifier = DilithiumBatchVerifier::new(256);
+            let verifier = MlDsa65BatchVerifier::new(256);
             loop {
                 // collect first request (blocking)
                 let first = match rx.recv() {
@@ -68,6 +68,6 @@ impl VerifyWorker {
 
 pub static VERIFY_WORKER: Lazy<VerifyWorker> = Lazy::new(|| VerifyWorker::new());
 
-pub fn verify_dilithium_batch(pubkey: Vec<u8>, message: Vec<u8>, signature: Vec<u8>) -> bool {
+pub fn verify_ml_dsa_65_batch(pubkey: Vec<u8>, message: Vec<u8>, signature: Vec<u8>) -> bool {
     VERIFY_WORKER.verify_sync(pubkey, message, signature)
 }

@@ -1,6 +1,6 @@
 //! Comprehensive tests for the Mempool module
 
-use quantos::crypto::DilithiumKeypair;
+use quantos::crypto::MlDsa65Keypair;
 use quantos::mempool::*;
 use quantos::state::StateManager;
 use quantos::storage::Storage;
@@ -17,8 +17,8 @@ fn setup_mempool() -> (Mempool, tempfile::TempDir) {
     (pool, dir)
 }
 
-fn make_signed_tx(nonce: u64) -> (SignedTransaction, DilithiumKeypair) {
-    let keypair = DilithiumKeypair::generate().unwrap();
+fn make_signed_tx(nonce: u64) -> (SignedTransaction, MlDsa65Keypair) {
+    let keypair = MlDsa65Keypair::generate().unwrap();
     let from = keypair.address();
     let mut tx = Transaction::new(
         TransactionType::Transfer,

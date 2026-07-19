@@ -399,7 +399,7 @@ impl DynamicCommitteeOptimizer {
         // Model: bandwidth scales linearly with committee size
         // Each validator sends vote (signature + metadata)
         
-        let sig_size = 3293.0; // Dilithium signature
+        let sig_size = 3293.0; // ML-DSA-65 signature
         let metadata_size = 100.0;
         let per_validator = sig_size + metadata_size;
         

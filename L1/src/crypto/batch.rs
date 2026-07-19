@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use dashmap::DashMap;
 use std::sync::Arc;
 
-use crate::crypto::{verify_dilithium, CryptoResult};
+use crate::crypto::{verify_ml_dsa_65, CryptoResult};
 use crate::types::Hash;
 
 /// Signature verification cache to avoid re-verifying known signatures.
@@ -66,7 +66,7 @@ impl SignatureCache {
         }
 
         // Verify and cache
-        let result = verify_dilithium(public_key, message, signature)?;
+        let result = verify_ml_dsa_65(public_key, message, signature)?;
 
         // Evict if cache is full (simple LRU approximation)
         if self.cache.len() >= self.max_size {
@@ -118,7 +118,7 @@ pub fn batch_verify_signatures(requests: &[VerificationRequest]) -> Vec<Verifica
         .par_iter()
         .enumerate()
         .map(|(index, req)| {
-            match verify_dilithium(&req.public_key, &req.message, &req.signature) {
+            match verify_ml_dsa_65(&req.public_key, &req.message, &req.signature) {
                 Ok(valid) => VerificationResult {
                     index,
                     valid,
@@ -211,11 +211,11 @@ impl Default for BatchVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::DilithiumKeypair;
+    use crate::crypto::MlDsa65Keypair;
 
     #[test]
     fn test_batch_verification() {
-        let keypair = DilithiumKeypair::generate().unwrap();
+        let keypair = MlDsa65Keypair::generate().unwrap();
         let messages: Vec<Vec<u8>> = (0..10).map(|i| format!("message_{}", i).into_bytes()).collect();
         
         let requests: Vec<VerificationRequest> = messages
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn test_signature_cache() {
         let cache = SignatureCache::new(1000);
-        let keypair = DilithiumKeypair::generate().unwrap();
+        let keypair = MlDsa65Keypair::generate().unwrap();
         let message = b"test message";
         let signature = keypair.sign(message).unwrap();
 
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn test_batch_verifier() {
         let verifier = BatchVerifier::new(1000);
-        let keypair = DilithiumKeypair::generate().unwrap();
+        let keypair = MlDsa65Keypair::generate().unwrap();
         let message = b"test";
         let signature = keypair.sign(message).unwrap();
 

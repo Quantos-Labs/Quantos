@@ -9,9 +9,9 @@ The roadmap reflects the state of the codebase and the project's stated commitme
 
 ## 30.1 Completed (in source)
 
-- **Post-quantum cryptographic core** — ML-DSA-65, ML-KEM-768, hash-based VRF, QRNG, signature aggregation, threshold ML-KEM, lattice NIZK, SIMD/precompute acceleration.
+- **Post-quantum cryptographic core** — ML-DSA-65, ML-KEM-768, hash-based VRF, signature aggregation, SIMD/precompute acceleration.
 - **3-layer QuantumDAG consensus** — DAG structure and ordering, VRF committees, pipelined BFT, optimistic responsiveness, view-change, finality checkpoints, runtime safety invariants, slashing.
-- **Execution layer** — QuantosVM (Wasmer), Solang/ERC/EVM compatibility, MVCC, speculative execution, transaction dependency graph, tiered JIT, bytecode protection.
+- **Execution layer** — QuantosVM (Wasmer), Solang/ERC/EVM compatibility, MVCC, speculative execution, transaction dependency graph, bytecode protection.
 - **Native token standards** — QN4/QN8/QN12 with safety guarantees.
 - **STACC zero-gas** — quotas, CU metering, anti-spam, state rent, WFQ scheduler, three-source tokenomics.
 - **Dynamic sharding** — split/merge, safe re-sharding, atomic cross-shard 2PC, self-healing rebalancing, STARK acceleration.

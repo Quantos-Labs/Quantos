@@ -37,7 +37,7 @@ use thiserror::Error;
 use tracing::{info, warn};
 
 use crate::types::{Address, Hash, hash_data};
-use crate::crypto::{verify_dilithium, verify_ecdsa, with_domain, DOMAIN_PQC_POP, DOMAIN_PQC_REGISTER};
+use crate::crypto::{verify_ml_dsa_65, verify_ecdsa, with_domain, DOMAIN_PQC_POP, DOMAIN_PQC_REGISTER};
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -180,7 +180,7 @@ impl PqcMigrationRegistry {
     ///
     /// # Arguments
     /// * `address` — the account address
-    /// * `pqc_pubkey` — the Dilithium/ML-DSA public key
+    /// * `pqc_pubkey` — the ML-DSA-65 public key
     /// * `ecdsa_sig` — ECDSA signature over `DOMAIN_PQC_REGISTER || pqc_pubkey || guardian_root || nonce || address`
     /// * `pqc_pop` — PQC proof-of-possession: signature over `DOMAIN_PQC_POP || pqc_pubkey || address`
     /// * `nonce` — anti-replay nonce
@@ -202,7 +202,7 @@ impl PqcMigrationRegistry {
 
         // ── 1b. Verify PQC proof-of-possession ──
         let pop_msg = Self::build_pop_msg(&pqc_pubkey, &address);
-        if !verify_dilithium(&pqc_pubkey, &pop_msg, pqc_pop) {
+        if !verify_ml_dsa_65(&pqc_pubkey, &pop_msg, pqc_pop) {
             return Err(PqcMigrationError::InvalidPqcPop);
         }
 
@@ -356,7 +356,7 @@ impl PqcMigrationRegistry {
         }
 
         let pop_msg = Self::build_pop_msg(&new_pqc_pubkey, &address);
-        if !verify_dilithium(&new_pqc_pubkey, &pop_msg, new_pqc_pop) {
+        if !verify_ml_dsa_65(&new_pqc_pubkey, &pop_msg, new_pqc_pop) {
             return Err(PqcMigrationError::InvalidPqcPop);
         }
 
@@ -500,7 +500,7 @@ impl PqcMigrationRegistry {
                 None => continue,
             };
             let guardian_pqc_pk = &guardian_set.guardian_pubkeys[idx];
-            if verify_dilithium(guardian_pqc_pk, &msg, sig).unwrap_or(false) {
+            if verify_ml_dsa_65(guardian_pqc_pk, &msg, sig).unwrap_or(false) {
                 valid += 1;
             }
         }

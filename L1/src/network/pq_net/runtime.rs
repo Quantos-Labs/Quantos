@@ -14,7 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc};
 
-use crate::crypto::{DilithiumKeypair, KemKeypair};
+use crate::crypto::{MlDsa65Keypair, KemKeypair};
 use crate::network::address::parse_quantos_multiaddr;
 use crate::network::peer_manager::PeerManager;
 use crate::network::peer_id::PeerId;
@@ -62,7 +62,7 @@ fn multiaddr_for_peer(sock: SocketAddr, pid: PeerId) -> String {
 
 async fn timed_server_handshake(
     sock: &mut TcpStream,
-    dil: &DilithiumKeypair,
+    dil: &MlDsa65Keypair,
     kem: &KemKeypair,
 ) -> Result<SecureTransport, String> {
     match tokio::time::timeout(HANDSHAKE_TIMEOUT, server_handshake(sock, dil, kem)).await {
@@ -74,7 +74,7 @@ async fn timed_server_handshake(
 
 async fn timed_client_handshake(
     sock: &mut TcpStream,
-    dil: &DilithiumKeypair,
+    dil: &MlDsa65Keypair,
     kem: &KemKeypair,
     expected: PeerId,
 ) -> Result<SecureTransport, String> {
@@ -285,7 +285,7 @@ async fn spawn_peer_tasks(
 pub async fn run_quantos_pq_p2p(
     listen_port: u16,
     bootstrap: Vec<String>,
-    dilithium: DilithiumKeypair,
+    mldsa: MlDsa65Keypair,
     kem: KemKeypair,
     mut cmd_rx: mpsc::Receiver<PqCommand>,
     forward_tx: mpsc::Sender<NetworkMessage>,
@@ -308,7 +308,7 @@ pub async fn run_quantos_pq_p2p(
         }
     };
 
-    let dil_accept = dilithium.clone();
+    let dil_accept = mldsa.clone();
     let kem_accept = kem.clone();
     let peers_a = peers.clone();
     let fwd_a = forward_tx.clone();
@@ -384,7 +384,7 @@ pub async fn run_quantos_pq_p2p(
                     continue;
                 }
 
-                let dil = dilithium.clone();
+                let dil = mldsa.clone();
                 let kem = kem.clone();
                 let peers_i = peers.clone();
                 let fwd = forward_tx.clone();
@@ -435,7 +435,7 @@ pub async fn run_quantos_pq_p2p(
                     continue;
                 }
 
-                let dil = dilithium.clone();
+                let dil = mldsa.clone();
                 let kem = kem.clone();
                 let peers_i = peers.clone();
                 let fwd = forward_tx.clone();

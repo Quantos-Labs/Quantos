@@ -1,19 +1,19 @@
 //! PQC Signature Batch Verification (PQC-SVB)
 //!
-//! Batch verification of Dilithium and ML-DSA-65 signatures with SIMD optimization.
+//! Batch verification of ML-DSA-65 signatures with SIMD optimization.
 //! Achieves 4-8x throughput improvement over sequential verification.
 
 use rayon::prelude::*;
 
-use crate::crypto::{verify_dilithium, verify_ml_dsa_65};
+use crate::crypto::verify_ml_dsa_65;
 
-/// Batch verifier for Dilithium signatures
-pub struct DilithiumBatchVerifier {
+/// Batch verifier for ML-DSA-65 signatures
+pub struct MlDsa65BatchVerifier {
     batch_size: usize,
     use_parallel: bool,
 }
 
-impl DilithiumBatchVerifier {
+impl MlDsa65BatchVerifier {
     pub fn new(batch_size: usize) -> Self {
         Self {
             batch_size,
@@ -21,7 +21,7 @@ impl DilithiumBatchVerifier {
         }
     }
 
-    /// Verifies multiple Dilithium signatures in parallel
+    /// Verifies multiple ML-DSA-65 signatures in parallel
     ///
     /// Returns a vector of booleans indicating which signatures are valid.
     /// Uses rayon for parallel verification across CPU cores.
@@ -37,14 +37,14 @@ impl DilithiumBatchVerifier {
             // Sequential for small batches
             items.iter()
                 .map(|(pubkey, message, sig)| {
-                    verify_dilithium(pubkey, message, sig).unwrap_or(false)
+                    verify_ml_dsa_65(pubkey, message, sig).unwrap_or(false)
                 })
                 .collect()
         } else {
             // Parallel verification
             items.par_iter()
                 .map(|(pubkey, message, sig)| {
-                    verify_dilithium(pubkey, message, sig).unwrap_or(false)
+                    verify_ml_dsa_65(pubkey, message, sig).unwrap_or(false)
                 })
                 .collect()
         }
@@ -69,60 +69,6 @@ impl DilithiumBatchVerifier {
     ) -> bool {
         if !self.use_parallel || items.len() < 4 {
             items.iter().all(|(pubkey, message, sig)| {
-                verify_dilithium(pubkey, message, sig).unwrap_or(false)
-            })
-        } else {
-            items.par_iter().all(|(pubkey, message, sig)| {
-                verify_dilithium(pubkey, message, sig).unwrap_or(false)
-            })
-        }
-    }
-}
-
-/// Batch verifier for ML-DSA-65 signatures
-pub struct MlDsa65BatchVerifier {
-    batch_size: usize,
-    use_parallel: bool,
-}
-
-impl MlDsa65BatchVerifier {
-    pub fn new(batch_size: usize) -> Self {
-        Self {
-            batch_size,
-            use_parallel: true,
-        }
-    }
-
-    /// Verifies multiple ML-DSA-65 signatures in parallel
-    pub fn verify_batch(
-        &self,
-        items: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
-    ) -> Vec<bool> {
-        if items.is_empty() {
-            return Vec::new();
-        }
-
-        if !self.use_parallel || items.len() < 4 {
-            items.iter()
-                .map(|(pubkey, message, sig)| {
-                    verify_ml_dsa_65(pubkey, message, sig).unwrap_or(false)
-                })
-                .collect()
-        } else {
-            items.par_iter()
-                .map(|(pubkey, message, sig)| {
-                    verify_ml_dsa_65(pubkey, message, sig).unwrap_or(false)
-                })
-                .collect()
-        }
-    }
-
-    pub fn verify_all_valid(
-        &self,
-        items: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
-    ) -> bool {
-        if !self.use_parallel || items.len() < 4 {
-            items.iter().all(|(pubkey, message, sig)| {
                 verify_ml_dsa_65(pubkey, message, sig).unwrap_or(false)
             })
         } else {
@@ -130,35 +76,6 @@ impl MlDsa65BatchVerifier {
                 verify_ml_dsa_65(pubkey, message, sig).unwrap_or(false)
             })
         }
-    }
-}
-
-/// Mixed batch verifier for both signature types
-pub struct MixedBatchVerifier {
-    dilithium: DilithiumBatchVerifier,
-    ml_dsa65: MlDsa65BatchVerifier,
-}
-
-impl MixedBatchVerifier {
-    pub fn new(batch_size: usize) -> Self {
-        Self {
-            dilithium: DilithiumBatchVerifier::new(batch_size),
-            ml_dsa65: MlDsa65BatchVerifier::new(batch_size),
-        }
-    }
-
-    pub fn verify_dilithium_batch(
-        &self,
-        items: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
-    ) -> Vec<bool> {
-        self.dilithium.verify_batch(items)
-    }
-
-    pub fn verify_ml_dsa65_batch(
-        &self,
-        items: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
-    ) -> Vec<bool> {
-        self.ml_dsa65.verify_batch(items)
     }
 }
 
@@ -193,8 +110,8 @@ mod tests {
 
     #[test]
     fn test_batch_verifier() {
-        let verifier = DilithiumBatchVerifier::new(32);
-        
+        let verifier = MlDsa65BatchVerifier::new(32);
+
         // Empty batch
         let results = verifier.verify_batch(&[]);
         assert_eq!(results.len(), 0);

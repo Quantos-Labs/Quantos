@@ -1,6 +1,6 @@
 //! # Quantos Network Layer
 //!
-//! Native TCP P2P with **full PQ wiring**: Kyber768 handshake + ML-DSA (Dilithium3) mutual auth,
+//! Native TCP P2P with **full PQ wiring**: Kyber768 handshake + ML-DSA-65 mutual auth,
 //! AES-256-GCM transport. No libp2p, no classical TLS identities.
 
 mod peer_id;

@@ -8,10 +8,9 @@ Quantos delivers a complete post-quantum blockchain stack — from the cryptogra
 
 - **Two NIST-finalized algorithms** (ML-DSA-65 FIPS 204, ML-KEM-768 FIPS 203) at security level 3, replacing earlier mixed-standard designs.
 - **Hash-based VRF with STARK proofs** for committee selection, eliminating the grinding vulnerability of signature-based VRFs.
-- **Threshold ML-KEM-768 decryption** for the encrypted mempool, with Shamir sharing and lattice NIZK proofs.
 - **Formalized QuantumDAG consensus** under partial synchrony, with explicit BFT thresholds, Bullshark commit rules, and runtime-checked safety invariants.
 - **Dynamic sharding** with safe state migration, atomic STARK-verified cross-shard commitment, and self-healing rebalancing.
-- **A full WASM execution layer (QuantosVM)**: bytecode-invisible storage, Solang/ERC/EVM compatibility for unmodified Solidity and Ethereum tooling, and parallel contract execution via dependency graphs, MVCC, speculative execution, and tiered JIT compilation.
+- **A full WASM execution layer (QuantosVM)**: bytecode-invisible storage, Solang/ERC/EVM compatibility for unmodified Solidity and Ethereum tooling, and parallel contract execution via dependency graphs, MVCC, and speculative execution.
 - **Native token standards** (QN4/QN8/QN12) with built-in overflow, reentrancy, and approval-race protections.
 - **Honest performance claims**: per-shard targets with hardware assumptions, theoretical aggregate scaling, and documented cross-shard limitations.
 - **Sustainable tokenomics**: Three-source validator revenue (inflation declining to 1%, state rent, slash redistribution) with published sustainability metrics.

@@ -188,6 +188,17 @@ impl ChainId {
     }
 }
 
+/// Signature scheme used by a Generic chain proof.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SignatureScheme {
+    /// Ed25519 signatures (32-byte pubkey, 64-byte signature).
+    Ed25519,
+    /// BLS12-381 signatures (48-byte pubkey, 96-byte signature).
+    Bls12381,
+    /// ECDSA secp256k1 signatures (33-byte compressed pubkey, 64-byte signature).
+    EcdsaSecp256k1,
+}
+
 /// Cryptographic proof submitted by the relayer for a specific chain family.
 /// The relayer MUST fetch and include this proof; the L0 light client verifies
 /// it cryptographically without any RPC call to the source chain.
@@ -363,12 +374,14 @@ pub enum ChainProof {
     },
     /// Generic proof for custom/future chain families.
     Generic {
-        /// Raw proof bytes.
+        /// Raw proof bytes (the message that was signed).
         proof_bytes: Vec<u8>,
         /// Signer public keys.
         signer_pubkeys: Vec<Vec<u8>>,
         /// Signatures over proof_bytes.
         signatures: Vec<Vec<u8>>,
+        /// Signature scheme used (Ed25519, BLS12-381, or ECDSA secp256k1).
+        signature_scheme: SignatureScheme,
     },
 }
 
@@ -399,9 +412,10 @@ impl ChainProof {
 
     /// Serializes the proof to canonical bytes for hashing.
     pub fn to_bytes(&self) -> Vec<u8> {
-        // Use a deterministic encoding (bincode or similar would be better;
-        // for now, use JSON for simplicity since sha3_256 is used below).
-        serde_json::to_vec(self).unwrap_or_default()
+        bincode::serialize(self).unwrap_or_else(|e| {
+            tracing::error!("Failed to serialize proof: {}", e);
+            Vec::new()
+        })
     }
 }
 

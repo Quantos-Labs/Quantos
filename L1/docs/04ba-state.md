@@ -43,7 +43,7 @@ Several fields exist specifically to defeat replay and manipulation:
 - **`nonce`** ensures each transaction is applied at most once and in order per sender.
 - **`chain_id`** binds a transaction to Quantos, preventing cross-chain replay.
 - **Timestamp drift bound**: `MAX_TIMESTAMP_DRIFT = 30 seconds` — a transaction whose timestamp deviates too far from network time is rejected, narrowing the window for timestamp-based manipulation (reduced from an earlier 5-minute bound).
-- **Batch-verified signatures**: transaction signatures are verified with `verify_dilithium_batch` under the `DOMAIN_TX` domain tag, amortising verification cost across many transactions.
+- **Batch-verified signatures**: transaction signatures are verified with `verify_ml-dsa-65_batch` (ML-DSA-65) under the `DOMAIN_TX` domain tag, amortising verification cost across many transactions.
 
 ## 10.5 State Management and Execution
 

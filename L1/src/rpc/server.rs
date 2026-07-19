@@ -1481,7 +1481,7 @@ impl QuantosRpcServer for QuantosRpcImpl {
     async fn send_transaction(&self, request: SendTransactionRequest) -> Result<String, jsonrpsee::types::ErrorObjectOwned> {
         self.check_rate_limit()?;
 
-        use crate::crypto::DilithiumKeypair;
+        use crate::crypto::MlDsa65Keypair;
         use crate::types::{Transaction, TransactionType, Amount, ShardId};
 
         // Parse private key
@@ -1491,8 +1491,8 @@ impl QuantosRpcServer for QuantosRpcImpl {
         let priv_key_bytes = hex::decode(priv_key_hex)
             .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid private key hex: {}", e), None::<()>))?;
 
-        let keypair = DilithiumKeypair::from_secret_key(&priv_key_bytes)
-            .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid Dilithium private key: {}", e), None::<()>))?;
+        let keypair = MlDsa65Keypair::from_secret_key(&priv_key_bytes)
+            .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Invalid ML-DSA-65 private key: {}", e), None::<()>))?;
 
         let from_addr = keypair.address();
 
@@ -1580,9 +1580,9 @@ impl QuantosRpcServer for QuantosRpcImpl {
     }
 
     async fn generate_keypair(&self) -> Result<KeyPairResponse, jsonrpsee::types::ErrorObjectOwned> {
-        use crate::crypto::DilithiumKeypair;
+        use crate::crypto::MlDsa65Keypair;
 
-        let keypair = DilithiumKeypair::generate()
+        let keypair = MlDsa65Keypair::generate()
             .map_err(|e| jsonrpsee::types::ErrorObject::owned(-32000, format!("Key generation failed: {}", e), None::<()>))?;
 
         let address = keypair.address();
@@ -2073,7 +2073,7 @@ pub struct VertexInfo {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SendTransactionRequest {
-    /// Hex-encoded Dilithium secret key (QTS:... or 0x... or raw hex)
+    /// Hex-encoded ML-DSA-65 secret key (QTS:... or 0x... or raw hex)
     pub from_private_key: String,
     /// Destination address (QTS:...)
     pub to: String,
@@ -2108,7 +2108,7 @@ mod tests {
         let receipt = TransactionReceipt {
             tx_hash: [0x11; 32],
             status: TransactionStatus::Finalized,
-            gas_used: 0x5208,
+            cu_used: 0x5208,
             vertex_hash: [0x22; 32],
             shard_id: 1,
             logs: vec![Log {

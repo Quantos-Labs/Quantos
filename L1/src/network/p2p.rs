@@ -1,6 +1,6 @@
 //! # Quantos P2P Network Layer
 //!
-//! Native TCP stack with **full PQ**: Kyber768 KEM + ML-DSA (Dilithium3) handshake,
+//! Native TCP stack with **full PQ**: Kyber768 KEM + ML-DSA (MlDsa65) handshake,
 //! AES-256-GCM links, Blake3 topic routing. No libp2p / RSA / classical TLS identities.
 
 use std::collections::HashSet;
@@ -21,7 +21,7 @@ use dashmap::DashMap;
 use crate::consensus::QuantosConsensus;
 use crate::crypto::KemKeypair;
 use crate::network::address::parse_quantos_multiaddr;
-use crate::network::pq_identity::peer_id_from_dilithium_public_key;
+use crate::network::pq_identity::peer_id_from_mldsa_public_key;
 use crate::network::pq_net::{run_quantos_pq_p2p, PqCommand};
 use crate::network::protocol::{
     core_subscription_topics, topic_hash, CrossShardNetworkMessage, NetworkMessage, NetworkMetrics,
@@ -45,10 +45,10 @@ pub struct P2PNetwork {
     p2p_config: P2PConfig,
     /// Consensus engine reference
     consensus: QuantosConsensus,
-    /// Canonical Quantos [`PeerId`] (ML-DSA / Dilithium-derived).
+    /// Canonical Quantos [`PeerId`] (ML-DSA / ML-DSA-65-derived).
     local_peer_id: PeerId,
-    /// Dilithium keypair for consensus / protocol signatures
-    pq_keypair: crate::crypto::DilithiumKeypair,
+    /// ML-DSA-65 keypair for consensus / protocol signatures
+    pq_keypair: crate::crypto::MlDsa65Keypair,
     /// Kyber768 keypair for PQ encapsulated session secrets toward this node
     kem_keypair: KemKeypair,
     /// Connected peers with metadata
@@ -97,10 +97,10 @@ impl P2PNetwork {
         peer_manager.load_banned(peer_store.banned_peers());
         p2p_config.merge_known_peers(&peer_store.known_peers());
 
-        let (dilithium_keypair, kem_keypair) =
+        let (mldsa_keypair, kem_keypair) =
             crate::network::pq_identity_store::load_or_create_identity(&config.db_path)?;
 
-        let quantos_peer_id = peer_id_from_dilithium_public_key(&dilithium_keypair.public_key);
+        let quantos_peer_id = peer_id_from_mldsa_public_key(&mldsa_keypair.public_key);
 
         let connected_peers = Arc::new(DashMap::new());
         let metrics = Arc::new(RwLock::new(NetworkMetrics::default()));
@@ -112,14 +112,14 @@ impl P2PNetwork {
         let subscribed_topics = Arc::new(RwLock::new(core_subscription_topics()));
         let sub_runtime = Arc::clone(&subscribed_topics);
 
-        let dil_spawn = dilithium_keypair.clone();
+        let mldsa_spawn = mldsa_keypair.clone();
         let kem_spawn = kem_keypair.clone();
         let peer_mgr_rt = Arc::clone(&peer_manager);
         tokio::spawn(async move {
             run_quantos_pq_p2p(
                 listen_port,
                 bootstrap,
-                dil_spawn,
+                mldsa_spawn,
                 kem_spawn,
                 pq_rx,
                 dispatch_tx,
@@ -143,7 +143,7 @@ impl P2PNetwork {
             p2p_config,
             consensus,
             local_peer_id: quantos_peer_id,
-            pq_keypair: dilithium_keypair,
+            pq_keypair: mldsa_keypair,
             kem_keypair,
             connected_peers,
             message_tx,
@@ -353,7 +353,7 @@ impl P2PNetwork {
         Ok(())
     }
 
-    /// Signs a message using the post-quantum Dilithium keypair.
+    /// Signs a message using the post-quantum ML-DSA-65 keypair.
     /// All protocol messages should be signed with this method for PQ security.
     pub fn sign_message(&self, message: &[u8]) -> NetworkResult<Vec<u8>> {
         self.pq_keypair.sign(message)
@@ -362,7 +362,7 @@ impl P2PNetwork {
     
     /// Verifies a post-quantum signature from a peer.
     pub fn verify_pq_signature(&self, message: &[u8], signature: &[u8], public_key: &[u8]) -> NetworkResult<bool> {
-        crate::crypto::verify_dilithium(message, signature, public_key)
+        crate::crypto::verify_ml_dsa_65(message, signature, public_key)
             .map_err(|e| NetworkError::InvalidMessage(format!("PQ verification failed: {}", e)))
     }
     
@@ -432,7 +432,14 @@ impl P2PNetwork {
         match message {
             NetworkMessage::NewTransaction(tx) => {
                 // Validate and deduplicate
-                let tx_hash = crate::types::hash_data(&bincode::serialize(&tx).unwrap_or_default());
+                let tx_bytes = match bincode::serialize(&tx) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        tracing::warn!("Failed to serialize tx for dedup: {}", e);
+                        return;
+                    }
+                };
+                let tx_hash = crate::types::hash_data(&tx_bytes);
                 
                 if self.seen_messages.contains_key(&tx_hash) {
                     self.metrics.write().messages_dropped += 1;
@@ -473,7 +480,14 @@ impl P2PNetwork {
                 // Process batch of transactions
                 let batch_size = txs.len();
                 for tx in txs {
-                    let tx_hash = crate::types::hash_data(&bincode::serialize(&tx).unwrap_or_default());
+                    let tx_bytes = match bincode::serialize(&tx) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::warn!("Failed to serialize tx in batch: {}", e);
+                            continue;
+                        }
+                    };
+                    let tx_hash = crate::types::hash_data(&tx_bytes);
                     if !self.seen_messages.contains_key(&tx_hash) {
                         self.seen_messages.insert(tx_hash, chrono::Utc::now().timestamp() as u64);
                     }
@@ -707,7 +721,7 @@ impl P2PNetwork {
     /// Verifies a signed admin command against this node's PQ keypair.
     /// Only commands signed by the local node's private key are accepted.
     fn verify_admin_command(&self, command: &[u8], signature: &[u8]) -> bool {
-        match crate::crypto::verify_dilithium(&self.pq_keypair.public_key, command, signature) {
+        match crate::crypto::verify_ml_dsa_65(&self.pq_keypair.public_key, command, signature) {
             Ok(valid) => valid,
             Err(_) => false,
         }
@@ -755,7 +769,7 @@ impl P2PNetwork {
         self.connected_peers.len()
     }
 
-    /// Returns the canonical Quantos peer ID (ML-DSA / Dilithium-derived).
+    /// Returns the canonical Quantos peer ID (ML-DSA / ML-DSA-65-derived).
     pub fn local_peer_id(&self) -> PeerId {
         self.local_peer_id
     }

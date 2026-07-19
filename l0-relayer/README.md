@@ -90,7 +90,7 @@ Response:
 
 1. **Monitor Source Chains**: Relayer polls configured chains for new finalized blocks
 2. **Submit Checkpoints**: When a block has enough confirmations, submit it to Quantos via `qnt_submitExternalCheckpoint`
-3. **Quantos Validation**: Quantos validators verify the checkpoint and sign with PQC signatures (Falcon-512/Dilithium-3)
+3. **Quantos Validation**: Quantos validators verify the checkpoint and sign with PQC signatures (Falcon-512/ML-DSA-65)
 4. **Proof Generation**: Quantos L0 hub generates a PQC finality proof
 5. **Proof Retrieval**: Relayer can fetch proofs via `qnt_getL0Proof` for relay back to source chain
 

@@ -6,7 +6,7 @@
 //!
 //! | Attack | Protection | Status |
 //! |--------|------------|--------|
-//! | Shor's Algorithm | Post-quantum crypto (Dilithium, SPHINCS+, ML-DSA) | ✅ |
+//! | Shor's Algorithm | Post-quantum crypto (ML-DSA-65, SPHINCS+) | ✅ |
 //! | Grover's Algorithm | 256-bit security (doubles effective key size) | ✅ |
 //! | 51% Attack | Stake-weighted committees + slashing | ✅ |
 //! | Eclipse Attack | Peer diversity + reputation | ✅ |

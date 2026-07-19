@@ -6,7 +6,7 @@
 //!
 //! # Design rationale
 //!
-//! Full ML-DSA-65 / Dilithium-3 verification inside a STARK circuit is
+//! Full ML-DSA-65 / ML-DSA-65 verification inside a STARK circuit is
 //! impractical (lattice arithmetic requires millions of constraints). We use a
 //! **commitment-based aggregation** approach instead:
 //!

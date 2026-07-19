@@ -35,7 +35,7 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 
-use quantos::crypto::DilithiumKeypair;
+use quantos::crypto::MlDsa65Keypair;
 use quantos::types::{Amount, SignedTransaction, Transaction, TransactionType, VmKind};
 
 const BATCH_SIZE: usize = 100;
@@ -204,14 +204,14 @@ impl RpcClient {
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct Wallet {
-    keypair: DilithiumKeypair,
+    keypair: MlDsa65Keypair,
     address: [u8; 32],
     nonce: AtomicU64,
 }
 
 impl Wallet {
     fn new(start_nonce: u64) -> Self {
-        let keypair = DilithiumKeypair::generate().expect("keygen failed");
+        let keypair = MlDsa65Keypair::generate().expect("keygen failed");
         let address = quantos::crypto::sha3_256(&keypair.public_key);
         Self {
             keypair,
@@ -564,7 +564,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Generate wallets
-    print!("  Generating {} Dilithium keypairs … ", args.wallets);
+    print!("  Generating {} ML-DSA-65 keypairs … ", args.wallets);
     let wallets: Vec<Arc<Wallet>> = (0..args.wallets)
         .map(|_| Arc::new(Wallet::new(args.start_nonce)))
         .collect();

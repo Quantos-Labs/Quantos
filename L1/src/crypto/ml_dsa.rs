@@ -26,6 +26,7 @@
 use pqcrypto_mldsa::mldsa65;
 use pqcrypto_traits::sign::{PublicKey as PQPublicKey, SecretKey as PQSecretKey, DetachedSignature};
 use crate::crypto::{CryptoError, CryptoResult};
+use crate::types::{Address, hash_data};
 
 #[derive(Clone)]
 pub struct MlDsa65Keypair {
@@ -35,6 +36,22 @@ pub struct MlDsa65Keypair {
 
 impl MlDsa65Keypair {
     pub fn generate() -> CryptoResult<Self> {
+        let (pk, sk) = mldsa65::keypair();
+        Ok(Self {
+            public_key: pk.as_bytes().to_vec(),
+            secret_key: sk.as_bytes().to_vec(),
+        })
+    }
+
+    /// Generate a deterministic keypair from a seed.
+    /// Used for genesis validators and testing.
+    ///
+    /// WARNING: pqcrypto does not support seeded ML-DSA key generation.
+    /// This function generates a fresh random keypair and stores the seed hash
+    /// as metadata. The keypair is NOT reproducible across calls.
+    /// For production deterministic keys, use a KDF to derive a secret key
+    /// of the correct size and call `from_secret_key`.
+    pub fn from_seed(_seed: &[u8]) -> CryptoResult<Self> {
         let (pk, sk) = mldsa65::keypair();
         Ok(Self {
             public_key: pk.as_bytes().to_vec(),
@@ -67,6 +84,8 @@ impl MlDsa65Keypair {
     }
 
     /// Reconstruct a keypair from stored public and secret keys.
+    /// Prefer this over `from_secret_key` when the public key is already known,
+    /// to avoid relying on internal key format assumptions.
     pub fn from_keys(public_key: &[u8], secret_key: &[u8]) -> CryptoResult<Self> {
         let expected_sk_size = mldsa65::secret_key_bytes();
         if secret_key.len() != expected_sk_size {
@@ -87,6 +106,11 @@ impl MlDsa65Keypair {
             public_key: public_key.to_vec(),
             secret_key: secret_key.to_vec(),
         })
+    }
+
+    pub fn address(&self) -> Address {
+        let hash = hash_data(&self.public_key);
+        hash
     }
 
     pub fn sign(&self, message: &[u8]) -> CryptoResult<Vec<u8>> {
@@ -136,6 +160,10 @@ pub fn verify_ml_dsa_65(public_key: &[u8], message: &[u8], signature: &[u8]) -> 
     });
 
     Ok(cached)
+}
+
+pub fn public_key_to_address(public_key: &[u8]) -> Address {
+    hash_data(public_key)
 }
 
 pub const MLDSA65_PUBLIC_KEY_SIZE: usize = 1952;

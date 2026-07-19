@@ -36,7 +36,7 @@ const IP_LIMITER_CLEANUP_THRESHOLD: u64 = 3600; // 1 hour
 use dashmap::DashMap;
 use parking_lot::RwLock;
 
-use crate::crypto::{verify_dilithium_batch, DilithiumBatchVerifier};
+use crate::crypto::{verify_ml_dsa_65_batch, MlDsa65BatchVerifier};
 use crate::state::StateManager;
 use crate::types::{Address, Amount, Hash, ShardId, SignedTransaction};
 
@@ -235,7 +235,7 @@ pub struct SecureMempool {
     metrics: Arc<RwLock<MempoolMetrics>>,
     /// Chain ID for replay protection
     chain_id: u64,
-    batch_verifier: Arc<DilithiumBatchVerifier>,
+    batch_verifier: Arc<MlDsa65BatchVerifier>,
 }
 
 /// Pending transaction with metadata.
@@ -280,7 +280,7 @@ impl SecureMempool {
             state_manager,
             metrics: Arc::new(RwLock::new(MempoolMetrics::default())),
             chain_id,
-            batch_verifier: Arc::new(DilithiumBatchVerifier::new(32)),
+            batch_verifier: Arc::new(MlDsa65BatchVerifier::new(32)),
         }
     }
 
@@ -324,7 +324,7 @@ impl SecureMempool {
         }
 
         // 4. Signature verification via batched worker to reduce CPU
-        let valid = verify_dilithium_batch(
+        let valid = verify_ml_dsa_65_batch(
             tx.transaction.public_key.clone(),
             tx.transaction.signing_data(),
             tx.transaction.signature.clone(),

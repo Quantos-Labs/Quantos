@@ -563,7 +563,10 @@ impl BandwidthScheduler {
         for (class, queue) in queues.iter() {
             if !queue.is_empty() {
                 // Calculate virtual finish time
-                let packet = queue.peek().unwrap();
+                let packet = match queue.peek() {
+                    Some(p) => p,
+                    None => continue,
+                };
                 let weight = class.weight() as f64 * bandwidth_multiplier;
                 
                 // CRITICAL: Guard against division by zero (weight=0 when severe congestion

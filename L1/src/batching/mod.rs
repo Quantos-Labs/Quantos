@@ -6,7 +6,7 @@
 //! ## Features
 //!
 //! - **Transaction Batching**: Group transactions for parallel verification
-//! - **Signature Aggregation**: Combine multiple Dilithium signatures
+//! - **Signature Aggregation**: Combine multiple ML-DSA-65 signatures
 //! - **Batch Verification**: Verify multiple signatures in parallel
 //! - **Memory-Efficient**: Streaming batch processing
 //!
@@ -29,12 +29,12 @@ const MAX_PENDING_BATCHES: usize = 1000;
 const MAX_PENDING_TOTAL_TXS: usize = 500_000;
 /// Maximum validator index to prevent bitmap memory exhaustion
 const MAX_VALIDATOR_INDEX: usize = 10_000;
-/// Expected Dilithium signature size (Dilithium3)
-const DILITHIUM_SIG_SIZE: usize = 3293;
+/// Expected ML-DSA-65 signature size
+const MLDSA65_SIG_SIZE: usize = 3309;
 
 use crate::types::{Address, Hash, ShardId, SignedTransaction, TransactionReceipt};
-use crate::crypto::{verify_dilithium_batch, DilithiumKeypair};
-use crate::crypto::batch_verify::DilithiumBatchVerifier;
+use crate::crypto::{verify_ml_dsa_65_batch, MlDsa65Keypair};
+use crate::crypto::batch_verify::MlDsa65BatchVerifier;
 use crate::compression::{CompressionEngine, CompressedBatch, CompressionConfig};
 
 /// Configuration for the batching system.
@@ -392,12 +392,12 @@ impl BatchingEngine {
     /// Verifies a single signature with size validation.
     fn verify_single_signature(&self, tx: &SignedTransaction) -> bool {
         let sig = &tx.transaction.signature;
-        if sig.is_empty() || sig.len() != DILITHIUM_SIG_SIZE {
-            tracing::warn!("Invalid Dilithium signature size: {} (expected {})", sig.len(), DILITHIUM_SIG_SIZE);
+        if sig.is_empty() || sig.len() != MLDSA65_SIG_SIZE {
+            tracing::warn!("Invalid ML-DSA-65 signature size: {} (expected {})", sig.len(), MLDSA65_SIG_SIZE);
             return false;
         }
         let message = tx.transaction.signing_data();
-        verify_dilithium_batch(tx.transaction.public_key.clone(), message, sig.clone())
+        verify_ml_dsa_65_batch(tx.transaction.public_key.clone(), message, sig.clone())
     }
 
     /// Verifies a batch of arbitrary signatures.
@@ -413,11 +413,11 @@ impl BatchingEngine {
         }).collect();
 
         let results: Vec<bool> = if self.config.parallel_verify {
-            let verifier = DilithiumBatchVerifier::new(items.len());
+            let verifier = MlDsa65BatchVerifier::new(items.len());
             verifier.verify_batch(&items)
         } else {
             items.iter().map(|(pubkey, message, signature)| {
-                verify_dilithium_batch(pubkey.clone(), message.clone(), signature.clone())
+                verify_ml_dsa_65_batch(pubkey.clone(), message.clone(), signature.clone())
             }).collect()
         };
         
@@ -527,13 +527,13 @@ impl BatchingEngine {
 
 /// Aggregated signature for committee voting.
 ///
-/// Combines multiple Dilithium signatures into a more compact form
+/// Combines multiple ML-DSA-65 signatures into a more compact form
 /// for efficient verification.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AggregatedSignature {
     /// Signers (validator addresses)
     pub signers: Vec<Address>,
-    /// Individual signatures (Dilithium doesn't support true aggregation)
+    /// Individual signatures (ML-DSA-65 doesn't support true aggregation)
     pub signatures: Vec<Vec<u8>>,
     /// Validator indices corresponding to each signature (insertion order)
     pub validator_indices: Vec<usize>,
@@ -572,9 +572,9 @@ impl AggregatedSignature {
         if index > MAX_VALIDATOR_INDEX {
             return Err(BatchingError::ValidatorIndexOutOfBounds(index, MAX_VALIDATOR_INDEX));
         }
-        if signature.len() != DILITHIUM_SIG_SIZE {
+        if signature.len() != MLDSA65_SIG_SIZE {
             return Err(BatchingError::VerificationFailed(
-                format!("Invalid signature size: {} (expected {})", signature.len(), DILITHIUM_SIG_SIZE),
+                format!("Invalid signature size: {} (expected {})", signature.len(), MLDSA65_SIG_SIZE),
             ));
         }
         
@@ -636,15 +636,15 @@ impl AggregatedSignature {
                     validator_public_keys.len(),
                 ));
             }
-            if sig.len() != DILITHIUM_SIG_SIZE {
+            if sig.len() != MLDSA65_SIG_SIZE {
                 return Err(BatchingError::VerificationFailed(
-                    format!("Invalid signature size at index {}: {} (expected {})", validator_idx, sig.len(), DILITHIUM_SIG_SIZE),
+                    format!("Invalid signature size at index {}: {} (expected {})", validator_idx, sig.len(), MLDSA65_SIG_SIZE),
                 ));
             }
             items.push((validator_public_keys[validator_idx].clone(), message.to_vec(), sig.clone()));
         }
 
-        let verifier = DilithiumBatchVerifier::new(items.len());
+        let verifier = MlDsa65BatchVerifier::new(items.len());
         let results = verifier.verify_batch(&items);
 
         for valid in results {
@@ -728,8 +728,8 @@ mod tests {
     #[test]
     fn test_aggregated_signature_bitmap() {
         let mut agg = AggregatedSignature::new();
-        agg.add_signature([0u8; 32], vec![0u8; DILITHIUM_SIG_SIZE], 0).unwrap();
-        agg.add_signature([1u8; 32], vec![0u8; DILITHIUM_SIG_SIZE], 5).unwrap();
+        agg.add_signature([0u8; 32], vec![0u8; MLDSA65_SIG_SIZE], 0).unwrap();
+        agg.add_signature([1u8; 32], vec![0u8; MLDSA65_SIG_SIZE], 5).unwrap();
         
         assert!(agg.has_signed(0));
         assert!(!agg.has_signed(1));

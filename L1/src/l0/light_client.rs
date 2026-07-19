@@ -11,7 +11,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use crate::l0::error::{L0Error, L0Result};
-use crate::l0::external::{ChainId, ChainProof, ExternalCheckpoint, VerificationResult};
+use crate::l0::external::{ChainId, ChainProof, ExternalCheckpoint, SignatureScheme, VerificationResult};
 use crate::l0::registry::ChainFamily;
 use crate::types::Hash;
 
@@ -37,46 +37,103 @@ fn double_sha256(data: &[u8]) -> [u8; 32] {
     out
 }
 
-mod rlp {
+/// Minimal RLP list decoder. `block_header_rlp` originates from an external,
+/// attacker-influenced chain proof, so every offset/length computation here
+/// MUST be bounds- and overflow-checked and return `Err` rather than panic.
+pub(crate) mod rlp {
     pub fn decode_list(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
         if data.is_empty() { return Err("empty".into()); }
         let first = data[0];
-        if first >= 0xc0 && first <= 0xf7 {
+        if (0xc0..=0xf7).contains(&first) {
             let len = (first - 0xc0) as usize;
-            parse(&data[1..1 + len])
+            let body = data.get(1..).and_then(|d| d.get(..len))
+                .ok_or("truncated short list")?;
+            parse(body)
         } else if first >= 0xf8 {
             let lb = (first - 0xf7) as usize;
-            let len = btou(&data[1..1 + lb]);
-            parse(&data[1 + lb..1 + lb + len])
-        } else { Err("not a list".into()) }
+            let len_bytes = data.get(1..).and_then(|d| d.get(..lb))
+                .ok_or("truncated long-list length field")?;
+            let len = btou(len_bytes)?;
+            let start = 1usize.checked_add(lb).ok_or("length overflow")?;
+            let body = data.get(start..).and_then(|d| d.get(..len))
+                .ok_or("truncated long list body")?;
+            parse(body)
+        } else {
+            Err("not a list".into())
+        }
     }
+
     fn parse(c: &[u8]) -> Result<Vec<Vec<u8>>, String> {
         let mut items = Vec::new();
         let mut i = 0;
         while i < c.len() {
             let (item, n) = item(&c[i..])?;
-            items.push(item); i += n;
+            if n == 0 { return Err("zero-length item advance".into()); }
+            items.push(item);
+            i += n;
         }
         Ok(items)
     }
+
     fn item(d: &[u8]) -> Result<(Vec<u8>, usize), String> {
-        if d.is_empty() { return Err("empty".into()); }
+        if d.is_empty() { return Err("empty item".into()); }
         let f = d[0];
-        if f < 0x80 { Ok((vec![f], 1)) }
-        else if f < 0xb8 { let l = (f - 0x80) as usize; Ok((d[1..1+l].to_vec(), 1+l)) }
-        else if f < 0xc0 { let lb = (f - 0xb7) as usize; let l = btou(&d[1..1+lb]); Ok((d[1+lb..1+lb+l].to_vec(), 1+lb+l)) }
-        else if f < 0xf8 { let l = (f - 0xc0) as usize; Ok((d[..1+l].to_vec(), 1+l)) }
-        else { let lb = (f - 0xf7) as usize; let l = btou(&d[1..1+lb]); Ok((d[..1+lb+l].to_vec(), 1+lb+l)) }
+        if f < 0x80 {
+            Ok((vec![f], 1))
+        } else if f < 0xb8 {
+            let l = (f - 0x80) as usize;
+            let bytes = d.get(1..).and_then(|d| d.get(..l))
+                .ok_or("truncated short string")?;
+            Ok((bytes.to_vec(), 1 + l))
+        } else if f < 0xc0 {
+            let lb = (f - 0xb7) as usize;
+            let len_bytes = d.get(1..).and_then(|d| d.get(..lb))
+                .ok_or("truncated long-string length field")?;
+            let l = btou(len_bytes)?;
+            let start = 1usize.checked_add(lb).ok_or("length overflow")?;
+            let bytes = d.get(start..).and_then(|d| d.get(..l))
+                .ok_or("truncated long string")?;
+            let total = start.checked_add(l).ok_or("length overflow")?;
+            Ok((bytes.to_vec(), total))
+        } else if f < 0xf8 {
+            let l = (f - 0xc0) as usize;
+            let total = 1usize.checked_add(l).ok_or("length overflow")?;
+            let bytes = d.get(..total).ok_or("truncated short list item")?;
+            Ok((bytes.to_vec(), total))
+        } else {
+            let lb = (f - 0xf7) as usize;
+            let len_bytes = d.get(1..).and_then(|d| d.get(..lb))
+                .ok_or("truncated long-list-item length field")?;
+            let l = btou(len_bytes)?;
+            let start = 1usize.checked_add(lb).ok_or("length overflow")?;
+            let total = start.checked_add(l).ok_or("length overflow")?;
+            let bytes = d.get(..total).ok_or("truncated long list item")?;
+            Ok((bytes.to_vec(), total))
+        }
     }
-    fn btou(b: &[u8]) -> usize {
+
+    fn btou(b: &[u8]) -> Result<usize, String> {
+        if b.len() > 8 { return Err("length field too wide".into()); }
         let mut r = 0usize;
-        for &x in b { r = r * 256 + x as usize; }
-        r
+        for &x in b {
+            r = r.checked_mul(256)
+                .and_then(|v| v.checked_add(x as usize))
+                .ok_or("length field overflow")?;
+        }
+        Ok(r)
     }
 }
 
+/// Public entry point exposing the internal RLP decoder for fuzz testing
+/// (`fuzz/fuzz_targets/fuzz_rlp_decode.rs`). Not intended for use outside
+/// tests/fuzzing — production code should go through `verify_evm`.
+#[doc(hidden)]
+pub fn decode_rlp_list_for_fuzzing(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    rlp::decode_list(data)
+}
+
 fn verify_evm(cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
-    let ChainProof::Evm { block_header_rlp, .. } = &cp.proof else {
+    let ChainProof::Evm { block_header_rlp, sync_committee_signature, execution_payload_hash } = &cp.proof else {
         return Ok(VerificationResult::invalid("Expected EVM ChainProof"));
     };
     let computed = keccak256(block_header_rlp);
@@ -99,6 +156,28 @@ fn verify_evm(cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
     let mut parent_arr = [0u8; 32]; parent_arr.copy_from_slice(pr);
     if parent_arr != cp.parent_block_hash {
         return Ok(VerificationResult::invalid("EVM parent_hash mismatch"));
+    }
+
+    // Verify execution payload hash when present (post-Merge Ethereum)
+    if let Some(ref ep_hash) = execution_payload_hash {
+        let computed_ep = keccak256(block_header_rlp);
+        if &computed_ep != ep_hash.as_ref() {
+            return Ok(VerificationResult::invalid("EVM execution_payload_hash mismatch"));
+        }
+    }
+
+    // Verify sync committee BLS signature when present (post-Merge Ethereum)
+    // Without a registered sync committee pubkey, we cannot verify the signature.
+    // If signature is present but no pubkey is available, reject.
+    if let Some(ref sig) = sync_committee_signature {
+        if sig.is_empty() {
+            return Ok(VerificationResult::invalid("EVM sync_committee_signature empty"));
+        }
+        // Sync committee pubkey must be provided via validator set registry.
+        // Without it, we cannot verify — reject rather than silently accept.
+        return Ok(VerificationResult::invalid(
+            "EVM sync_committee_signature present but no sync committee pubkey registered"
+        ));
     }
 
     Ok(VerificationResult::valid())
@@ -231,8 +310,11 @@ fn verify_cardano(cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
     Ok(VerificationResult::valid())
 }
 
-fn verify_generic(cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
-    let ChainProof::Generic { proof_bytes, signer_pubkeys, signatures } = &cp.proof else {
+fn verify_generic(
+    cp: &ExternalCheckpoint,
+    validator_set: Option<&ValidatorSet>,
+) -> L0Result<VerificationResult> {
+    let ChainProof::Generic { proof_bytes, signer_pubkeys, signatures, signature_scheme } = &cp.proof else {
         return Ok(VerificationResult::invalid("Expected Generic ChainProof"));
     };
     if proof_bytes.is_empty() { return Ok(VerificationResult::invalid("Generic proof empty")); }
@@ -240,6 +322,54 @@ fn verify_generic(cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
     if signer_pubkeys.len() != signatures.len() {
         return Ok(VerificationResult::invalid("Generic pubkey/sig count mismatch"));
     }
+
+    // Verify signatures using the configured scheme
+    let mut valid = 0usize;
+    let mut errors = Vec::new();
+
+    match signature_scheme {
+        SignatureScheme::Ed25519 => {
+            let messages: Vec<&[u8]> = (0..signatures.len()).map(|_| proof_bytes.as_slice()).collect();
+            (valid, errors) = verify_ed25519_batch(signer_pubkeys, &messages, signatures);
+        }
+        SignatureScheme::Bls12381 => {
+            for (i, (pk, sig)) in signer_pubkeys.iter().zip(signatures.iter()).enumerate() {
+                match verify_bls(pk, proof_bytes, sig) {
+                    Ok(()) => valid += 1,
+                    Err(e) => errors.push(format!("sig {}: {}", i, e)),
+                }
+            }
+        }
+        SignatureScheme::EcdsaSecp256k1 => {
+            for (i, (pk, sig)) in signer_pubkeys.iter().zip(signatures.iter()).enumerate() {
+                match verify_ecdsa(pk, proof_bytes, sig) {
+                    Ok(()) => valid += 1,
+                    Err(e) => errors.push(format!("sig {}: {}", i, e)),
+                }
+            }
+        }
+    }
+
+    // Require 2/3+1 quorum of provided signers
+    let quorum = (signer_pubkeys.len() * 2 / 3) + 1;
+    if valid < quorum {
+        return Ok(VerificationResult::invalid(format!(
+            "Generic signed power {}/{} < quorum {}. Errors: {:?}",
+            valid, signer_pubkeys.len(), quorum, errors
+        )));
+    }
+
+    // If a validator set is registered, also check against it
+    if let Some(set) = validator_set {
+        let set_power_bps = ((valid as u64 * 10000) / set.pubkeys.len().max(1) as u64) as u16;
+        if set_power_bps < set.threshold_bps {
+            return Ok(VerificationResult::invalid(format!(
+                "Generic signed power {} bps < threshold {} bps",
+                set_power_bps, set.threshold_bps
+            )));
+        }
+    }
+
     Ok(VerificationResult::valid())
 }
 
@@ -657,11 +787,13 @@ fn verify_icp(
     if block_header.is_empty() { return Ok(VerificationResult::invalid("ICP block_header empty")); }
     if threshold_signature.is_empty() { return Ok(VerificationResult::invalid("ICP threshold_signature empty")); }
     if subnet_public_key.is_empty() { return Ok(VerificationResult::invalid("ICP subnet_public_key empty")); }
-    // ICP uses BLS12-381 threshold signatures. Full BLS verification
-    // requires a BLS pairing library. For now, we verify structural
-    // integrity and rely on the relayer to provide valid signatures.
-    // TODO: integrate blst crate for full BLS threshold verification.
-    Ok(VerificationResult::valid())
+
+    // ICP uses BLS12-381 threshold signatures. Verify the threshold signature
+    // against the subnet public key over the block header.
+    match verify_bls(subnet_public_key, block_header, threshold_signature) {
+        Ok(()) => Ok(VerificationResult::valid()),
+        Err(e) => Ok(VerificationResult::invalid(format!("ICP BLS threshold verification failed: {}", e))),
+    }
 }
 
 fn verify_algorand(
@@ -955,11 +1087,14 @@ impl LightClient for CantonLightClient {
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
-pub struct GenericLightClient { chain: ChainId }
-impl GenericLightClient { pub fn new(chain: ChainId) -> Self { Self { chain } } }
+pub struct GenericLightClient { chain: ChainId, registry: ValidatorSetRegistry }
+impl GenericLightClient { pub fn new(chain: ChainId, registry: ValidatorSetRegistry) -> Self { Self { chain, registry } } }
 #[async_trait]
 impl LightClient for GenericLightClient {
-    async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> { verify_generic(cp) }
+    async fn verify_checkpoint(&self, cp: &ExternalCheckpoint) -> L0Result<VerificationResult> {
+        let set = self.registry.get_cloned(&self.chain);
+        verify_generic(cp, set.as_ref())
+    }
     fn chain_id(&self) -> ChainId { self.chain.clone() }
 }
 
@@ -1062,12 +1197,25 @@ mod tests {
 
     #[test]
     fn test_rlp_list() {
-        let data = hex::decode("c3c001c10203").unwrap();
+        // List of 3 string items: [], [0x01], [0x02, 0x03]
+        // -> c5 (list, len 5) 80 (empty str) 01 (single byte <0x80) 82 02 03 (2-byte str)
+        let data = hex::decode("c58001820203").unwrap();
         let items = rlp::decode_list(&data).unwrap();
         assert_eq!(items.len(), 3);
-        assert_eq!(items[0], vec![]);
+        assert_eq!(items[0], Vec::<u8>::new());
         assert_eq!(items[1], vec![0x01]);
         assert_eq!(items[2], vec![0x02, 0x03]);
+    }
+
+    #[test]
+    fn test_rlp_decode_list_never_panics_on_malformed_input() {
+        // Regression guard for the untrusted-input surface: malformed/truncated
+        // RLP (as could be submitted via submit_external_checkpoint) must return
+        // Err, never panic. This exact byte sequence used to panic with
+        // "range end index 2 out of range for slice of length 1".
+        let data = hex::decode("c3c001c10203").unwrap();
+        let result = rlp::decode_list(&data);
+        assert!(result.is_err(), "malformed/truncated RLP must be rejected, not panic");
     }
 
     #[test]

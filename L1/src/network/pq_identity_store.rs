@@ -1,12 +1,12 @@
-//! Persisted PQ node identity (Dilithium3 + Kyber768) for stable [`PeerId`] across restarts.
+//! Persisted PQ node identity (ML-DSA-65 + Kyber768) for stable [`PeerId`] across restarts.
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use pqcrypto_dilithium::dilithium3;
+use pqcrypto_mldsa::mldsa65;
 
-use crate::crypto::{DilithiumKeypair, KemKeypair};
+use crate::crypto::{MlDsa65Keypair, KemKeypair};
 use crate::network::{NetworkError, NetworkResult};
 
 const MAGIC: &[u8; 4] = b"QPK1";
@@ -29,14 +29,14 @@ fn read_u32_le(bs: &[u8], i: &mut usize) -> NetworkResult<u32> {
 }
 
 /// Loads PQ identity from disk or generates + atomically writes a new file.
-pub fn load_or_create_identity(db_path: &str) -> NetworkResult<(DilithiumKeypair, KemKeypair)> {
+pub fn load_or_create_identity(db_path: &str) -> NetworkResult<(MlDsa65Keypair, KemKeypair)> {
     let path = resolve_identity_path(db_path);
     if path.is_file() {
         return load_identity_file(&path);
     }
 
-    let dil = DilithiumKeypair::generate()
-        .map_err(|e| NetworkError::ConnectionFailed(format!("Dilithium generate: {}", e)))?;
+    let dil = MlDsa65Keypair::generate()
+        .map_err(|e| NetworkError::ConnectionFailed(format!("ML-DSA-65 generate: {}", e)))?;
     let kem = KemKeypair::generate()
         .map_err(|e| NetworkError::ConnectionFailed(format!("Kyber generate: {}", e)))?;
 
@@ -46,7 +46,7 @@ pub fn load_or_create_identity(db_path: &str) -> NetworkResult<(DilithiumKeypair
     Ok((dil, kem))
 }
 
-fn load_identity_file(path: &Path) -> NetworkResult<(DilithiumKeypair, KemKeypair)> {
+fn load_identity_file(path: &Path) -> NetworkResult<(MlDsa65Keypair, KemKeypair)> {
     let mut f = File::open(path).map_err(|e| NetworkError::IoError(e.to_string()))?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).map_err(|e| NetworkError::IoError(e.to_string()))?;
@@ -68,12 +68,12 @@ fn load_identity_file(path: &Path) -> NetworkResult<(DilithiumKeypair, KemKeypai
     }
 
     let dil_sk_len = read_u32_le(&buf, &mut i)? as usize;
-    if dil_sk_len != dilithium3::secret_key_bytes() {
-        return Err(NetworkError::InvalidMessage("bad Dilithium secret length".into()));
+    if dil_sk_len != mldsa65::secret_key_bytes() {
+        return Err(NetworkError::InvalidMessage("bad ML-DSA-65 secret length".into()));
     }
     let dil_sk = buf
         .get(i..i + dil_sk_len)
-        .ok_or_else(|| NetworkError::InvalidMessage("identity truncated (dilithium)".into()))?
+        .ok_or_else(|| NetworkError::InvalidMessage("identity truncated (mldsa)".into()))?
         .to_vec();
     i += dil_sk_len;
 
@@ -95,8 +95,8 @@ fn load_identity_file(path: &Path) -> NetworkResult<(DilithiumKeypair, KemKeypai
         return Err(NetworkError::InvalidMessage("identity trailing garbage".into()));
     }
 
-    let dil = DilithiumKeypair::from_secret_key(&dil_sk)
-        .map_err(|e| NetworkError::InvalidMessage(format!("bad Dilithium material: {}", e)))?;
+    let dil = MlDsa65Keypair::from_secret_key(&dil_sk)
+        .map_err(|e| NetworkError::InvalidMessage(format!("bad ML-DSA-65 material: {}", e)))?;
     let kem = KemKeypair::from_storage(kem_pk, kem_sk)
         .map_err(|e| NetworkError::InvalidMessage(format!("bad Kyber material: {}", e)))?;
 
@@ -104,7 +104,7 @@ fn load_identity_file(path: &Path) -> NetworkResult<(DilithiumKeypair, KemKeypai
     Ok((dil, kem))
 }
 
-fn write_identity_atomic(path: &Path, dil: &DilithiumKeypair, kem: &KemKeypair) -> NetworkResult<()> {
+fn write_identity_atomic(path: &Path, dil: &MlDsa65Keypair, kem: &KemKeypair) -> NetworkResult<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| NetworkError::IoError(e.to_string()))?;
     }

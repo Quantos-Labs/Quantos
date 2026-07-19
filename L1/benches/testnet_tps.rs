@@ -5,7 +5,7 @@
 //! - FastPath consensus
 //! - DAGGraph vertex management  
 //! - OptimisticExecutor for state
-//! - DilithiumBatchVerifier (PQC-SVB)
+//! - MlDsa65BatchVerifier (PQC-SVB)
 //! - CommitteeManager
 
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use tempfile::tempdir;
 use tokio::sync::mpsc;
 use rayon::prelude::*;
 
-use quantos::crypto::DilithiumKeypair;
+use quantos::crypto::MlDsa65Keypair;
 use quantos::storage::Storage;
 use quantos::state::{StateManager, OptimisticExecutor};
 use quantos::mempool::ShardedMempool;
@@ -74,9 +74,9 @@ async fn main() {
     // Generate validator keypairs
     // ═══════════════════════════════════════════════════════════════
     println!("🔑 Generating validator keypairs...");
-    let validators: Vec<DilithiumKeypair> = (0..NUM_SHARDS)
+    let validators: Vec<MlDsa65Keypair> = (0..NUM_SHARDS)
         .into_par_iter()
-        .map(|_| DilithiumKeypair::generate().unwrap())
+        .map(|_| MlDsa65Keypair::generate().unwrap())
         .collect();
     println!("   Generated {} validator keys\n", validators.len());
     
@@ -85,7 +85,7 @@ async fn main() {
     // ═══════════════════════════════════════════════════════════════
     println!("🔍 DEBUG: Testing signature verification...");
     {
-        let keypair = DilithiumKeypair::generate().unwrap();
+        let keypair = MlDsa65Keypair::generate().unwrap();
         let mut tx = Transaction::new(
             TransactionType::Transfer,
             keypair.address(),
@@ -102,7 +102,7 @@ async fn main() {
         let sig = keypair.sign(&signing_data_before).unwrap();
         
         // Verify immediately
-        let verify1 = quantos::crypto::verify_dilithium(&keypair.public_key, &signing_data_before, &sig).unwrap();
+        let verify1 = quantos::crypto::verify_ml_dsa_65(&keypair.public_key, &signing_data_before, &sig).unwrap();
         println!("   Direct verify (before set_signature): {}", verify1);
         
         // set_signature verifies internally
@@ -111,7 +111,7 @@ async fn main() {
         
         // Verify after (like mempool does)
         let signing_data_after = tx.signing_data();
-        let verify2 = quantos::crypto::verify_dilithium(&tx.public_key, &signing_data_after, &tx.signature).unwrap();
+        let verify2 = quantos::crypto::verify_ml_dsa_65(&tx.public_key, &signing_data_after, &tx.signature).unwrap();
         println!("   Mempool-style verify (after): {}", verify2);
         
         // Compare signing data
@@ -130,7 +130,7 @@ async fn main() {
     let mut sign_failures = 0;
     
     for i in 0..tx_count {
-        let keypair = DilithiumKeypair::generate().unwrap();
+        let keypair = MlDsa65Keypair::generate().unwrap();
         let shard_id = (i % NUM_SHARDS as usize) as u16;
         
         let mut tx = Transaction::new(

@@ -53,17 +53,9 @@ Until the Keccak AIR is integrated and audited, **uniqueness is a property targe
 
 The STARK proof is large (~50–200 KB) but is never posted on external chains; it is verified off-chain by validators and light clients.
 
-## 2.3 Threshold ML-KEM-768 for Encrypted Mempool
+## 2.3 Encrypted Mempool (Anti-Front-Running)
 
-The Quantos mempool supports encrypted transactions to prevent front-running. The encryption uses ML-KEM-768 (FIPS 203) with a threshold decryption layer:
-
-- The ML-KEM secret vector `s` (K polynomials of degree N) is split coefficient-wise via Shamir secret sharing over Z_q.
-- Each validator committee member holds a share of every scalar coefficient.
-- During block proposal, `t-of-n` participants each compute a partial inner-product `s_i^T · u` in the NTT domain.
-- The partials are combined via Lagrange interpolation to recover `s^T · u`, from which the shared symmetric key is derived.
-- Each partial computation is accompanied by a lattice NIZK proof (Fiat-Shamir over polynomial commitments) proving correct computation without revealing the share.
-
-This construction replaces earlier proposals that relied on a single decryptor or unspecified threshold mechanisms. The implementation (`crypto/threshold_mlkem.rs`, `crypto/shamir_zq.rs`, `crypto/lattice_nizk.rs`) is a research-grade component, enabled via Cargo feature `experimental-threshold-mlkem`. Open questions — in particular noise aggregation across partial decryptions and the security of the coefficient-wise Shamir sharing under LWE noise — are subject to external audit before this component is placed on the mainnet critical path. **The default mainnet path uses the accountable-leader front-running protection** (`mempool/accountable_leader.rs`): canonical order is determined by `H(ordering_beacon ‖ tx_hash)`, and any deviation is slashable as proven front-running.
+The Quantos mempool supports encrypted transactions to prevent front-running. The encryption uses ML-KEM-768 (FIPS 203). The **mainnet default** uses the accountable-leader front-running protection (`mempool/accountable_leader.rs`): canonical order is determined by `H(ordering_beacon ‖ tx_hash)`, and any deviation is slashable as proven front-running.
 
 ## 2.4 Security Level Alignment
 
@@ -77,16 +69,7 @@ All cryptographic objects requiring long-term security or systemic finality now 
 | Mempool encryption | ML-KEM-768 | 3 |
 | VRF (committee randomness) | SHA3-256 + STARK | — |
 
-## 2.5 Quantum-Resistant Randomness (QRNG)
-
-Randomness is consensus-critical: it seeds committee selection and the VRF. Quantos generates it with a quantum-resistant RNG (`crypto/qrng.rs`) built on the SHAKE256 extendable-output function (XOF). The QRNG mixes multiple entropy sources — system randomness, the previous QRNG output, recent block hashes, and network timing — into a SHAKE256 sponge and expands as much randomness as needed:
-
-- **Post-quantum security**: SHAKE256 has no known quantum shortcut beyond Grover, leaving a 128-bit margin at 256-bit output.
-- **Entropy pooling and reseeding**: sources are pooled and the state is periodically reseeded, so a single compromised source cannot dominate the output.
-- **Deterministic mode**: for consensus paths that must be reproducible across validators, the QRNG runs in a deterministic mode seeded from on-chain values, so every honest node derives identical randomness.
-- **Performance**: lock-free thread-local pools provide high-throughput randomness for hot paths.
-
-## 2.6 Signature Aggregation (QRSA)
+## 2.5 Signature Aggregation (QRSA)
 
 Post-quantum signatures are large (an ML-DSA-65 signature is ~3.3 KB), so a committee of hundreds of validators would otherwise attach megabytes of signatures to every block. The quantum-resistant signature-aggregation layer (`crypto/signature_aggregation.rs`) uses a two-tier strategy based on Merkle commitments with Fiat-Shamir:
 

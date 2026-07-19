@@ -11,7 +11,7 @@
 //!    pipeline runs as an optional, opt-in side stage gated by
 //!    [`L0Config::enabled`].
 //! 2. **PQC-only**: every signature carried in an [`proof::L0FinalityProof`]
-//!    is post-quantum (ML-DSA-65 or Dilithium-3). No ECDSA, no BLS.
+//!    is post-quantum (ML-DSA-65 or ML-DSA-65). No ECDSA, no BLS.
 //! 3. **Chain-agnostic**: a single proof can be re-encoded for any target
 //!    via the [`encoding`] layer and an entry in the [`registry`].
 //! 4. **Self-contained**: verification only depends on the validator set

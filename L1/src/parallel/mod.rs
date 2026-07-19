@@ -1,7 +1,7 @@
 //! # Massive Parallelization Engine
 //!
 //! This module implements Quantos's massive parallelization capabilities,
-//! enabling ~100M TPS through parallel execution across 1000+ shards.
+//! enabling high-throughput parallel execution across 1000+ shards.
 //!
 //! ## Architecture
 //!
@@ -667,7 +667,7 @@ pub fn verify_signatures_batch(
     transactions
         .par_iter()
         .map(|tx| {
-            match crate::crypto::verify_dilithium(
+            match crate::crypto::verify_ml_dsa_65(
                 &tx.transaction.public_key,
                 &tx.transaction.signing_data(),
                 &tx.transaction.signature,

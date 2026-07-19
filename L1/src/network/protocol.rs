@@ -27,7 +27,7 @@ pub struct P2PConfig {
     pub ping_interval: u64,
     /// Connection timeout in seconds
     pub connection_timeout: u64,
-    /// Bootstrap nodes: `/ip4|ip6/.../tcp/PORT/p2p/<PeerId>` with Dilithium-derived [`PeerId`].
+    /// Bootstrap nodes: `/ip4|ip6/.../tcp/PORT/p2p/<PeerId>` with ML-DSA-65-derived [`PeerId`].
     pub bootstrap_nodes: Vec<String>,
     /// Known peer addresses persisted from previous sessions.
     pub known_peer_addresses: Vec<String>,

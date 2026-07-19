@@ -10,7 +10,7 @@ use crate::consensus::{
     FinalizedCheckpoint, CrossShardAtomicProtocol, ShardOperation, AtomicResult,
     AtomicStatus,
 };
-use crate::crypto::{DilithiumKeypair, MlDsa65Keypair, VRFKeypair};
+use crate::crypto::{MlDsa65Keypair, VRFKeypair};
 use crate::dag::DAGGraph;
 use crate::l0::{CheckpointGossip, CheckpointPool, FinalityHub, HttpRelayTransport, LightClientRegistry, RelayDispatcher, ChainRegistry, ValidatorSetSnapshot, SubnetManager, SubnetId, SubnetConfig};
 use crate::l0::hub::SignatureContribution;
@@ -53,7 +53,7 @@ pub struct QuantosConsensus {
 }
 
 struct ValidatorKeys {
-    signing_key: DilithiumKeypair,
+    signing_key: MlDsa65Keypair,
     vrf_key: VRFKeypair,
     finality_key: MlDsa65Keypair,
     address: Address,
@@ -108,7 +108,7 @@ impl QuantosConsensus {
         
         // PRODUCTION: Initialize Cross-Shard Atomic Protocol
         // Generate a temporary keypair for CSAP - will be replaced when validator keys are set
-        let csap_keypair = crate::crypto::DilithiumKeypair::generate()
+        let csap_keypair = crate::crypto::MlDsa65Keypair::generate()
             .expect("Failed to generate CSAP keypair");
         let csap = Arc::new(CrossShardAtomicProtocol::new(
             dag.clone(),
@@ -180,7 +180,7 @@ impl QuantosConsensus {
     pub fn set_validator_keys(
         &mut self,
         genesis: &crate::genesis::GenesisConfig,
-        signing_key: DilithiumKeypair,
+        signing_key: MlDsa65Keypair,
         vrf_key: VRFKeypair,
         finality_key: MlDsa65Keypair,
     ) {
@@ -543,7 +543,10 @@ impl QuantosConsensus {
         &self,
         operations: Vec<ShardOperation>,
     ) -> ConsensusResult<AtomicResult> {
-        let atomic_id = crate::types::hash_data(&bincode::serialize(&operations).unwrap_or_default());
+        let atomic_id = crate::types::hash_data(
+            &bincode::serialize(&operations)
+                .map_err(|e| ConsensusError::InvalidData(format!("Failed to serialize operations: {}", e)))?
+        );
         
         tracing::info!(
             "Executing atomic operation {} across {} shards",
@@ -679,11 +682,11 @@ impl QuantosConsensus {
     pub fn sign_external_checkpoint(&self, digest: &Hash) -> Option<SignatureContribution> {
         let keys = self.validator_keys.as_ref()?;
 
-        // Sign with ML-DSA-65 (finality key) or Dilithium (signing key)
+        // Sign with ML-DSA-65 (finality key preferred, signing key as fallback)
         let (algo, signature) = if let Ok(sig) = keys.finality_key.sign(digest) {
             (PqcSignatureAlgo::MlDsa65, sig)
         } else if let Ok(sig) = keys.signing_key.sign(digest) {
-            (PqcSignatureAlgo::Dilithium3, sig)
+            (PqcSignatureAlgo::MlDsa65, sig)
         } else {
             return None;
         };

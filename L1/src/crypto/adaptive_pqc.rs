@@ -12,7 +12,7 @@
 //!
 //! | Layer | Deterministic? | Used in consensus? |
 //! |-------|---------------|--------------------|
-//! | `AlwaysDilithium` / `AlwaysMlDsa65` / `AlwaysSPHINCS` | ✅ trivially | ✅ safe |
+//! | `AlwaysMlDsa65` / `AlwaysMlDsa65` / `AlwaysSPHINCS` | ✅ trivially | ✅ safe |
 //! | `Adaptive` ([`select_adaptive`]) | ✅ pure function | ✅ safe |
 //! | `MLBased` ([`select_ml_based`]) | ❌ non-deterministic | ❌ **ADVISORY ONLY** |
 //!
@@ -28,7 +28,7 @@
 //!
 //! ## Key Innovations (Patent Claims)
 //!
-//! 1. **Dynamic Algorithm Selection**: Real-time switching between Dilithium, ML-DSA-65, and SPHINCS+
+//! 1. **Dynamic Algorithm Selection**: Real-time switching between ML-DSA-65, and SPHINCS+
 //! 2. **ML-Based Prediction**: Neural network predicts optimal algorithm per transaction
 //! 3. **Cost Function Optimization**: Multi-objective optimization (latency, bandwidth, security)
 //! 4. **Adaptive Thresholds**: Self-tuning based on network conditions
@@ -43,7 +43,7 @@
 //!
 //! | Algorithm | Sig Size | Verify Time | Use Case |
 //! |-----------|----------|-------------|----------|
-//! | Dilithium | 3.2 KB   | ~50 µs      | Fast verification, high throughput |
+//! | ML-DSA-65 | 3.2 KB   | ~50 µs      | Fast verification, high throughput |
 //! | ML-DSA-65 | 3.3 KB   | ~55 µs      | Standardized finality / general use |
 //! | SPHINCS+  | 17 KB    | ~30 µs      | Maximum security, stateless |
 
@@ -58,10 +58,7 @@ use crate::types::{Address, Amount};
 /// PQC algorithm selection strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PQCStrategy {
-    /// Always use Dilithium (default, fast verification)
-    AlwaysDilithium,
-    
-    /// Always use ML-DSA-65 (FIPS 204)
+    /// Always use ML-DSA-65 (FIPS 204, default)
     AlwaysMlDsa65,
     
     /// Always use SPHINCS+ (maximum security)
@@ -77,12 +74,11 @@ pub enum PQCStrategy {
 /// Preference for which algorithm to prefer when propagating messages
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PropagationPref {
-    PreferDilithium,
     PreferMlDsa65,
 }
 
 impl Default for PropagationPref {
-    fn default() -> Self { PropagationPref::PreferDilithium }
+    fn default() -> Self { PropagationPref::PreferMlDsa65 }
 }
 
 /// Transaction context for algorithm selection
@@ -147,7 +143,6 @@ pub struct SelectedAlgorithm {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PQCAlgorithm {
-    Dilithium,
     MlDsa65,
     SPHINCS,
 }
@@ -162,7 +157,7 @@ pub struct ExpectedMetrics {
 impl PQCAlgorithm {
     pub fn metrics(&self) -> ExpectedMetrics {
         match self {
-            PQCAlgorithm::Dilithium => ExpectedMetrics {
+            PQCAlgorithm::MlDsa65 => ExpectedMetrics {
                 signature_size: 3293,
                 verify_time_us: 50,
                 bandwidth_cost: 1.0,
@@ -390,7 +385,7 @@ struct HistoricalSample {
 #[derive(Debug, Clone, Default)]
 pub struct SelectionStats {
     pub total_selections: u64,
-    pub dilithium_selected: u64,
+    pub mldsa65_selected: u64,
     pub ml_dsa65_selected: u64,
     pub sphincs_selected: u64,
     pub avg_latency_ms: f32,
@@ -440,7 +435,6 @@ impl AdaptivePQCSelector {
         let network = self.network_metrics.read().clone();
         
         let algorithm = match strategy {
-            PQCStrategy::AlwaysDilithium => self.select_dilithium(context, &network),
             PQCStrategy::AlwaysMlDsa65 => self.select_ml_dsa65(context, &network),
             PQCStrategy::AlwaysSPHINCS => self.select_sphincs(context, &network),
             PQCStrategy::Adaptive => self.select_adaptive(context, &network),
@@ -451,15 +445,6 @@ impl AdaptivePQCSelector {
         self.update_stats(&algorithm);
         
         algorithm
-    }
-
-    fn select_dilithium(&self, _context: &TransactionContext, _network: &NetworkMetrics) -> SelectedAlgorithm {
-        SelectedAlgorithm {
-            algorithm: PQCAlgorithm::Dilithium,
-            confidence: 1.0,
-            reason: "Static: Always Dilithium".to_string(),
-            expected_metrics: PQCAlgorithm::Dilithium.metrics(),
-        }
     }
 
     fn select_ml_dsa65(&self, _context: &TransactionContext, _network: &NetworkMetrics) -> SelectedAlgorithm {
@@ -489,8 +474,8 @@ impl AdaptivePQCSelector {
         let weights = self.cost_weights.read();
         
         // Calculate scores for each algorithm
-        let dilithium_score = self.calculate_score(
-            &PQCAlgorithm::Dilithium,
+        let mldsa65_score = self.calculate_score(
+            &PQCAlgorithm::MlDsa65,
             context,
             network,
             &weights,
@@ -511,8 +496,8 @@ impl AdaptivePQCSelector {
         );
 
         // Select algorithm with highest score
-        let (algorithm, score, reason) = if dilithium_score >= ml_dsa_score && dilithium_score >= sphincs_score {
-            (PQCAlgorithm::Dilithium, dilithium_score, "Adaptive: Fast verification priority")
+        let (algorithm, score, reason) = if mldsa65_score >= ml_dsa_score && mldsa65_score >= sphincs_score {
+            (PQCAlgorithm::MlDsa65, mldsa65_score, "Adaptive: ML-DSA-65 priority")
         } else if ml_dsa_score >= sphincs_score {
             (PQCAlgorithm::MlDsa65, ml_dsa_score, "Adaptive: Standardized finality priority")
         } else {
@@ -550,8 +535,8 @@ impl AdaptivePQCSelector {
         // Security score (based on algorithm strength + transaction value)
         let security_score = match algorithm {
             PQCAlgorithm::SPHINCS => 1.0, // Maximum security
-            PQCAlgorithm::Dilithium => 0.9,
-            PQCAlgorithm::MlDsa65 => 0.9, // Equivalent to Dilithium-3 (FIPS 204)
+            PQCAlgorithm::MlDsa65 => 0.9,
+            PQCAlgorithm::MlDsa65 => 0.9, // Equivalent to ML-DSA-65 (FIPS 204)
         };
         
         // Context-aware adjustments
@@ -600,7 +585,7 @@ impl AdaptivePQCSelector {
             
             // Select best algorithm
             let (algorithm, confidence) = if scores[0] >= scores[1] && scores[0] >= scores[2] {
-                (PQCAlgorithm::Dilithium, scores[0])
+                (PQCAlgorithm::MlDsa65, scores[0])
             } else if scores[1] >= scores[2] {
                 (PQCAlgorithm::MlDsa65, scores[1])
             } else {
@@ -710,7 +695,7 @@ impl AdaptivePQCSelector {
                 
                 // Target: 1.0 for selected algorithm, 0.0 for others
                 let target = match sample.selected {
-                    PQCAlgorithm::Dilithium => [1.0, 0.0, 0.0],
+                    PQCAlgorithm::MlDsa65 => [1.0, 0.0, 0.0],
                     PQCAlgorithm::MlDsa65 => [0.0, 1.0, 0.0],
                     PQCAlgorithm::SPHINCS => [0.0, 0.0, 1.0],
                 };
@@ -753,7 +738,7 @@ impl AdaptivePQCSelector {
         stats.total_selections += 1;
         
         match selection.algorithm {
-            PQCAlgorithm::Dilithium => stats.dilithium_selected += 1,
+            PQCAlgorithm::MlDsa65 => stats.mldsa65_selected += 1,
             PQCAlgorithm::MlDsa65 => stats.ml_dsa65_selected += 1,
             PQCAlgorithm::SPHINCS => stats.sphincs_selected += 1,
         }
@@ -767,7 +752,7 @@ impl AdaptivePQCSelector {
     /// Set selection strategy.
     ///
     /// **⚠️ Warning**: `MLBased` is advisory-only. For consensus-critical
-    /// code paths (block production/validation), only `AlwaysDilithium`,
+    /// code paths (block production/validation), only `AlwaysMlDsa65`,
     /// `AlwaysMlDsa65`, `AlwaysSPHINCS`, or `Adaptive` are safe.
     pub fn set_strategy(&self, strategy: PQCStrategy) {
         if strategy == PQCStrategy::MLBased {
@@ -806,7 +791,7 @@ mod tests {
         let selection = selector.select_algorithm(&context);
         assert!(matches!(
             selection.algorithm,
-            PQCAlgorithm::Dilithium | PQCAlgorithm::MlDsa65 | PQCAlgorithm::SPHINCS
+            PQCAlgorithm::MlDsa65 | PQCAlgorithm::MlDsa65 | PQCAlgorithm::SPHINCS
         ));
     }
 
@@ -834,7 +819,7 @@ mod tests {
         let selector = AdaptivePQCSelector::new(PQCStrategy::Adaptive);
         assert!(selector.is_consensus_safe());
         
-        selector.set_strategy(PQCStrategy::AlwaysDilithium);
+        selector.set_strategy(PQCStrategy::AlwaysMlDsa65);
         assert!(selector.is_consensus_safe());
 
         selector.set_strategy(PQCStrategy::AlwaysMlDsa65);

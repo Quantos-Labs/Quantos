@@ -27,7 +27,7 @@ Contracts interact with chain state and the environment through a namespaced hos
 
 - `qnt_storage_*` — read and write contract storage slots.
 - `qnt_block_*` — access block height, timestamp, and other context.
-- `qnt_crypto_*` — post-quantum primitives, including native Dilithium verification (`verify_dilithium`, `verify_dilithium_batch`), exposed so contracts can themselves verify PQC signatures cheaply.
+- `qnt_crypto_*` — post-quantum primitives, including native ML-DSA-65 verification (`verify_ml-dsa-65`, `verify_ml-dsa-65_batch`), exposed so contracts can themselves verify PQC signatures cheaply.
 
 ## 11.2 Bytecode-Invisible Architecture
 
@@ -93,23 +93,6 @@ The headline scalability feature of QuantosVM is that **contract calls within a 
 
 `vm/speculative_execution.rs` executes transactions *during* the consensus rounds, before final ordering is known, to hide execution latency behind consensus latency. Each speculative transaction moves through a state machine — `Pending → Executing → Speculated → Confirmed`, or `RolledBack` / `Failed` — and keeps `AccountSnapshot` and storage-slot snapshots so that, if consensus produces an ordering that invalidates the speculation, the affected transactions are cheaply rolled back and re-executed. In the common case (low conflict rate), speculation is correct and execution is effectively free; rollbacks are rare.
 
-## 11.5 Tiered JIT Compilation
-
-For contracts that run frequently, interpretation is wasteful. `vm/jit_compiler.rs` implements **tiered, profile-guided compilation**:
-
-```
-Interpreter  ──hot──▶  Baseline JIT  ──hotter──▶  Optimized JIT
-   (slow,                (fast compile,             (slow compile,
-    no compile)           moderate speed)            fastest execution)
-```
-
-- **Hot-path detection**: execution counters identify hot contract paths; cold code stays interpreted to avoid wasting compilation effort.
-- **Code caching**: compiled native code is cached persistently, so a popular contract is compiled once and reused across executions and restarts.
-- **Inline caching**: repeated property/method lookups are accelerated with inline caches.
-- **Deoptimization**: if an assumption baked into optimised code is violated, the VM safely falls back ("deopts") to the interpreter, preserving correctness.
-
-The compiler operates over a compact opcode set (stack ops, arithmetic, comparison, bitwise, control flow, storage), bridging WASM execution and native machine code for the hottest paths.
-
 ## 11.6 Determinism and Consensus Safety
 
-Every component on the execution path is held to a strict determinism requirement: identical inputs must produce identical outputs on every validator, or consensus would fork. The codebase enforces this boundary explicitly — for example, the ERC router is documented as RNG-free and time-free, the adaptive-cryptography ML predictor (Post-Quantum Cryptography section) is marked advisory-only and excluded from consensus, and the JIT is required to produce results bit-identical to the interpreter. Non-deterministic optimisations are permitted only as *local hints* that never change the committed state transition.
+Every component on the execution path is held to a strict determinism requirement: identical inputs must produce identical outputs on every validator, or consensus would fork. The codebase enforces this boundary explicitly — for example, the ERC router is documented as RNG-free and time-free, the adaptive-cryptography ML predictor (Post-Quantum Cryptography section) is marked advisory-only and excluded from consensus. Non-deterministic optimisations are permitted only as *local hints* that never change the committed state transition.

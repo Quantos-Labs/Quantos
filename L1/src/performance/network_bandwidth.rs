@@ -369,7 +369,13 @@ impl BandwidthOptimizer {
         }
         
         // Serialize
-        bincode::serialize(&compressed).unwrap_or_default()
+        match bincode::serialize(&compressed) {
+            Ok(data) => data,
+            Err(e) => {
+                tracing::error!("Failed to serialize compressed message: {}", e);
+                return Vec::new();
+            }
+        }
     }
 
     /// Computes delta between two payloads.

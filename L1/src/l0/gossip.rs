@@ -215,6 +215,8 @@ mod tests {
             block_number: 1000,
             block_hash: [1u8; 32],
             state_root: [2u8; 32],
+            parent_block_hash: [0u8; 32],
+            chain_work: 0,
             timestamp_ms: 1000000,
             proof: crate::l0::external::ChainProof::Evm {
                 block_header_rlp: vec![],

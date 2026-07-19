@@ -1,26 +1,15 @@
-use pqcrypto_falcon::falcon512;
-use pqcrypto_dilithium::dilithium3;
+use pqcrypto_mldsa::mldsa65;
 use pqcrypto_traits::sign::{DetachedSignature, PublicKey};
 
 use crate::error::{L0Error, L0Result, VerificationReport, ValidatorSetSnapshot};
 use crate::types::{L0FinalityProof, L0_PROOF_VERSION, PqcSignatureAlgo};
 
-pub fn verify_falcon(public_key: &[u8], digest: &[u8], signature: &[u8]) -> Result<bool, L0Error> {
-    let pk = falcon512::PublicKey::from_bytes(public_key)
-        .map_err(|e| L0Error::Encoding(format!("invalid falcon public key: {e}")))?;
-    let sig = falcon512::DetachedSignature::from_bytes(signature)
-        .map_err(|e| L0Error::Encoding(format!("invalid falcon signature: {e}")))?;
-    Ok(pqcrypto_falcon::falcon512::detached_verify(&sig, digest, &pk).is_ok())
-}
-
-pub fn verify_dilithium(public_key: Vec<u8>, digest: Vec<u8>, signature: Vec<u8>) -> bool {
-    let Ok(pk) = dilithium3::PublicKey::from_bytes(&public_key) else {
-        return false;
-    };
-    let Ok(sig) = dilithium3::DetachedSignature::from_bytes(&signature) else {
-        return false;
-    };
-    pqcrypto_dilithium::dilithium3::detached_verify(&sig, &digest, &pk).is_ok()
+pub fn verify_ml_dsa_65(public_key: &[u8], message: &[u8], signature: &[u8]) -> Result<bool, L0Error> {
+    let pk = mldsa65::PublicKey::from_bytes(public_key)
+        .map_err(|e| L0Error::Encoding(format!("invalid ML-DSA-65 public key: {e}")))?;
+    let sig = mldsa65::DetachedSignature::from_bytes(signature)
+        .map_err(|e| L0Error::Encoding(format!("invalid ML-DSA-65 signature: {e}")))?;
+    Ok(mldsa65::verify_detached_signature(&sig, message, &pk).is_ok())
 }
 
 pub fn verify_proof(
@@ -48,7 +37,7 @@ pub fn verify_proof(
         ));
     }
 
-    let digest = proof.signing_digest();
+    let message = proof.signed_message();
 
     let mut signed_stake: u128 = 0;
     let mut valid_signatures = 0usize;
@@ -61,14 +50,9 @@ pub fn verify_proof(
         };
 
         let ok = match sig.algo {
-            PqcSignatureAlgo::Falcon512 => {
-                verify_falcon(&validator.public_key, &digest, &sig.signature).unwrap_or(false)
+            PqcSignatureAlgo::MlDsa65 => {
+                verify_ml_dsa_65(&validator.public_key, &message, &sig.signature).unwrap_or(false)
             }
-            PqcSignatureAlgo::Dilithium3 => verify_dilithium(
-                validator.public_key.clone(),
-                digest.to_vec(),
-                sig.signature.clone(),
-            ),
         };
 
         if ok {

@@ -9,6 +9,6 @@ pub use types::{
     ValidatorRecord,
 };
 pub use error::{L0Error, L0Result, ValidatorSetSnapshot, VerificationReport};
-pub use verifier::{verify_falcon, verify_dilithium, verify_proof};
+pub use verifier::{verify_ml_dsa_65, verify_proof};
 pub use fetcher::{fetch_latest_proof, fetch_proof};
 pub use registry::register_validator_set;

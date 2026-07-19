@@ -874,8 +874,8 @@ mod tests {
             aggregator.add_signature(
                 i,
                 [0u8; 32],
-                vec![0u8; 3293], // Dilithium signature size
-                vec![0u8; 1952], // Dilithium pubkey size
+                vec![0u8; 3293], // ML-DSA-65 signature size
+                vec![0u8; 1952], // ML-DSA-65 pubkey size
             );
         }
         

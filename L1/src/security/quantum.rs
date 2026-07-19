@@ -8,7 +8,7 @@
 //! in polynomial time on a quantum computer. Quantos uses NIST-standardized
 //! post-quantum cryptographic algorithms:
 //!
-//! - **Dilithium-3**: Primary signature scheme (NIST Level 3, ~128-bit PQ security)
+//! - **ML-DSA-65**: Primary signature scheme (NIST Level 3, ~128-bit PQ security)
 //! - **SPHINCS+**: Backup hash-based signatures (stateless, conservative choice)
 //! - **ML-DSA-65**: NIST-standardized finality checkpoints (FIPS 204)
 //!
@@ -54,7 +54,7 @@ impl Default for QuantumSecurityConfig {
             min_hash_bits: 256,               // SHA3-256 minimum
             min_symmetric_bits: 256,          // AES-256 equivalent
             hybrid_signatures: false,
-            multi_signature_critical: true,   // Dilithium + SPHINCS+ for critical
+            multi_signature_critical: true,   // ML-DSA-65 + SPHINCS+ for critical
             key_rotation_interval: Duration::from_secs(86400), // Daily rotation
             quantum_key_exchange: true,       // Use Kyber for key exchange
         }
@@ -79,45 +79,38 @@ pub enum QuantumSecurityLevel {
 /// Supported post-quantum signature schemes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PQSignatureScheme {
-    /// CRYSTALS-Dilithium (lattice-based)
-    Dilithium2,
-    Dilithium3,
-    Dilithium5,
+    /// ML-DSA (lattice-based, FIPS 204)
+    MlDsa44,
+    MlDsa65,
+    MlDsa87,
     /// SPHINCS+ (hash-based, stateless)
     SphincsShake128f,
     SphincsShake192f,
     SphincsShake256f,
-    /// ML-DSA (FIPS 204, lattice-based)
-    MlDsa65,
-    MlDsa87,
 }
 
 impl PQSignatureScheme {
     /// Gets the NIST security level for this scheme.
     pub fn security_level(&self) -> QuantumSecurityLevel {
         match self {
-            PQSignatureScheme::Dilithium2 => QuantumSecurityLevel::Level2,
-            PQSignatureScheme::Dilithium3 => QuantumSecurityLevel::Level3,
-            PQSignatureScheme::Dilithium5 => QuantumSecurityLevel::Level5,
+            PQSignatureScheme::MlDsa44 => QuantumSecurityLevel::Level2,
+            PQSignatureScheme::MlDsa65 => QuantumSecurityLevel::Level3,
+            PQSignatureScheme::MlDsa87 => QuantumSecurityLevel::Level5,
             PQSignatureScheme::SphincsShake128f => QuantumSecurityLevel::Level1,
             PQSignatureScheme::SphincsShake192f => QuantumSecurityLevel::Level3,
             PQSignatureScheme::SphincsShake256f => QuantumSecurityLevel::Level5,
-            PQSignatureScheme::MlDsa65 => QuantumSecurityLevel::Level3,
-            PQSignatureScheme::MlDsa87 => QuantumSecurityLevel::Level5,
         }
     }
 
     /// Gets the signature size in bytes.
     pub fn signature_size(&self) -> usize {
         match self {
-            PQSignatureScheme::Dilithium2 => 2420,
-            PQSignatureScheme::Dilithium3 => 3293,
-            PQSignatureScheme::Dilithium5 => 4595,
+            PQSignatureScheme::MlDsa44 => 2420,
+            PQSignatureScheme::MlDsa65 => 3309,
+            PQSignatureScheme::MlDsa87 => 4627,
             PQSignatureScheme::SphincsShake128f => 17088,
             PQSignatureScheme::SphincsShake192f => 35664,
             PQSignatureScheme::SphincsShake256f => 49856,
-            PQSignatureScheme::MlDsa65 => 3309,
-            PQSignatureScheme::MlDsa87 => 4627,
         }
     }
 
@@ -129,14 +122,12 @@ impl PQSignatureScheme {
     /// Estimated qubits needed to break this scheme.
     pub fn qubits_to_break(&self) -> u64 {
         match self {
-            PQSignatureScheme::Dilithium2 => 4000,
-            PQSignatureScheme::Dilithium3 => 6000,
-            PQSignatureScheme::Dilithium5 => 8000,
+            PQSignatureScheme::MlDsa44 => 4000,
+            PQSignatureScheme::MlDsa65 => 6000,
+            PQSignatureScheme::MlDsa87 => 8000,
             PQSignatureScheme::SphincsShake128f => 2_u64.pow(64), // Hash-based, very high
             PQSignatureScheme::SphincsShake192f => 2_u64.pow(96),
             PQSignatureScheme::SphincsShake256f => 2_u64.pow(128),
-            PQSignatureScheme::MlDsa65 => 6000,
-            PQSignatureScheme::MlDsa87 => 8000,
         }
     }
 }
@@ -387,7 +378,7 @@ mod tests {
     #[test]
     fn test_pq_scheme_security_levels() {
         assert_eq!(
-            PQSignatureScheme::Dilithium3.security_level(),
+            PQSignatureScheme::MlDsa65.security_level(),
             QuantumSecurityLevel::Level3
         );
         assert_eq!(
@@ -408,6 +399,6 @@ mod tests {
         let detector = QuantumThreatDetector::new(config);
         
         assert_eq!(detector.get_threat_level(), ThreatLevel::Normal);
-        assert!(detector.validate_scheme(PQSignatureScheme::Dilithium3));
+        assert!(detector.validate_scheme(PQSignatureScheme::MlDsa65));
     }
 }

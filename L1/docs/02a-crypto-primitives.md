@@ -19,20 +19,13 @@ Every signed or hashed object is **domain-separated** (`crypto/domains.rs`): a c
 
 ## 3.3 ML-KEM-768 Internals
 
-`crypto/mlkem_core.rs` is a from-scratch implementation of the ML-KEM-768 lattice KEM (FIPS 203), including the number-theoretic transform (NTT) for fast polynomial multiplication in the ring, encapsulation/decapsulation, and the Fujisaki–Okamoto transform for CCA security. It is the primitive behind both the validator P2P handshake and the encrypted mempool.
+`crypto/kyber_kem.rs` implements ML-KEM-768 (FIPS 203) for key encapsulation. It is the primitive behind both the validator P2P handshake and the encrypted mempool.
 
 ## 3.4 Threshold Cryptography
 
-Two threshold constructions allow a committee to act jointly without any single member holding a complete secret:
-
-- **Threshold ML-KEM** (`crypto/threshold_mlkem.rs`, `crypto/shamir_zq.rs`): the ML-KEM secret vector is split coefficient-wise via Shamir secret sharing over Z_q. A `t-of-n` subset computes partial inner-products in the NTT domain, recombined by Lagrange interpolation. This powers the encrypted-mempool threshold decryption.
 - **Threshold QR-VRF** (`crypto/threshold_qrvrf.rs`): a threshold variant of the hash-based VRF, so committee randomness can be produced collectively rather than by a single beacon holder.
 
-## 3.5 Lattice NIZK Proofs
-
-`crypto/lattice_nizk.rs` provides non-interactive zero-knowledge proofs (Fiat-Shamir over polynomial commitments) used by the threshold ML-KEM layer: each participant proves it computed its partial decryption correctly **without revealing its secret share**. This is what makes threshold decryption verifiable rather than trust-based.
-
-## 3.6 Hardware Acceleration
+## 3.5 Hardware Acceleration
 
 Post-quantum verification is CPU-bound, so the crypto layer is heavily optimised:
 
@@ -49,4 +42,4 @@ Together these bring ML-DSA-65 verification to roughly tens of microseconds per 
 
 ## 3.7 Primitive Inventory
 
-For completeness, the cryptographic module ships the following building blocks: `ml_dsa.rs` (ML-DSA-65 signatures), `mlkem_core.rs` / `kyber_kem.rs` (ML-KEM-768), `vrf_hashbased.rs` and `qr_vrf.rs` (hash-based VRF with STARK proof-of-knowledge), `qrng.rs` (SHAKE256 QRNG), `signature_aggregation.rs` / `aggregation.rs` (two-tier signature compaction), `merkle_pq.rs` (PQ Merkle trees), `lattice_nizk.rs` (lattice NIZK), the threshold modules, and `keypair.rs` (key lifecycle). The legacy `dilithium.rs`, `falcon.rs`, and `sphincs.rs` modules are retained for interoperability and historical compatibility but are superseded by ML-DSA-65 and the hash-based VRF on all consensus-critical paths, as described in Section 2.
+For completeness, the cryptographic module ships the following building blocks: `ml_dsa.rs` (ML-DSA-65 signatures), `kyber_kem.rs` (ML-KEM-768), `vrf_hashbased.rs` and `qr_vrf.rs` (hash-based VRF with STARK proof-of-knowledge), `signature_aggregation.rs` / `aggregation.rs` (two-tier signature compaction), `merkle_pq.rs` (PQ Merkle trees), `threshold_qrvrf.rs` (threshold QR-VRF), and `keypair.rs` (key lifecycle). The `ml-dsa-65.rs` module provides the same ML-DSA-65 primitives under legacy names for backward compatibility. The `sphincs.rs` module is retained for interoperability and historical compatibility but is superseded by the hash-based VRF on all consensus-critical paths, as described in Section 2.

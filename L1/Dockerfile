@@ -8,7 +8,13 @@
 # --------------------------------------------------------------------------
 # Stage 1: Build
 # --------------------------------------------------------------------------
-FROM rust:1.95-bookworm AS builder
+FROM rust:1.95.0-bookworm AS builder
+
+ARG GIT_SHA=unknown
+ARG GIT_TAG=unknown
+ARG BUILD_DATE=unknown
+
+ENV SOURCE_DATE_EPOCH=0
 
 # Install system dependencies for RocksDB, libp2p, etc.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -54,7 +60,7 @@ RUN mkdir -p L1/src/bin L1/benches && \
 # --------------------------------------------------------------------------
 # Step 3: Build dependencies only (layer caching — this is the slow step)
 # --------------------------------------------------------------------------
-RUN cargo build --release 2>/dev/null || true
+RUN cargo build --release --locked 2>/dev/null || true
 
 # --------------------------------------------------------------------------
 # Step 4: Copy real sources for all workspace members
@@ -80,12 +86,13 @@ RUN touch L1/src/main.rs L1/src/cli.rs L1/src/solang_cli.rs && \
 RUN echo '.globl __rust_probestack\n__rust_probestack:\n\tret' > /tmp/probestack.S && \
     cc -c /tmp/probestack.S -o /tmp/probestack.o && \
     ar rcs /usr/lib/libprobestack.a /tmp/probestack.o && \
-    RUSTFLAGS="-C link-arg=-lprobestack" cargo build --release --bin quantos --bin quantos-cli
+    RUSTFLAGS="-C link-arg=-lprobestack -C remap-path-prefix=/build=" \
+    cargo build --release --locked --frozen --bin quantos --bin quantos-cli
 
 # --------------------------------------------------------------------------
 # Stage 2: Runtime
 # --------------------------------------------------------------------------
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim@sha256:04534d2b5dc1d2d27d6e2d0c5e1d2c3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0 AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -99,6 +106,9 @@ RUN groupadd -r quantos && useradd -r -g quantos -m -d /home/quantos quantos
 # Copy binaries from builder
 COPY --from=builder /build/target/release/quantos /usr/local/bin/quantos
 COPY --from=builder /build/target/release/quantos-cli /usr/local/bin/quantos-cli
+
+# Embed build metadata for reproducibility verification
+RUN echo "{\"git_sha\":\"${GIT_SHA}\",\"git_tag\":\"${GIT_TAG}\",\"build_date\":\"${BUILD_DATE}\"}" > /etc/quantos-build-info.json
 
 # Create data & config directories
 RUN mkdir -p /data/quantos /config && chown -R quantos:quantos /data /config

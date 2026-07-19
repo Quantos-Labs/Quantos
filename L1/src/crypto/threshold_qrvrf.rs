@@ -8,7 +8,7 @@
 //! ## Key Innovations
 //!
 //! 1. **Threshold VRF**: Requires t-of-n participants to generate randomness
-//! 2. **Post-Quantum Security**: Uses Dilithium-3 for partial signatures
+//! 2. **Post-Quantum Security**: Uses ML-DSA-65 for partial signatures
 //! 3. **Verifiable**: Anyone can verify the randomness was generated correctly
 //! 4. **Non-Interactive**: Partial proofs can be aggregated offline
 //!
@@ -28,14 +28,14 @@
 //! ## Patent Claims
 //!
 //! 1. Method for distributed VRF with post-quantum threshold signatures
-//! 2. Aggregation of partial Dilithium signatures into verifiable randomness
+//! 2. Aggregation of partial ML-DSA-65 signatures into verifiable randomness
 //! 3. Committee rotation using threshold QR-VRF
 
 use std::collections::HashMap;
 use sha3::{Digest, Sha3_256};
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::{DilithiumKeypair, sign_dilithium, verify_dilithium};
+use crate::crypto::{MlDsa65Keypair, sign_ml_dsa_65, verify_ml_dsa_65};
 use crate::types::Hash;
 
 /// Threshold for VRF generation (t-of-n)
@@ -127,10 +127,10 @@ impl ThresholdQRVRF {
             .get(proof.participant_index)
             .ok_or(VRFError::InvalidParticipantIndex)?;
         
-        // Verify Dilithium signature on (input || partial_randomness)
+        // Verify ML-DSA-65 signature on (input || partial_randomness)
         let message = [input, &proof.partial_randomness].concat();
         
-        verify_dilithium(pubkey, &message, &proof.signature)
+        verify_ml_dsa_65(pubkey, &message, &proof.signature)
             .map_err(|_| VRFError::SignatureVerificationFailed)
     }
 
@@ -199,7 +199,7 @@ impl ThresholdQRVRF {
 pub fn generate_partial_proof(
     input: &[u8],
     participant_index: usize,
-    keypair: &DilithiumKeypair,
+    keypair: &MlDsa65Keypair,
 ) -> Result<PartialVRFProof, VRFError> {
     // Generate deterministic randomness from input + secret key
     let mut hasher = Sha3_256::new();
@@ -210,9 +210,9 @@ pub fn generate_partial_proof(
     let mut partial_randomness = [0u8; 32];
     partial_randomness.copy_from_slice(&partial_hash);
     
-    // Sign (input || partial_randomness) with Dilithium
+    // Sign (input || partial_randomness) with ML-DSA-65
     let message = [input, &partial_randomness].concat();
-    let signature = sign_dilithium(&keypair.secret_key, &message)
+    let signature = sign_ml_dsa_65(&keypair.secret_key, &message)
         .map_err(|_| VRFError::SigningFailed)?;
     
     Ok(PartialVRFProof {
@@ -229,7 +229,7 @@ pub struct PartialVRFProof {
     pub participant_index: usize,
     /// Partial randomness contribution
     pub partial_randomness: [u8; 32],
-    /// Dilithium-3 signature on (input || partial_randomness)
+    /// ML-DSA-65 signature on (input || partial_randomness)
     pub signature: Vec<u8>,
 }
 
@@ -343,7 +343,10 @@ impl CommitteeRandomnessGenerator {
     }
 
     fn hash_proof(&self, proof: &AggregatedVRFProof) -> Hash {
-        let serialized = bincode::serialize(proof).unwrap_or_default();
+        let serialized = bincode::serialize(proof).unwrap_or_else(|e| {
+            tracing::error!("Failed to serialize VRF proof: {}", e);
+            e.to_string().into_bytes()
+        });
         crate::types::hash_data(&serialized)
     }
 }

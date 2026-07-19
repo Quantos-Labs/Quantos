@@ -32,7 +32,7 @@ use wasmer::{
 };
 use wasmer_compiler_cranelift::Cranelift;
 
-use crate::crypto::{verify_dilithium, verify_dilithium_batch};
+use crate::crypto::{verify_ml_dsa_65, verify_ml_dsa_65_batch};
 use crate::types::{Address, Hash};
 use crate::vm::{VmError, VmResult};
 use crate::vm::solang_compat::{self, ContractType};
@@ -591,8 +591,8 @@ fn qnt_hash_blake3(
     0
 }
 
-/// Verifies a Dilithium signature (post-quantum).
-fn qnt_verify_dilithium(
+/// Verifies a ML-DSA-65 signature (post-quantum).
+fn qnt_verify_ml_dsa_65(
     env: FunctionEnvMut<HostEnv>,
     pubkey_ptr: u32,
     pubkey_len: u32,
@@ -627,7 +627,7 @@ fn qnt_verify_dilithium(
     };
 
     // Verify using pooled batch verification worker
-    if verify_dilithium_batch(pubkey, message, signature) {
+    if verify_ml_dsa_65_batch(pubkey, message, signature) {
         1
     } else {
         0
@@ -798,7 +798,7 @@ impl QuantosVm {
                         "qnt_revert" => Function::new_typed_with_env(&mut store, &env, qnt_revert),
                         "qnt_hash_sha3" => Function::new_typed_with_env(&mut store, &env, qnt_hash_sha3),
                         "qnt_hash_blake3" => Function::new_typed_with_env(&mut store, &env, qnt_hash_blake3),
-                        "qnt_verify_dilithium" => Function::new_typed_with_env(&mut store, &env, qnt_verify_dilithium),
+                        "qnt_verify_ml_dsa_65" => Function::new_typed_with_env(&mut store, &env, qnt_verify_ml_dsa_65),
                         "qnt_memcpy" => Function::new_typed_with_env(&mut store, &env, qnt_memcpy),
                     }
                 }

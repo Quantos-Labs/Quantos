@@ -41,7 +41,7 @@ use crate::network::PeerId;
 use sha3::Digest;
 
 use crate::types::{Address, Hash};
-use crate::crypto::verify_dilithium;
+use crate::crypto::verify_ml_dsa_65;
 use crate::state::StateManager;
 
 /// Minimum stake required for network participation (in native tokens).
@@ -310,7 +310,7 @@ impl SybilProtection {
         }
         
         // Verify signature
-        match verify_dilithium(public_key, &challenge.challenge, signature) {
+        match verify_ml_dsa_65(public_key, &challenge.challenge, signature) {
             Ok(valid) => {
                 if valid {
                     self.challenges.remove(peer_id);
@@ -361,7 +361,7 @@ impl SybilProtection {
                     }
                     
                     // Verify signature proves ownership
-                    match verify_dilithium(&proof.signature, &proof.address, &proof.amount.to_le_bytes()) {
+                    match verify_ml_dsa_65(&proof.signature, &proof.address, &proof.amount.to_le_bytes()) {
                         Ok(valid) => {
                             if !valid {
                                 tracing::warn!("Invalid stake proof signature for address {:?}", proof.address);

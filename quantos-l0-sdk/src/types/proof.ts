@@ -3,9 +3,8 @@
  */
 
 export enum PqcSignatureAlgo {
-  Falcon512 = 0,
-  Dilithium3 = 1,
-  SphincsPlus = 2,
+  MlDsa65 = 1,
+  Dilithium3 = 2,
 }
 
 export interface ValidatorRecord {

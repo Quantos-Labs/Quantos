@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use crate::types::{Address, Hash, ShardId, SignedTransaction, hash_data};
-use crate::crypto::{verify_dilithium_batch, with_domain, DOMAIN_VERTEX, DOMAIN_COMMITTEE_VOTE};
+use crate::crypto::{verify_ml_dsa_65_batch, with_domain, DOMAIN_VERTEX, DOMAIN_COMMITTEE_VOTE};
 
 /// Maximum transactions per vertex
 const MAX_TRANSACTIONS_PER_VERTEX: usize = 10000;
@@ -94,7 +94,7 @@ impl DAGVertex {
     pub fn set_signature(&mut self, signature: Vec<u8>, public_key: &[u8]) -> Result<(), String> {
         // CRITICAL: Verify signature before accepting
         let signing_data = self.signing_data();
-        if verify_dilithium_batch(public_key.to_vec(), signing_data, signature.clone()) {
+        if verify_ml_dsa_65_batch(public_key.to_vec(), signing_data, signature.clone()) {
             self.signature = signature;
             Ok(())
         } else {
@@ -188,7 +188,7 @@ impl CommitteeVote {
     pub fn set_signature(&mut self, signature: Vec<u8>, public_key: &[u8]) -> Result<(), String> {
         // CRITICAL: Verify signature before accepting
         let signing_data = self.signing_data();
-        if verify_dilithium_batch(public_key.to_vec(), signing_data, signature.clone()) {
+        if verify_ml_dsa_65_batch(public_key.to_vec(), signing_data, signature.clone()) {
             self.signature = signature;
             Ok(())
         } else {

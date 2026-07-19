@@ -17,7 +17,7 @@ const CLEANUP_INTERVAL_SECS: u64 = 3;
 const MAX_PENDING_AGE_SECS: u64 = 30;
 
 use crate::consensus::{ConsensusError, ConsensusResult, CommitteeManager};
-use crate::crypto::{sign_dilithium, verify_dilithium, DilithiumBatchVerifier, DILITHIUM3_PUBLIC_KEY_SIZE};
+use crate::crypto::{sign_ml_dsa_65, verify_ml_dsa_65, MlDsa65BatchVerifier, MLDSA65_PUBLIC_KEY_SIZE};
 use crate::dag::DAGGraph;
 use crate::mempool::ShardedMempool;
 use crate::state::OptimisticExecutor;
@@ -33,7 +33,7 @@ pub struct FastPath {
     confirmed_vertices: Arc<DashMap<Hash, DAGVertex>>,
     vertex_sender: mpsc::Sender<DAGVertex>,
     /// Batch signature verifier for performance
-    batch_verifier: Arc<DilithiumBatchVerifier>,
+    batch_verifier: Arc<MlDsa65BatchVerifier>,
     /// Signature aggregator for bandwidth optimization
     sig_aggregator: Arc<crate::crypto::signature_aggregation::SignatureAggregator>,
     /// Track pending vertex count for memory limits
@@ -64,7 +64,7 @@ impl FastPath {
             pending_vertices: Arc::new(DashMap::new()),
             confirmed_vertices: Arc::new(DashMap::new()),
             vertex_sender,
-            batch_verifier: Arc::new(DilithiumBatchVerifier::new(64)),
+            batch_verifier: Arc::new(MlDsa65BatchVerifier::new(64)),
             sig_aggregator: Arc::new(crate::crypto::signature_aggregation::SignatureAggregator::new(1000)),
             pending_count: Arc::new(AtomicUsize::new(0)),
         };
@@ -142,7 +142,7 @@ impl FastPath {
         vertex.set_state_root(state_root);
 
         // Sign vertex
-        let signature = sign_dilithium(secret_key, &vertex.signing_data())
+        let signature = sign_ml_dsa_65(secret_key, &vertex.signing_data())
             .map_err(|e| ConsensusError::CryptoError(e.to_string()))?;
         vertex.set_signature(signature, public_key)
             .map_err(|e| ConsensusError::CryptoError(e))?;
@@ -285,7 +285,7 @@ impl FastPath {
                     format!("Validator {:?} not found", vote.validator)
                 ))?;
 
-            let signature_valid = verify_dilithium(
+            let signature_valid = verify_ml_dsa_65(
                 &validator_info.public_key,
                 &vote.signing_data(),
                 &vote.signature,
@@ -358,15 +358,15 @@ impl FastPath {
     ) -> ConsensusResult<CommitteeVote> {
         let mut vote = CommitteeVote::new(validator, vertex_hash, approve, stake_weight);
         
-        let signature = sign_dilithium(secret_key, &vote.signing_data())
+        let signature = sign_ml_dsa_65(secret_key, &vote.signing_data())
             .map_err(|e| ConsensusError::CryptoError(e.to_string()))?;
 
-        if secret_key.len() < DILITHIUM3_PUBLIC_KEY_SIZE {
+        if secret_key.len() < MLDSA65_PUBLIC_KEY_SIZE {
             return Err(ConsensusError::CryptoError(
-                "Dilithium secret key is too short to derive public key".to_string()
+                "ML-DSA-65 secret key is too short to derive public key".to_string()
             ));
         }
-        let public_key_offset = secret_key.len() - DILITHIUM3_PUBLIC_KEY_SIZE;
+        let public_key_offset = secret_key.len() - MLDSA65_PUBLIC_KEY_SIZE;
         let public_key = &secret_key[public_key_offset..];
 
         vote.set_signature(signature, public_key)
@@ -404,9 +404,13 @@ pub fn max_pending_vertices(&self) -> usize {
             return Vec::new();
         }
 
+        let validator_set = self.committee_manager.get_validator_set();
         let items: Vec<_> = vertices.iter()
             .map(|v| {
-                let pubkey = v.creator.to_vec();
+                let pubkey = validator_set
+                    .get_validator(&v.creator)
+                    .map(|info| info.public_key.clone())
+                    .unwrap_or_default();
                 let message = v.signing_data();
                 let signature = v.signature.clone();
                 (pubkey, message, signature)
@@ -421,8 +425,16 @@ pub fn max_pending_vertices(&self) -> usize {
         &self,
         votes: &[CommitteeVote],
     ) -> Result<crate::crypto::signature_aggregation::AggregatedSignature, ConsensusError> {
+        let validator_set = self.committee_manager.get_validator_set();
         let signatures: Vec<_> = votes.iter().map(|v| v.signature.clone()).collect();
-        let public_keys: Vec<_> = votes.iter().map(|v| v.validator.to_vec()).collect();
+        let public_keys: Vec<_> = votes.iter()
+            .map(|v| {
+                validator_set
+                    .get_validator(&v.validator)
+                    .map(|info| info.public_key.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
         let message = votes[0].vertex_hash.to_vec();
 
         self.sig_aggregator.aggregate(signatures, public_keys, &message)

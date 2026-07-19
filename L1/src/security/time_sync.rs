@@ -147,7 +147,7 @@ impl TimeSync {
         let now = Instant::now();
         let system_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as i64;
         
         Self {
@@ -202,7 +202,7 @@ impl TimeSync {
         // Calculate drift
         let system_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as i64;
         
         let drift = system_time - consensus_time;
@@ -442,7 +442,7 @@ impl TimeSync {
         let corrected = self.corrected_time();
         corrected
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as i64
     }
 

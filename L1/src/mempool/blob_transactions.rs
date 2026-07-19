@@ -81,7 +81,7 @@ pub struct BlobTransaction {
     pub blobs: Vec<Blob>,
     /// Blob commitments (stored on-chain permanently)
     pub blob_commitments: Vec<BlobCommitment>,
-    /// Transaction signature (Dilithium-3)
+    /// Transaction signature (ML-DSA-65)
     pub signature: Vec<u8>,
     /// Sender public key
     pub public_key: Vec<u8>,

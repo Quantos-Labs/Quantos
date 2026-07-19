@@ -4,7 +4,7 @@
 
 use std::time::Instant;
 use rayon::prelude::*;
-use quantos::crypto::{DilithiumKeypair, DilithiumBatchVerifier, verify_dilithium};
+use quantos::crypto::{MlDsa65Keypair, MlDsa65BatchVerifier, verify_ml_dsa_65};
 
 fn main() {
     println!("\n═══════════════════════════════════════════════════════════════");
@@ -18,7 +18,7 @@ fn main() {
     println!("🔑 Generating 1000 keypairs...");
     let start = Instant::now();
     let keypairs: Vec<_> = (0..1000).into_par_iter()
-        .map(|_| DilithiumKeypair::generate().unwrap())
+        .map(|_| MlDsa65Keypair::generate().unwrap())
         .collect();
     println!("   Done in {:?}\n", start.elapsed());
     
@@ -52,7 +52,7 @@ fn main() {
     let mut valid = 0;
     for i in 0..test_count {
         let (ref pk, ref msg, ref sig) = signatures[i];
-        if verify_dilithium(pk, msg, sig).unwrap_or(false) {
+        if verify_ml_dsa_65(pk, msg, sig).unwrap_or(false) {
             valid += 1;
         }
     }
@@ -71,7 +71,7 @@ fn main() {
     let start = Instant::now();
     let valid: usize = signatures.par_iter()
         .map(|(pk, msg, sig)| {
-            if verify_dilithium(pk, msg, sig).unwrap_or(false) { 1 } else { 0 }
+            if verify_ml_dsa_65(pk, msg, sig).unwrap_or(false) { 1 } else { 0 }
         })
         .sum();
     let par_time = start.elapsed();
@@ -87,7 +87,7 @@ fn main() {
     println!("─────────────────────────────────────────────────────────────");
     println!("🔥 TEST 3: PQC-SVB Batch Verification (50k)");
     
-    let batch_verifier = DilithiumBatchVerifier::new(64);
+    let batch_verifier = MlDsa65BatchVerifier::new(64);
     
     // Prepare items for batch verification
     let items: Vec<_> = signatures.iter()
@@ -127,7 +127,7 @@ fn main() {
     let start = Instant::now();
     let shard_results: Vec<usize> = shards.par_iter()
         .map(|shard_items| {
-            let verifier = DilithiumBatchVerifier::new(64);
+            let verifier = MlDsa65BatchVerifier::new(64);
             let results = verifier.verify_batch(shard_items);
             results.iter().filter(|&&v| v).count()
         })
