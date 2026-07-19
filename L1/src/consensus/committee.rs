@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 
 use crate::consensus::{ConsensusError, ConsensusResult};
-use crate::crypto::{VRFProof, CommitteeRandomnessGenerator, PartialVRFProof, verify_ml_dsa_65};
+use crate::crypto::VRFProof;
 use crate::types::{
     Address, CommitteeVote, Hash, 
     ShardId, Validator, ValidatorSet,
@@ -18,10 +18,6 @@ pub struct CommitteeManager {
     validator_set: Arc<RwLock<ValidatorSet>>,
     num_committees: u16,
     validators_per_committee: usize,
-    /// PRODUCTION: Threshold QR-VRF for committee rotation randomness
-    threshold_vrf: Arc<RwLock<Option<CommitteeRandomnessGenerator>>>,
-    /// Collected partial VRF proofs for current epoch
-    partial_proofs: Arc<DashMap<u64, Vec<PartialVRFProof>>>,
 }
 
 #[derive(Clone)]
@@ -84,65 +80,9 @@ impl CommitteeManager {
             validator_set: Arc::new(RwLock::new(ValidatorSet::new())),
             num_committees,
             validators_per_committee,
-            threshold_vrf: Arc::new(RwLock::new(None)),
-            partial_proofs: Arc::new(DashMap::new()),
         }
     }
     
-    /// PRODUCTION: Initializes Threshold QR-VRF with validator public keys
-    pub fn initialize_threshold_vrf(&self, validator_pubkeys: Vec<Vec<u8>>) -> Result<(), String> {
-        let threshold = (validator_pubkeys.len() * 2 / 3) + 1; // 2/3 + 1
-        
-        let generator = CommitteeRandomnessGenerator::new(threshold, validator_pubkeys)
-            .map_err(|e| format!("Failed to initialize threshold VRF: {}", e))?;
-        
-        *self.threshold_vrf.write() = Some(generator);
-        
-        tracing::info!(
-            "✅ Threshold QR-VRF initialized: {}/{} threshold",
-            threshold,
-            threshold * 3 / 2
-        );
-        
-        Ok(())
-    }
-    
-    /// PRODUCTION: Submits partial VRF proof from validator
-    pub fn submit_partial_proof(&self, epoch: u64, proof: PartialVRFProof) -> Result<(), String> {
-        let mut proofs = self.partial_proofs.entry(epoch).or_insert_with(Vec::new);
-        
-        // Check for duplicate
-        if proofs.iter().any(|p| p.participant_index == proof.participant_index) {
-            return Err("Duplicate proof from participant".to_string());
-        }
-        
-        proofs.push(proof);
-        
-        tracing::debug!(
-            "Partial VRF proof collected for epoch {}: {}/threshold",
-            epoch,
-            proofs.len()
-        );
-        
-        Ok(())
-    }
-    
-    /// PRODUCTION: Generates committee rotation randomness using threshold VRF
-    fn generate_rotation_randomness(&self, epoch: u64) -> Result<[u8; 32], String> {
-        let mut vrf = self.threshold_vrf.write();
-        let generator = vrf.as_mut()
-            .ok_or_else(|| "Threshold VRF not initialized".to_string())?;
-        
-        // Get collected partial proofs
-        let proofs = self.partial_proofs.get(&epoch)
-            .ok_or_else(|| format!("No proofs collected for epoch {}", epoch))?;
-        
-        let randomness = generator.generate_epoch_randomness(epoch, proofs.clone())
-            .map_err(|e| format!("Failed to generate randomness: {}", e))?;
-        
-        Ok(randomness)
-    }
-
     /// Rotates committees for a new epoch.
     ///
     /// Rotation is protocol-deterministic. There is intentionally no privileged

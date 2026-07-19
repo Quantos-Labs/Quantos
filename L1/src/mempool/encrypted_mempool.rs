@@ -1235,7 +1235,8 @@ impl EncryptedMempool {
     fn bytes_to_field(&self, bytes: &[u8; 32]) -> [u64; 4] {
         let mut result = [0u64; 4];
         for i in 0..4 {
-            result[i] = u64::from_le_bytes(bytes[i*8..(i+1)*8].try_into().unwrap());
+            let chunk: [u8; 8] = bytes[i*8..(i+1)*8].try_into().unwrap_or([0u8; 8]);
+            result[i] = u64::from_le_bytes(chunk);
         }
         // Reduce if >= p
         if self.field_gte(&result, &Self::PRIME_P256) {
@@ -1355,7 +1356,8 @@ impl EncryptedMempool {
             
             // Key (8 words)
             for i in 0..8 {
-                state[4 + i] = u32::from_le_bytes(padded_key[i*4..(i+1)*4].try_into().unwrap());
+                let chunk: [u8; 4] = padded_key[i*4..(i+1)*4].try_into().unwrap_or([0u8; 4]);
+                state[4 + i] = u32::from_le_bytes(chunk);
             }
             
             // Counter
@@ -1366,7 +1368,8 @@ impl EncryptedMempool {
             // This prevents nonce reuse when first 12 bytes match but remaining differ
             let nonce_hash = sha3_256(&[&padded_key[..], &nonce[..]].concat());
             for i in 0..3 {
-                state[13 + i] = u32::from_le_bytes(nonce_hash[i*4..(i+1)*4].try_into().unwrap());
+                let chunk: [u8; 4] = nonce_hash[i*4..(i+1)*4].try_into().unwrap_or([0u8; 4]);
+                state[13 + i] = u32::from_le_bytes(chunk);
             }
             
             // Working copy
@@ -1432,13 +1435,13 @@ impl EncryptedMempool {
         mac_key[12] &= 0xfc;
         
         // r as 128-bit little-endian
-        let r0 = u64::from_le_bytes(mac_key[0..8].try_into().unwrap()) as u128;
-        let r1 = u64::from_le_bytes(mac_key[8..16].try_into().unwrap()) as u128;
+        let r0 = u64::from_le_bytes(mac_key[0..8].try_into().unwrap_or([0u8; 8])) as u128;
+        let r1 = u64::from_le_bytes(mac_key[8..16].try_into().unwrap_or([0u8; 8])) as u128;
         let r: u128 = r0 | (r1 << 64);
         
         // s as 128-bit little-endian
-        let s0 = u64::from_le_bytes(mac_key[16..24].try_into().unwrap()) as u128;
-        let s1 = u64::from_le_bytes(mac_key[24..32].try_into().unwrap()) as u128;
+        let s0 = u64::from_le_bytes(mac_key[16..24].try_into().unwrap_or([0u8; 8])) as u128;
+        let s1 = u64::from_le_bytes(mac_key[24..32].try_into().unwrap_or([0u8; 8])) as u128;
         let s: u128 = s0 | (s1 << 64);
         
         // p = 2^130 - 5
@@ -1459,8 +1462,8 @@ impl EncryptedMempool {
             // Add high bit (2^(8*block_len)) to mark block boundary
             block_bytes[block_len] = 1;
             
-            let n_lo = u64::from_le_bytes(block_bytes[0..8].try_into().unwrap()) as u128;
-            let n_hi = u64::from_le_bytes(block_bytes[8..16].try_into().unwrap()) as u128;
+            let n_lo = u64::from_le_bytes(block_bytes[0..8].try_into().unwrap_or([0u8; 8])) as u128;
+            let n_hi = u64::from_le_bytes(block_bytes[8..16].try_into().unwrap_or([0u8; 8])) as u128;
             let n_top = block_bytes[16] as u128;
             
             let n: u128 = n_lo | (n_hi << 64);

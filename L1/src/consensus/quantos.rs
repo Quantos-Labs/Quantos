@@ -255,23 +255,6 @@ impl QuantosConsensus {
             }
         }
 
-        // Collect all VRF public keys from genesis validators that have one.
-        let vrf_pubkeys: Vec<Vec<u8>> = genesis.validators.iter()
-            .filter_map(|gv| {
-                if gv.address.eq_ignore_ascii_case(&address_hex) {
-                    Some(vrf_key.public_key().to_vec())
-                } else {
-                    None // unknown VRF keys for other validators until discovered on the network
-                }
-            })
-            .collect();
-
-        if !vrf_pubkeys.is_empty() {
-            if let Err(e) = self.committee_manager.initialize_threshold_vrf(vrf_pubkeys) {
-                tracing::warn!("Threshold VRF init: {}", e);
-            }
-        }
-
         self.validator_keys = Some(ValidatorKeys {
             signing_key,
             vrf_key,

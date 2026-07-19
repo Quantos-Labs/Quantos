@@ -411,7 +411,7 @@ impl FairOrderingProtocol {
             seed_data.extend_from_slice(&(i as u64).to_le_bytes());
             let seed = sha3_256(&seed_data);
             
-            let j = i + (u64::from_le_bytes(seed[0..8].try_into().unwrap()) as usize % (n - i));
+            let j = i + (u64::from_le_bytes(seed[0..8].try_into().unwrap_or([0u8; 8])) as usize % (n - i));
             data.swap(i, j);
         }
     }

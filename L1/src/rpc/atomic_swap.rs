@@ -150,7 +150,7 @@ impl AtomicSwapHandler {
             .await
             .map_err(|e| RpcError::internal_error_with_data(
                 "Atomic operation failed",
-                serde_json::to_value(e.to_string()).unwrap()
+                serde_json::to_value(e.to_string()).unwrap_or_else(|_| serde_json::Value::Null)
             ))?;
 
         Ok(AtomicOperationResponse {

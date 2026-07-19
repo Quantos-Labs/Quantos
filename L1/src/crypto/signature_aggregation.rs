@@ -290,6 +290,14 @@ impl SignatureAggregator {
     /// Verifies a compact block signature against individual signatures
     /// and committee public keys using batched parallel verification.
     ///
+    /// **Data availability note**: Only the compact form (`CompactBlockSignature`,
+    /// ~130 bytes) is stored on-chain and gossiped in block headers. The full
+    /// individual ML-DSA-65 signatures (`signatures` parameter, ~3.3 KB each)
+    /// must be retrieved from a data availability layer — either from the block
+    /// producer's broadcast, an erasure-coded blob, or by requesting them from
+    /// peers who have the full block. A verifier cannot call this method without
+    /// first obtaining the full signatures out-of-band.
+    ///
     /// Performs full cryptographic verification:
     /// 1. Message hash matches
     /// 2. Signer bitmap popcount matches signer_count
