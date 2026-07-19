@@ -1,91 +1,58 @@
-//! Simple VRF wrapper (SPHINCS+ + PRF).
+//! Hash-based VRF wrapper — delegates to `vrf_hashbased.rs`.
 //!
-//! Same deterministic construction as `QrVrfKeypair` in `qr_vrf.rs`,
-//! kept as a thin alias for code sites that use `VRFKeypair` directly.
-//! See `qr_vrf.rs` for the full design rationale.
+//! This is the production VRF used by validators for committee selection.
+//! The construction is purely hash-based (SHA3-256 PRF + STARK proof),
+//! with no SPHINCS+ dependency. See `vrf_hashbased.rs` for the full
+//! design rationale, circuit status, and `STARK_PROVES_UNIQUENESS`.
 
-use crate::crypto::{
-    CryptoResult, SphincsKeypair, verify_sphincs,
-    DOMAIN_VRF_PRF, DOMAIN_VRF_OUTPUT, DOMAIN_VRF_PROVE,
-};
-use crate::types::{Hash, hash_data};
-use sha3::Shake256;
-use sha3::digest::{ExtendableOutput, Update, XofReader};
+use crate::crypto::{CryptoResult, vrf_hashbased::{HashVrfKeypair, VrfStarkProof}};
+use crate::types::Hash;
 
-#[derive(Clone)]
+/// Production VRF keypair. Wraps [`HashVrfKeypair`] from `vrf_hashbased.rs`.
+#[derive(Clone, Debug)]
 pub struct VRFKeypair {
-    sphincs: SphincsKeypair,
-    prf_key: [u8; 32],
+    inner: HashVrfKeypair,
 }
 
 impl VRFKeypair {
     pub fn generate() -> CryptoResult<Self> {
-        let sphincs = SphincsKeypair::generate()?;
-        let prf_key = Self::derive_prf_key(&sphincs.secret_key);
-        Ok(Self { sphincs, prf_key })
+        Ok(Self { inner: HashVrfKeypair::generate()? })
     }
 
-    pub fn from_sphincs(sphincs: SphincsKeypair) -> Self {
-        let prf_key = Self::derive_prf_key(&sphincs.secret_key);
-        Self { sphincs, prf_key }
-    }
-
-    pub fn from_keys(public_key: Vec<u8>, secret_key: Vec<u8>) -> CryptoResult<Self> {
-        let sphincs = SphincsKeypair::from_keys(public_key, secret_key)?;
-        Ok(Self::from_sphincs(sphincs))
+    /// Reconstruct from stored hex-encoded keys.
+    /// `public_key` is ignored — it is recomputed as SHA3-256(secret_key).
+    pub fn from_keys(_public_key: Vec<u8>, secret_key: Vec<u8>) -> CryptoResult<Self> {
+        let mut sk = [0u8; 32];
+        if secret_key.len() >= 32 {
+            sk.copy_from_slice(&secret_key[..32]);
+        }
+        let pk = HashVrfKeypair::hash_sk(&sk);
+        Ok(Self { inner: HashVrfKeypair { secret_key: sk, public_key: pk } })
     }
 
     pub fn public_key(&self) -> &[u8] {
-        &self.sphincs.public_key
+        &self.inner.public_key
     }
 
     pub fn secret_key(&self) -> &[u8] {
-        &self.sphincs.secret_key
+        &self.inner.secret_key
     }
 
-    fn derive_prf_key(sk: &[u8]) -> [u8; 32] {
-        let mut h = Shake256::default();
-        h.update(DOMAIN_VRF_PRF);
-        h.update(sk);
-        let mut k = [0u8; 32];
-        h.finalize_xof().read(&mut k);
-        k
-    }
-
-    fn compute_output(prf_key: &[u8; 32], seed: &[u8]) -> [u8; 32] {
-        let mut h = Shake256::default();
-        h.update(DOMAIN_VRF_OUTPUT);
-        h.update(prf_key);
-        h.update(seed);
-        let mut o = [0u8; 32];
-        h.finalize_xof().read(&mut o);
-        o
-    }
-
-    fn proof_msg(seed: &[u8], output: &[u8; 32]) -> Vec<u8> {
-        let mut msg = Vec::with_capacity(DOMAIN_VRF_PROVE.len() + seed.len() + 32);
-        msg.extend_from_slice(DOMAIN_VRF_PROVE);
-        msg.extend_from_slice(seed);
-        msg.extend_from_slice(output);
-        msg
-    }
-
-    /// Generates a deterministic VRF proof for `seed`.
+    /// Generates a deterministic VRF proof (STARK) for `seed`.
     pub fn prove(&self, seed: &[u8]) -> CryptoResult<VRFProof> {
-        let output = Self::compute_output(&self.prf_key, seed);
-        let msg    = Self::proof_msg(seed, &output);
-        let proof  = self.sphincs.sign(&msg)?;
-        Ok(VRFProof { output, proof })
+        let stark = self.inner.prove(seed)?;
+        Ok(VRFProof { output: stark.beta, proof: stark.stark_bytes })
     }
 
     /// Verifies a VRF proof.
     pub fn verify(&self, seed: &[u8], proof: &VRFProof) -> CryptoResult<bool> {
-        let msg = Self::proof_msg(seed, &proof.output);
-        self.sphincs.verify(&msg, &proof.proof)
+        let stark = VrfStarkProof { beta: proof.output, stark_bytes: proof.proof.clone() };
+        self.inner.verify(seed, &stark)
     }
 }
 
-#[derive(Clone, Debug)]
+/// VRF proof — wraps the STARK proof bytes and the deterministic output.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct VRFProof {
     pub output: Hash,
     pub proof: Vec<u8>,
@@ -104,18 +71,6 @@ impl VRFProof {
     pub fn is_selected(&self, threshold: u64) -> bool {
         self.to_u64() < threshold
     }
-}
-
-pub fn verify_vrf_proof(
-    public_key: &[u8],
-    seed: &[u8],
-    proof: &VRFProof,
-) -> CryptoResult<bool> {
-    let mut msg = Vec::with_capacity(DOMAIN_VRF_PROVE.len() + seed.len() + 32);
-    msg.extend_from_slice(DOMAIN_VRF_PROVE);
-    msg.extend_from_slice(seed);
-    msg.extend_from_slice(&proof.output);
-    verify_sphincs(public_key, &msg, &proof.proof)
 }
 
 #[cfg(test)]

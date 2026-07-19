@@ -4,7 +4,7 @@
 //! Each validator owns a unique set of three post-quantum keypairs:
 //!
 //! - **ML-DSA-65** (`signing`) — vertex signatures, transaction auth, P2P identity.
-//! - **SPHINCS+ / QR-VRF** (`vrf`) — committee selection and sortition.
+//! - **Hash-based VRF** (`vrf`) — committee selection and sortition (SHA3-256 PRF + STARK).
 //! - **ML-DSA-65** (`finality`) — checkpoint finality signatures (FIPS 204).
 //!
 //! Keys are stored in JSON with `0o600` permissions. The file is never sent over
@@ -62,7 +62,7 @@ impl ValidatorKeySet {
                 secret_key: hex::encode(&signing.secret_key),
             },
             vrf: KeypairJson {
-                algorithm: "qr_vrf".to_string(),
+                algorithm: "hash_vrf".to_string(),
                 public_key: hex::encode(vrf.public_key()),
                 secret_key: hex::encode(vrf.secret_key()),
             },
