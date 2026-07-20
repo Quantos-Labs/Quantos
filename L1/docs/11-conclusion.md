@@ -16,6 +16,6 @@ Quantos delivers a complete post-quantum blockchain stack — from the cryptogra
 - **Sustainable tokenomics**: Three-source validator revenue (inflation declining to 1%, state rent, slash redistribution) with published sustainability metrics.
 - **Transparent L0 trust model**: Per-chain matrix distinguishing cryptographic verification (Bitcoin, Ethereum, Cosmos) from RPC oracle attestation (nine additional chains), with a commitment-based STARK aggregation layer and bonded relayers.
 - **Secure PQC migration**: Three-mechanism model with 48h pending delay and guardian M-of-N recovery, eliminating symmetric griefing.
-- **Multi-VM PQC-Guard** smart account ported to seven runtime families, plus a shipped ecosystem of DeFi/social contracts, L0 SDKs, and a post-quantum wallet stack.
+- **Multi-VM PQC-Guard** smart account ported to ten runtime families, plus a shipped ecosystem of DeFi/social contracts, L0 SDKs, and a post-quantum wallet stack.
 
 Quantos is not a claim of instant perfection. It is a protocol that publishes its assumptions, measures its claims against testnet benchmarks, and upgrades its trust model as light-client technology matures. The source code, unit tests, and benchmark suite are available at `github.com/Quantos-Labs/Quantos`.

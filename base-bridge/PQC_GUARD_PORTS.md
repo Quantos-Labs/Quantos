@@ -28,6 +28,9 @@ port anchors on that chain's existing `QuantosL0Verifier` via `is_proof_verified
 | Stellar | `base-bridge/stellar/pqc-guard/src/lib.rs` | Rust / Soroban | cross-contract `is_proof_verified` |
 | NEAR | `base-bridge/near/pqc-guard/src/lib.rs` | Rust / near-sdk | async Promise + callback |
 | Solana | `base-bridge/solana/programs/quantos_pqc_guard/src/lib.rs` | Rust / Anchor | read L0 `ProofState` PDA |
+| Bitcoin / Stacks | `base-bridge/bitcoin-stacks/PQCGuard.clar` | Clarity | `is-proof-verified` on `.quantos-l0-verifier` |
+| Canton Network | `base-bridge/canton/PQCGuard.daml` | DAML | contract-call to L0 registry template |
+| Internet Computer | `base-bridge/icp/src/lib.rs` | Rust / ic-cdk | `call_raw` to L0 verifier canister |
 
 ## Per-chain divergences (only where the spec allows)
 
@@ -39,6 +42,9 @@ port anchors on that chain's existing `QuantosL0Verifier` via `is_proof_verified
 | Stellar | token `transfer` to `to` | i128 → u256_be | `keccak(utf8(strkey))` | `0x5354000000000001` |
 | NEAR | `Promise::transfer` NEAR | u128 → u256_be | `keccak(utf8(account_id))` | `0x4e45000000000001` |
 | Solana | debit vault PDA lamports | u64 → u256_be | native 32-byte pubkey | `0x534f000000000001` |
+| Bitcoin / Stacks | `stx-transfer` to `to` | uint (microSTX) | `keccak(utf8(principal))` | `0x53544B5400000001` |
+| Canton | DAML asset transfer | u128 → u256_be | `keccak(utf8(partyId))` | `0x434E000000000001` |
+| Internet Computer | ledger canister transfer | u128 (e8s) → u256_be | `keccak(utf8(principal))` | `0x4943500000000001` |
 
 **VM capability note (spec §7):** only EVM/Tron offer arbitrary calls. Move
 (Sui/Aptos), Soroban, NEAR and Solana v1 perform a guarded **asset release** to a
@@ -70,6 +76,17 @@ cd base-bridge/near/pqc-guard && cargo build --target wasm32-unknown-unknown --r
 
 # Solana (Anchor)
 cd base-bridge/solana && anchor build
+
+# Bitcoin / Stacks (Clarity)
+#   deploy base-bridge/bitcoin-stacks/PQCGuard.clar via Clarinet or Stacks CLI
+#   test with: clarinet test
+
+# Canton Network (DAML)
+cd base-bridge/canton && daml build && daml test
+
+# Internet Computer (Rust canister)
+cd base-bridge/icp && cargo build --target wasm32-unknown-unknown --release
+#   deploy with: dfx deploy
 ```
 
 ## Conformance checklist (per spec §9)

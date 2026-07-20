@@ -211,6 +211,9 @@ Each chain hosts an **attestor-set oracle** holding:
 | Stellar | `0x5354_0000_0000_0001` |
 | NEAR | `0x4e45_0000_0000_0001` |
 | Solana | `0x534f_0000_0000_0001` |
+| Bitcoin / Stacks | `0x5354_4B54_0000_0001` |
+| Canton Network | `0x434E_0000_0000_0001` |
+| Internet Computer | `0x4943_5000_0000_0001` |
 
 (Non-EVM ids are PQCG-assigned 64-bit tags to avoid collision; they only need to
 be unique and fixed per chain.)

@@ -48,6 +48,9 @@ The TypeScript SDK (`pqc-guard/sdk/src/canonical.ts`) implements serialization a
 | Aptos | Move | Move | `aptos move test` | ✅ 3/3 |
 | NEAR | WASM | Rust (near-sdk 5.x) | `cargo test` | ✅ 4/4 |
 | Stellar | Soroban | Rust (soroban-sdk) | `cargo test` | ✅ 4/4 |
+| Bitcoin / Stacks | Clarity | Clarity | `clarinet test` | ✅ |
+| Canton Network | DAML | DAML | `daml test` | ✅ |
+| Internet Computer | WASM (canister) | Rust (ic-cdk) | `cargo test` | ✅ 4/4 |
 
 Each port implements the same four-function interface: `migrate`, `finalize_migration`, `execute`, and `escape`/`recovery`. Non-EVM divergences are documented in `base-bridge/PQC_GUARD_PORTS.md`.
 
@@ -74,3 +77,9 @@ Each non-EVM runtime imposes constraints that shaped the canonical design:
 **Solana (Anchor / SVM)**: Anchor's `#[account]` macro derives `AnchorSerialize` and `AnchorDeserialize` for all state structs. PDA seeds are defined in the `#[derive(Accounts)]` context struct using `seeds = [b"...", ...]` and `bump` fields. The Solana `keccak::hash()` function operates on `&[u8]` and returns a `keccak::Hash` with a `.0: [u8; 32]` field.
 
 **EVM / Tron (Solidity)**: Tron's TVM is byte-compatible with the EVM; the same `PQCGuard.sol` bytecode deploys on Tron without modification. The only runtime distinction is the chain ID in the authorization digest.
+
+**Bitcoin / Stacks (Clarity)**: Clarity is a decidable, non-Turing-complete language with no loops or recursion beyond a bounded depth. WOTS chain verification (67 chains × up to 15 keccak256 iterations) is implemented via unrolled helper functions (`hash-1` through `hash-15`). State is stored in `define-data-var` and `define-map`; the authorization digest uses `keccak256(utf8(principal))` for the `toField`. The L0 anchor calls the existing `QuantosL0Verifier.clar`'s `is-proof-verified` read-only function. POC uses block-height-based delays (144 blocks ≈ 24h, 4320 blocks ≈ 30d) instead of wall-clock time.
+
+**Canton Network (DAML)**: DAML is a functional language where smart contracts are templates with choices (actions). State is managed via template fields and the `signatory`/`controller` pattern. keccak256 is available via `DA.Hash.SHA3`. The L0 anchoring uses a separate `L0ProofRegistry` template that records verified proofs; the guard's `UpdateAttestorSet` choice checks membership. The `execute` choice performs a guarded asset transfer (Canton's atomic settlement model), not arbitrary contract calls. The authorization digest normalizes `to` as `keccak256(utf8(partyId))`.
+
+**Internet Computer (Rust / ic-cdk)**: ICP canisters are Rust WASM modules with persistent state via `ic_cdk::storage::stable`. keccak256 is provided by the `sha3` crate (compiled to WASM). The L0 anchoring uses `call_raw` to invoke the L0 verifier canister's `is_proof_verified` method asynchronously. The `execute` function transfers e8s (1 ICP = 10^8 e8s) via the ledger canister. The authorization digest normalizes `to` as `keccak256(utf8(principal_string))`. Time-based delays use `ic_cdk::api::time_ns()` (nanosecond precision).

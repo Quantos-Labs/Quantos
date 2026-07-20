@@ -1,0 +1,19 @@
+[package]
+name = "quantos_pqc_guard"
+version = "0.1.0"
+edition = "2021"
+description = "PQC-Guard quantum-resistant guarded account for Internet Computer (ICP)"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ic-cdk = "0.13"
+ic-cdk-timers = "0.7"
+candid = "0.10"
+serde = { version = "1", features = ["derive"] }
+sha3 = "0.10"
+
+[dev-dependencies]
+ic-cdk = { version = "0.13", features = ["testing"] }
