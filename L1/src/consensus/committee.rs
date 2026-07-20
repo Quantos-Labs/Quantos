@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 
 use crate::consensus::{ConsensusError, ConsensusResult};
-use crate::crypto::VRFProof;
+use crate::crypto::{verify_ml_dsa_65, VRFProof};
 use crate::types::{
     Address, CommitteeVote, Hash, 
     ShardId, Validator, ValidatorSet,

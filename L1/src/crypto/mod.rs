@@ -36,6 +36,7 @@ mod kyber_kem;
 mod sphincs;
 mod ml_dsa;
 mod vrf;
+mod rescue_constants;
 pub mod vrf_hashbased;
 pub mod domains;
 mod hash;
