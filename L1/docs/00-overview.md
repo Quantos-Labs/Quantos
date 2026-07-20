@@ -7,11 +7,11 @@ slug: /
 
 **Post-Quantum Layer 1 Blockchain with Zero-Gas Execution and Cryptographic Cross-Chain Finality**
 
-*Version 2.0 — June 2026*
+*Version 2.2 — July 2026*
 
 ## Abstract
 
-Quantos is a next-generation Layer 1 blockchain designed from the ground up for the post-quantum era. Unlike existing chains that retrofit quantum resistance as an afterthought, Quantos embeds NIST-finalized post-quantum cryptography (PQC) at every layer: consensus, execution, storage, and interoperability. The protocol uses two NIST-finalized algorithms — ML-DSA-65 (FIPS 204) and ML-KEM-768 (FIPS 203) — applied consistently at NIST security level 3 for all operations requiring cryptographic authentication or confidentiality. A hash-based Verifiable Random Function (VRF) with STARK proof-of-knowledge secures committee selection, replacing earlier signature-based approaches that lack the required uniqueness property.
+Quantos is a next-generation Layer 1 blockchain designed from the ground up for the post-quantum era. Unlike existing chains that retrofit quantum resistance as an afterthought, Quantos embeds NIST-finalized post-quantum cryptography (PQC) at every layer: consensus, execution, storage, and interoperability. The protocol uses two NIST-finalized algorithms — ML-DSA-65 (FIPS 204) and ML-KEM-768 (FIPS 203) — applied consistently at NIST security level 3 for all operations requiring cryptographic authentication or confidentiality. A Rescue-Prime hash-based Verifiable Random Function (VRF) with STARK proof-of-knowledge secures committee selection, replacing earlier signature-based approaches that lack the required uniqueness property.
 
 Quantos introduces a 3-layer QuantumDAG consensus mechanism derived from peer-reviewed literature (Narwhal/Bullshark DAG-based mempool, HotStuff rotating-leader BFT), operating under explicit partial synchrony assumptions with formally stated safety invariants. Horizontal scaling is achieved through dynamic sharding with safe state migration, bounded vulnerability windows, and atomic cross-shard commitment protocols. The zero-gas execution model (STACC) replaces per-transaction fees with stake-proportional bandwidth quotas, sustained by a three-source validator revenue model that progressively shifts from inflation to state rent. A Layer 0 Finality Hub provides cross-chain attestation for 12 external networks, backed by a transparent trust model that distinguishes cryptographic light-client verification from RPC-based oracle attestation on a per-chain basis.
 
@@ -21,9 +21,9 @@ Quantos introduces a 3-layer QuantumDAG consensus mechanism derived from peer-re
 - Cross-chain finality is **directional**: Quantos → external chains in seconds (native finality plus proof generation); external → Quantos is bounded by the source chain's own finality (e.g., Bitcoin ~60 min, Ethereum ~13 min). No chain can compress another chain's consensus.
 - The L0 hub uses a **commitment-based STARK aggregation**: signatures are verified natively off-chain; a 32-byte STARK commitment is stored on-chain, verified off-chain by any party. This is not a full STARK verification inside an EVM contract.
 
-### Version 2.0 Additions
+### Version History
 
-Version 1.4 addressed the findings of an internal cryptographic audit. Version 2.0 is a major expansion that documents the **full protocol stack present in the codebase**, growing the whitepaper from 11 to 33 sections. Newly documented subsystems include the cryptographic primitives layer (Merkle PQ, signature aggregation, hardware acceleration), the DAG structure and ordering engine, VRF committee selection and rotation, advanced consensus (pipelined BFT, optimistic responsiveness, view-change), the state and account model, the **QuantosVM execution layer** (WASM runtime, bytecode-invisible storage, Solang/ERC/EVM compatibility, parallel execution via dependency graphs + MVCC + speculative execution), the **native token standards** (QN4/QN8/QN12), the storage layer, the mempool / MEV / transaction lifecycle, the **dynamic sharding** subsystem, tokenomics and QTS economics, staking and slashing, data availability and state compression, application-specific sidechains, governance, node operation, a comparison with existing chains, use cases, roadmap, glossary, and references. All earlier honesty qualifications (directional finality, per-chain L0 trust, theoretical aggregate throughput, advisory-only ML) are retained.
+Version 1.4 addressed the findings of an internal cryptographic audit. Version 2.0 expanded the whitepaper from 11 to 33 sections, documenting the full protocol stack. Version 2.2 synchronizes the whitepaper with the current codebase: the VRF is documented as Rescue-Prime + STARK (not SHA3/SHAKE), the removed experimental primitives (threshold ML-KEM, lattice NIZK, QRNG) are no longer listed as active subsystems, and the tiered JIT compiler has been removed from the VM description. All earlier honesty qualifications (directional finality, per-chain L0 trust, theoretical aggregate throughput, advisory-only ML) are retained.
 
 ---
 

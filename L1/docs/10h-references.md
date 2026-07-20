@@ -45,7 +45,7 @@ The design of Quantos draws on the following standards and peer-reviewed literat
 
 ## 32.6 Source Code
 
-23. **Quantos source, tests, and benchmarks** — `github.com/Wayleyy/quantos-audit`. The implementation is the normative reference for this whitepaper; where prose and code differ, the code governs.
+23. **Quantos source, tests, and benchmarks** — `github.com/Quantos-Labs/Quantos`. The implementation is the normative reference for this whitepaper; where prose and code differ, the code governs.
 
 ---
 

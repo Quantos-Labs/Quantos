@@ -7,7 +7,7 @@ sidebar_position: 34
 Quantos delivers a complete post-quantum blockchain stack — from the cryptographic primitives up through the execution environment, scaling layer, cross-chain hub, and application ecosystem — built on honest claims and verified code:
 
 - **Two NIST-finalized algorithms** (ML-DSA-65 FIPS 204, ML-KEM-768 FIPS 203) at security level 3, replacing earlier mixed-standard designs.
-- **Hash-based VRF with STARK proofs** for committee selection, eliminating the grinding vulnerability of signature-based VRFs.
+- **Rescue-Prime hash-based VRF with STARK proofs** for committee selection, eliminating the grinding vulnerability of signature-based VRFs.
 - **Formalized QuantumDAG consensus** under partial synchrony, with explicit BFT thresholds, Bullshark commit rules, and runtime-checked safety invariants.
 - **Dynamic sharding** with safe state migration, atomic STARK-verified cross-shard commitment, and self-healing rebalancing.
 - **A full WASM execution layer (QuantosVM)**: bytecode-invisible storage, Solang/ERC/EVM compatibility for unmodified Solidity and Ethereum tooling, and parallel contract execution via dependency graphs, MVCC, and speculative execution.
@@ -18,4 +18,4 @@ Quantos delivers a complete post-quantum blockchain stack — from the cryptogra
 - **Secure PQC migration**: Three-mechanism model with 48h pending delay and guardian M-of-N recovery, eliminating symmetric griefing.
 - **Multi-VM PQC-Guard** smart account ported to seven runtime families, plus a shipped ecosystem of DeFi/social contracts, L0 SDKs, and a post-quantum wallet stack.
 
-Quantos is not a claim of instant perfection. It is a protocol that publishes its assumptions, measures its claims against testnet benchmarks, and upgrades its trust model as light-client technology matures. The source code, unit tests, and benchmark suite are available at `github.com/Wayleyy/quantos-audit`.
+Quantos is not a claim of instant perfection. It is a protocol that publishes its assumptions, measures its claims against testnet benchmarks, and upgrades its trust model as light-client technology matures. The source code, unit tests, and benchmark suite are available at `github.com/Quantos-Labs/Quantos`.

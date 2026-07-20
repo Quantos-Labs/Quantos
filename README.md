@@ -10,7 +10,7 @@ Quantos is a next-generation Layer 1 blockchain designed for the post-quantum er
 - **3-Layer Hybrid Consensus** — DAG fast path (~50ms pre-confirmation), quantum committees with VRF rotation (1000 committees x 21 validators), and ML-DSA-65 finality anchors (~1s finality)
 - **Dynamic Sharding** — 1000 shards with cross-shard atomic transactions, self-healing, and STARK-accelerated validity proofs
 - **STACC Scheduler** — Shared Transaction Access & Concurrency Control with fair queuing, anti-spam quotas, and state rent
-- **Multi-VM Support** — EVM compatibility via revm, WASM runtime via wasmer with JIT compiler and speculative execution, Solidity support via solang
+- **Multi-VM Support** — EVM compatibility via revm, WASM runtime via wasmer with speculative execution, Solidity support via solang
 - **zk-STARK Proofs** — Winterfell-based proof system for sharding, light client verification, and Layer-0 finality
 - **Privacy Module** — Confidential state, shielded pools, stealth addresses, and confidential Layer-0 transactions
 - **Encrypted Mempool** — Threshold ML-KEM encryption, fair ordering, proposer-builder separation (PBS), and accountable leader front-running protection
@@ -81,7 +81,7 @@ Quantos/
 │   │   ├── consensus/             # 3-layer hybrid consensus, committees, slashing, view change
 │   │   ├── crypto/                # ML-DSA, ML-KEM, ML-DSA-65, SPHINCS+, VRF, NIZK, threshold
 │   │   ├── network/               # PQ P2P, turbo gossip, erasure coding, NAT traversal
-│   │   ├── vm/                    # EVM (revm), WASM (wasmer), JIT, MVCC, speculative exec
+│   │   ├── vm/                    # EVM (revm), WASM (wasmer), MVCC, speculative exec
 │   │   ├── state/                 # State manager, STM, compression, archival pruning
 │   │   ├── storage/               # RocksDB persistence
 │   │   ├── mempool/               # Encrypted mempool, PBS, fair ordering, accountable leader
@@ -293,7 +293,7 @@ cd pqc-guard && forge build
 - [x] PQ P2P networking with turbo gossip
 - [x] JSON-RPC API
 - [x] EVM compatibility (revm) + Solidity (solang)
-- [x] WASM runtime (wasmer) with JIT compiler
+- [x] WASM runtime (wasmer)
 - [x] Dynamic sharding with cross-shard atomic transactions
 - [x] STACC scheduler
 - [x] zk-STARK proof system
