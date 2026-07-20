@@ -16,7 +16,7 @@ Quantos is a revolutionary Layer 1 blockchain featuring high-throughput parallel
 ├─────────────────────────────────────────────────────────────┤
 │                 Layer 2: Quantum Committees                  │
 │        1000 committees × 21 validators = 21,000 total        │
-│         Hash-based VRF (SHAKE256) rotation every 100ms       │
+│      Hash-based VRF (Rescue-Prime + STARK) rotation          │
 │              ML-DSA-65 aggregated signatures                 │
 ├─────────────────────────────────────────────────────────────┤
 │                   Layer 1: Fast Path (DAG)                   │
@@ -32,7 +32,7 @@ Quantos is a revolutionary Layer 1 blockchain featuring high-throughput parallel
 |-----------|-------|----------------|
 | **ML-DSA-65** | Transaction, vertex & checkpoint signatures | FIPS 204, NIST level 3 |
 | **ML-KEM-768** | Encrypted mempool, P2P handshake | FIPS 203, NIST level 3 |
-| **Hash-based VRF** | Committee selection randomness | SHAKE256, quantum-resistant |
+| **Hash-based VRF** | Committee selection randomness | Rescue-Prime + STARK |
 | **SHA3-256/SHAKE256** | Hashing | Quantum-resistant |
 
 ### Key Features
@@ -52,7 +52,7 @@ quantos/
 │   ├── crypto/              # Post-quantum cryptography
 │   │   ├── ml_dsa.rs        # ML-DSA-65 signatures (FIPS 204)
 │   │   ├── kyber_kem.rs     # ML-KEM-768 (FIPS 203)
-│   │   ├── vrf_hashbased.rs # Hash-based VRF (SHAKE256)
+│   │   ├── vrf_hashbased.rs # Hash-based VRF (Rescue-Prime + STARK)
 │   │   ├── vrf.rs           # Verifiable Random Function
 │   │   ├── hash.rs          # SHA3, SHAKE256, Merkle trees
 │   │   └── keypair.rs       # Key management

@@ -1,7 +1,7 @@
 //! Hash-based VRF wrapper — delegates to `vrf_hashbased.rs`.
 //!
 //! This is the production VRF used by validators for committee selection.
-//! The construction is purely hash-based (SHA3-256 PRF + STARK proof),
+//! The construction is hash-based (Rescue-Prime PRF + STARK proof),
 //! with no SPHINCS+ dependency. See `vrf_hashbased.rs` for the full
 //! design rationale, circuit status, and `STARK_PROVES_UNIQUENESS`.
 
@@ -20,7 +20,7 @@ impl VRFKeypair {
     }
 
     /// Reconstruct from stored hex-encoded keys.
-    /// `public_key` is ignored — it is recomputed as SHA3-256(secret_key).
+    /// `public_key` is ignored — it is recomputed as Rescue-Prime(secret_key).
     pub fn from_keys(_public_key: Vec<u8>, secret_key: Vec<u8>) -> CryptoResult<Self> {
         let mut sk = [0u8; 32];
         if secret_key.len() >= 32 {

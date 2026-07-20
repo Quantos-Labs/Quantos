@@ -6,7 +6,7 @@ Quantos is a next-generation Layer 1 blockchain designed for the post-quantum er
 
 ## Key Features
 
-- **Post-Quantum Cryptography** — ML-DSA-65 (FIPS 204), ML-KEM-768 (FIPS 203), hash-based VRF (SHAKE256), SPHINCS+, and ML-DSA-65 across all signing, encryption, and randomness operations
+- **Post-Quantum Cryptography** — ML-DSA-65 (FIPS 204), ML-KEM-768 (FIPS 203), hash-based VRF (Rescue-Prime + STARK), SPHINCS+, and ML-DSA-65 across all signing, encryption, and randomness operations
 - **3-Layer Hybrid Consensus** — DAG fast path (~50ms pre-confirmation), quantum committees with VRF rotation (1000 committees x 21 validators), and ML-DSA-65 finality anchors (~1s finality)
 - **Dynamic Sharding** — 1000 shards with cross-shard atomic transactions, self-healing, and STARK-accelerated validity proofs
 - **STACC Scheduler** — Shared Transaction Access & Concurrency Control with fair queuing, anti-spam quotas, and state rent
@@ -31,7 +31,7 @@ Quantos is a next-generation Layer 1 blockchain designed for the post-quantum er
 ├─────────────────────────────────────────────────────────────┤
 │                 Layer 2: Quantum Committees                  │
 │        1000 committees x 21 validators = 21,000 total        │
-│         Hash-based VRF (SHAKE256) rotation every 100ms       │
+│      Hash-based VRF (Rescue-Prime + STARK) rotation          │
 │              ML-DSA-65 aggregated signatures                 │
 ├─────────────────────────────────────────────────────────────┤
 │                   Layer 1: Fast Path (DAG)                   │
@@ -49,7 +49,7 @@ Quantos is a next-generation Layer 1 blockchain designed for the post-quantum er
 | **ML-KEM-768** | Encrypted mempool, P2P handshake | FIPS 203, NIST level 3 |
 | **ML-DSA-65** | Legacy/compatibility signatures | NIST Round 3 |
 | **SPHINCS+** | Hash-based fallback signatures | NIST level 3 |
-| **Hash-based VRF** | Committee selection randomness | SHAKE256, quantum-resistant |
+| **Hash-based VRF** | Committee selection randomness | Rescue-Prime + STARK |
 | **SHA3-256/SHAKE256** | Hashing | Quantum-resistant |
 
 ### Transaction Flow

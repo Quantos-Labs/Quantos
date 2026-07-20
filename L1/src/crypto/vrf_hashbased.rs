@@ -347,13 +347,14 @@ impl Air for HashVrfAir {
         let cur = frame.current();
         let nxt = frame.next();
 
-        // Columns 0..11: Rescue-Prime state (12 elements)
-        // Columns 12..15: sk (4 elements, constant across all rows)
+        // Columns 0..11: pk Rescue-Prime state.
+        // Columns 12..15: private sk elements, constant across all rows.
+        // Columns 16..27: beta Rescue-Prime state.
 
         // The trace encodes the Rescue-Prime permutation applied to the
         // state. Each row is the state AFTER applying round i.
         // Row 0 = initial state (sk absorbed into rate, capacity = length)
-        // Row 7 = final state (digest in elements 4..8)
+        // Rows alternate forward and inverse half-rounds; the final row is padding.
 
         // Constraint: sk columns are constant across all rows
         for i in 0..4 {
@@ -363,8 +364,9 @@ impl Air for HashVrfAir {
         // For the Rescue-Prime round, the constraint is:
         // nxt = RescueRound(cur)
         // We verify this by checking the forward S-box and MDS.
-        // Since we compute the trace honestly, the constraint is:
-        // nxt[j] should equal the j-th output of apply_round(cur, round_idx)
+        // The transition is selected by periodic first/second/padding flags.
+        // Forward rows enforce MDS(cur^7) + ARK1 = next.
+        // Inverse rows reconstruct z = INV_MDS(next - ARK2) and enforce z^7 = cur.
         //
         // The actual Rescue-Prime round is:
         //   1. Forward S-box: x_i = x_i^7 for rate elements
@@ -374,35 +376,20 @@ impl Air for HashVrfAir {
         //   5. MDS multiply
         //   6. Add constants (ARK2)
         //
-        // To keep the AIR simple, we store intermediate S-box outputs
-        // in auxiliary columns and constrain:
-        //   sbox_out = cur^7  (degree 7 constraint)
-        //   nxt = MDS(sbox_out) + constants  (degree 1 constraint)
+        // The two-step trace exposes each half-round as a transition, so
+        // every S-box relation is enforced algebraically by the AIR.
         //
-        // However, since Winterfell's AIR doesn't support auxiliary columns
-        // in the same row easily, we use a two-step trace where each
-        // Rescue round occupies 2 rows (forward + inverse), giving us
-        // 14 rows + 1 init = 15 rows total.
-        //
-        // For now, we use a simplified constraint that checks the
-        // state transition is consistent with the precomputed trace.
-        // The full S-box constraint is enforced via the degree-7 polynomial.
+        // Both pk and beta states use the same constraints; the private sk
+        // columns are constrained to remain constant across every transition.
 
-        // S-box constraint: for each state element, check x^7 relationship
-        // We verify that the forward S-box was applied correctly.
-        // nxt[j] = MDS(cur[j]^7) + ark[round]
+        // Each state element participates in the Rescue-Prime S-box and
+        // linear layer constraints below.
         //
-        // Since we can't access ARK tables from here, we use the
-        // approach of checking that the trace is self-consistent:
-        // The prover computes the actual Rescue-Prime permutation,
-        // and we verify via boundary assertions that the final state
-        // matches the public inputs (pk, beta).
+        // ARK1 and ARK2 are supplied as periodic columns, so the round
+        // constants are part of the AIR relation rather than witness data.
 
-        // Simplified transition: constant state (placeholder for full
-        // Rescue-Prime round constraints). The security comes from:
-        // 1. Boundary assertions on row 0 (sk in columns 12-15)
-        // 2. Boundary assertions on row 7 (pk/beta in state columns)
-        // 3. The trace is verified by Winterfell's FRI protocol
+        // Final digest assertions bind both Rescue computations to the
+        // public pk and beta values.
 
         let is_first = periodic[PERIODIC_IS_FIRST];
         let is_second = periodic[PERIODIC_IS_SECOND];

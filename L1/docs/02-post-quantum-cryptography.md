@@ -25,24 +25,24 @@ Committee selection and epoch randomness require a Verifiable Random Function (V
 
 Quantos uses a hash-based VRF:
 
-- **KeyGen**: `sk ← {0,1}^256`, `pk = SHA3-256(sk)`
-- **Evaluate**: `beta = SHA3-256(sk ‖ input)` — purely deterministic, no grinding surface
-- **Prove**: A Winterfell STARK is intended to prove knowledge of `sk` such that `pk = SHA3-256(sk)` and `beta = SHA3-256(sk ‖ input)`
+- **KeyGen**: `sk ← {0,1}^256`, `pk = RescuePrime(sk)`
+- **Evaluate**: `beta = RescuePrime(sk ‖ pad32(input))` — purely deterministic, no grinding surface
+- **Prove**: A Winterfell STARK proves knowledge of `sk` such that `pk = RescuePrime(sk)` and `beta = RescuePrime(sk ‖ pad32(input))`
 
 **Formal relation targeted by the circuit:**
 
 ```text
-R(pk, input, beta; sk) := (pk   == SHA3-256(sk))
-                      AND (beta == SHA3-256(sk ‖ input))
+R(pk, input, beta; sk) := (pk   == RescuePrime(sk))
+                      AND (beta == RescuePrime(sk ‖ pad32(input)))
 ```
 
-For this relation to enforce uniqueness, the circuit must bind `beta` to `sk` with no residual witness freedom that the prover could exploit to produce multiple valid outputs for the same `(pk, input)` pair. Enforcing `R` inside a STARK requires a SHA3/Keccak algebraic intermediate representation (AIR) sub-circuit. The current implementation (`HashVrfAir`) integrates the full Winterfell prover/verifier pipeline and maintains a consistent prove/verify roundtrip, but the Keccak AIR that binds the private witness `sk` to `(pk, beta)` is pending integration and independent audit. The codebase exports:
+For this relation to enforce uniqueness, the circuit must bind `beta` to `sk` with no residual witness freedom that the prover could exploit to produce multiple valid outputs for the same `(pk, input)` pair. The implemented Rescue-Prime AIR enforces `R` directly without a SHA3/Keccak sub-circuit. `HashVrfAir` models both parallel hashes over 14 Rescue-Prime half-rounds, constraining the forward S-box `x^7`, MDS multiplication, ARK constants, and the inverse half-round through `INV_MDS` and `z^7 = y`. The compact 16-row Winterfell trace currently provides 55 bits of conjectured security and requires an independent cryptographic audit. The codebase exports:
 
 ```rust
-pub const STARK_PROVES_UNIQUENESS: bool = false;
+pub const STARK_PROVES_UNIQUENESS: bool = true;
 ```
 
-Until the Keccak AIR is integrated and audited, **uniqueness is a property targeted by the construction, not yet enforced by the circuit**.
+The AIR enforces the Rescue-Prime relation, but the compact parameterization remains subject to independent audit; protocol deployments must account for its 55-bit conjectured security.
 
 **Protocol-level anti-grinding** is provided by the epoch beacon, not by the STARK proof alone:
 1. `pk` is committed at validator staking time, before any epoch input is known.
@@ -67,7 +67,7 @@ All cryptographic objects requiring long-term security or systemic finality now 
 | Checkpoint / finality signatures | ML-DSA-65 | 3 |
 | L0 cross-chain attestations | ML-DSA-65 | 3 |
 | Mempool encryption | ML-KEM-768 | 3 |
-| VRF (committee randomness) | SHA3-256 + STARK | — |
+| VRF (committee randomness) | Rescue-Prime + STARK | 55-bit conjectured security |
 
 ## 2.5 Signature Aggregation (QRSA)
 
