@@ -1,0 +1,45 @@
+# CODEOWNERS — Quantos repository
+#
+# Every PR touching these paths requires approval from the listed owners.
+# GitHub enforces this when "Require review from Code Owners" is enabled
+# in branch protection settings.
+
+# ── Core consensus & crypto (highest sensitivity) ──
+/L1/src/consensus/           @Wayleyy
+/L1/src/crypto/              @Wayleyy
+/L1/src/l0/                  @Wayleyy
+
+# ── PQC-Guard smart contracts & SDK ──
+/pqc-guard/                  @Wayleyy
+/pqc-guard/MULTIVM_SPEC.md   @Wayleyy
+
+# ── Bridge contracts (all chains) ──
+/base-bridge/                @Wayleyy
+/base-bridge/contracts/      @Wayleyy
+/base-bridge/PQC_GUARD_PORTS.md @Wayleyy
+
+# ── L0 SDKs & relayers ──
+/quantos-l0-sdk/             @Wayleyy
+/quantos-l0-sdk-js/          @Wayleyy
+/l0-relayer/                 @Wayleyy
+/bridge-relayer/             @Wayleyy
+
+# ── Wallet stack ──
+/quantos-wallet-core/        @Wayleyy
+/quantos-wallet-extension/   @Wayleyy
+/quantos-wallet-server/      @Wayleyy
+
+# ── CI / build configuration ──
+/.github/                    @Wayleyy
+/Cargo.toml                  @Wayleyy
+/Cargo.lock                  @Wayleyy
+/Makefile                    @Wayleyy
+/rust-toolchain.toml         @Wayleyy
+
+# ── Whitepaper & documentation ──
+/L1/docs/                    @Wayleyy
+/README.md                   @Wayleyy
+/CHANGELOG.md                @Wayleyy
+
+# ── Catch-all: default owner for anything not listed above ──
+*                            @Wayleyy

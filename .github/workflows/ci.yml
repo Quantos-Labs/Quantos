@@ -100,3 +100,26 @@ jobs:
         run: cargo install cargo-audit
       - name: Run audit
         run: cargo audit --deny warnings
+
+  foundry-test:
+    name: Foundry tests (Solidity)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+      - name: Build PQC-Guard contracts
+        working-directory: pqc-guard
+        run: forge build
+      - name: Test PQC-Guard contracts
+        working-directory: pqc-guard
+        run: forge test -vv
+      - name: Build base-bridge EVM contracts
+        working-directory: base-bridge
+        run: forge build
+      - name: Test base-bridge EVM contracts
+        working-directory: base-bridge
+        run: forge test -vv
