@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BUSL-1.1
 // Quantos L0 Verifier for Tron (TVM-compatible Solidity)
 // On-chain validation of PQC finality proofs produced by Quantos.
 //

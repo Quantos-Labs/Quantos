@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! # Anti-Spam: Sliding Window with Exponential Decay
 //!
 //! Solves the EOS CPU/REX problem: inside a quota, spamming is free.

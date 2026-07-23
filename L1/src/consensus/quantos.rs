@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -411,58 +415,102 @@ impl QuantosConsensus {
 
     async fn try_produce_vertices(&self, keys: &ValidatorKeys, slot: u64) -> ConsensusResult<()> {
         let epoch = slot / 32;
+        let total_validators = self.committee_manager.total_validators();
+        let single_node = total_validators <= 1;
+        // Auto-confirm mode: if we control all validators on this node, skip voting
+        let auto_confirm = total_validators <= 5;
 
-        for shard_id in 0..self.config.num_shards as u16 {
-            let committee_id = shard_id % self.config.num_committees as u16;
-            
-            // Single-node testnet: produce vertices even without committee membership
-            let is_member = self.committee_manager.is_committee_member(epoch, committee_id, &keys.address);
-            let single_node = self.committee_manager.total_validators() <= 1;
-            
-            if is_member || single_node {
-                let pending = self.mempool.get_pending_for_shard(shard_id, 1);
-                if !pending.is_empty() {
-                    match self.fast_path.create_vertex(
-                        shard_id,
-                        keys.address,
-                        &keys.signing_key.secret_key,
-                        &keys.signing_key.public_key,
-                    ).await {
-                        Ok(vertex) => {
-                            let tx_count = vertex.tx_count();
-                            // Confirm speculative execution and persist receipts
-                            if let Some((_state_root, receipts)) = self.executor.confirm_execution(&vertex.hash) {
-                                for receipt in &receipts {
-                                    if let Err(e) = self.storage.put_receipt(receipt) {
-                                        tracing::error!("Failed to store receipt: {}", e);
-                                    }
+        // Phase 1: Collect non-empty shards that we're allowed to produce for
+        let active_shards: Vec<u16> = (0..self.config.num_shards as u16)
+            .filter(|&shard_id| {
+                if single_node || auto_confirm {
+                    return true;
+                }
+                let committee_id = shard_id % self.config.num_committees as u16;
+                self.committee_manager.is_committee_member(epoch, committee_id, &keys.address)
+            })
+            .filter(|&shard_id| self.mempool.pending_count_for_shard(shard_id) > 0)
+            .collect();
+
+        if active_shards.is_empty() {
+            tracing::debug!("No active shards with pending txs for slot {}", slot);
+            return Ok(());
+        }
+
+        tracing::info!("Creating vertices for {} active shards at slot {}", active_shards.len(), slot);
+
+        // Phase 2: Create vertices in parallel across shards (rayon, CPU-bound)
+        let results = self.fast_path.create_vertices_parallel(
+            active_shards,
+            keys.address,
+            &keys.signing_key.secret_key,
+            &keys.signing_key.public_key,
+        );
+
+        // Phase 3: Auto-confirm vertices (single-node / auto-confirm mode)
+        for vertex_result in results {
+            match vertex_result {
+                Ok(vertex) => {
+                    let tx_count = vertex.tx_count();
+                    let shard_id = vertex.shard_id;
+
+                    if auto_confirm {
+                        // Directly confirm the vertex without committee voting
+                        self.fast_path.confirm_vertex_direct(&vertex).await?;
+
+                        if let Some((_state_root, receipts)) = self.executor.confirm_execution(&vertex.hash) {
+                            for receipt in &receipts {
+                                if let Err(e) = self.storage.put_receipt(receipt) {
+                                    tracing::error!("Failed to store receipt: {}", e);
                                 }
-                                // Also persist each transaction for getTransactionByHash
-                                for tx in &vertex.transactions {
-                                    if let Err(e) = self.storage.put_transaction(tx) {
-                                        tracing::error!("Failed to store transaction: {}", e);
-                                    }
-                                }
-                                tracing::info!(
-                                    "Committed vertex {} for shard {} — {} txs, {} receipts",
-                                    hex::encode(&vertex.hash[..4]),
-                                    shard_id,
-                                    tx_count,
-                                    receipts.len()
-                                );
-                            } else {
-                                tracing::warn!(
-                                    "Produced vertex {} for shard {} with {} txs but no speculative result found",
-                                    hex::encode(&vertex.hash[..4]),
-                                    shard_id,
-                                    tx_count
-                                );
                             }
+                            for tx in &vertex.transactions {
+                                if let Err(e) = self.storage.put_transaction(tx) {
+                                    tracing::error!("Failed to store transaction: {}", e);
+                                }
+                            }
+                            tracing::info!(
+                                "Committed vertex {} for shard {} — {} txs, {} receipts",
+                                hex::encode(&vertex.hash[..4]),
+                                shard_id,
+                                tx_count,
+                                receipts.len()
+                            );
                         }
-                        Err(e) => {
-                            tracing::warn!("No vertex produced for shard {}: {}", shard_id, e);
+                    } else {
+                        // Multi-node: create self-vote and submit
+                        let vote = self.fast_path.create_vote(
+                            vertex.hash,
+                            keys.address,
+                            true,
+                            1,
+                            &keys.signing_key.secret_key,
+                        )?;
+                        self.fast_path.receive_vote(vote).await?;
+
+                        if let Some((_state_root, receipts)) = self.executor.confirm_execution(&vertex.hash) {
+                            for receipt in &receipts {
+                                if let Err(e) = self.storage.put_receipt(receipt) {
+                                    tracing::error!("Failed to store receipt: {}", e);
+                                }
+                            }
+                            for tx in &vertex.transactions {
+                                if let Err(e) = self.storage.put_transaction(tx) {
+                                    tracing::error!("Failed to store transaction: {}", e);
+                                }
+                            }
+                            tracing::info!(
+                                "Committed vertex {} for shard {} — {} txs, {} receipts",
+                                hex::encode(&vertex.hash[..4]),
+                                shard_id,
+                                tx_count,
+                                receipts.len()
+                            );
                         }
                     }
+                }
+                Err(e) => {
+                    tracing::warn!("No vertex produced: {}", e);
                 }
             }
         }

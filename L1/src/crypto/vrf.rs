@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! Hash-based VRF wrapper — delegates to `vrf_hashbased.rs`.
 //!
 //! This is the production VRF used by validators for committee selection.

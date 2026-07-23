@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! Domain separation tags for all signed messages in Quantos.
 //!
 //! Every distinct message type gets a unique, versioned ASCII tag. Each

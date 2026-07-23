@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! Fuzz target for the EVM RLP header decoder.
 //!
 //! `block_header_rlp` inside `ChainProof::Evm` comes from an external chain

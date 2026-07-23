@@ -11,7 +11,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 authors = ["Quantos Labs"]
-license = "MIT"
+license = "BUSL-1.1"
 repository = "https://github.com/Quantos-Labs/Quantos"
 
 [profile.release]

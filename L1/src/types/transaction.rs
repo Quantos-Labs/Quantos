@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 use serde::{Deserialize, Serialize};
 use crate::types::{Address, Amount, Hash, PublicKey, ShardId, Signature, hash_data};
 use crate::crypto::{verify_ml_dsa_65_batch, with_domain, DOMAIN_TX};
@@ -157,6 +161,11 @@ impl Transaction {
         } else {
             Err("Invalid signature".to_string())
         }
+    }
+
+    pub fn set_signature_unchecked(&mut self, signature: Signature, public_key: PublicKey) {
+        self.signature = signature;
+        self.public_key = public_key;
     }
     
     pub fn validate_timestamp(&self, current_time: u64) -> Result<(), String> {

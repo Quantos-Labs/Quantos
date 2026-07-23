@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! Kyber768 ML-KEM for Quantos P2P session keys (NIST-aligned PQ-KEM via PQClean).
 //!
 //! Pair with ML-DSA-65 signatures over [`crate::crypto::DOMAIN_PQ_KEM_HANDSHAKE`] transcripts.

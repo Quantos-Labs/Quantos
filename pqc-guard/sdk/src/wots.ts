@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 // PQC-Guard SDK — Winternitz One-Time Signatures (hash-based, keccak256).
 //
 // Mirrors `src/lib/WOTS.sol` and `test/helpers/WOTSSigner.sol` byte-for-byte so

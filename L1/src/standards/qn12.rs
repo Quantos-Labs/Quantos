@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! # QN12 - Multi-Token Standard
 //!
 //! Resource-based multi-token standard (ERC1155 equivalent).

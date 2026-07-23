@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! Epoch Beacon Aggregator with VDF anti-grinding.
 //!
 //! Resolves the audit finding in S1.1 (SPHINCS+ VRF grinding) by:

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Quantos Labs"]
 description = "Quantos Wallet Backend — stateless session-based wallet service"
-license = "MIT"
+license = "BUSL-1.1"
 
 [[bin]]
 name = "quantos-wallet-server"

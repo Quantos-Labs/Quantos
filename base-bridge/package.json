@@ -2,6 +2,7 @@
   "name": "base-bridge",
   "version": "1.0.0",
   "private": true,
+  "license": "BUSL-1.1",
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",

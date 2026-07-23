@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! PQCGuard — on-chain gate helper for EVM targets.
 //!
 //! This module bridges the Quantos STARK prover to the `PQCGuard.sol`

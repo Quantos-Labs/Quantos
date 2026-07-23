@@ -3,6 +3,7 @@ name = "quantos-wallet-core"
 version = "0.1.0"
 edition = "2021"
 description = "Quantos wallet WASM — exact same types/crypto/bincode as the Quantos node"
+license = "BUSL-1.1"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

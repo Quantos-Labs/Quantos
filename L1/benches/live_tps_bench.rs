@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! Live TPS Benchmark — sends real transactions to a running Quantos node.
 //!
 //! Usage:
@@ -34,6 +38,10 @@ struct Args {
     /// Number of shards to distribute across
     #[arg(long, default_value_t = 16)]
     shards: u16,
+
+    /// Number of unique senders (keypairs). More senders = more txs per vertex.
+    #[arg(long, default_value_t = 100)]
+    senders: usize,
 
     /// Poll interval for metrics (seconds)
     #[arg(long, default_value_t = 5)]
@@ -91,6 +99,7 @@ fn main() {
     println!("  Total txs:   {}", args.txs);
     println!("  Batch size:  {}", args.batch_size);
     println!("  Shards:      {}", args.shards);
+    println!("  Senders:     {}", args.senders);
     println!();
 
     // ── Get initial metrics ──
@@ -105,10 +114,10 @@ fn main() {
     println!();
 
     // ── Generate + sign transactions ──
-    println!("🔑 Generating {} keypairs + signing {} txs...", args.shards, args.txs);
+    println!("🔑 Generating {} keypairs + signing {} txs...", args.senders, args.txs);
     let gen_start = Instant::now();
 
-    let num_keypairs = args.shards.min(args.txs as u16) as usize;
+    let num_keypairs = args.senders.min(args.txs);
     let keypairs: Vec<MlDsa65Keypair> = (0..num_keypairs)
         .into_par_iter()
         .map(|_| MlDsa65Keypair::generate().unwrap())
@@ -117,15 +126,17 @@ fn main() {
     let txs: Vec<SignedTransaction> = (0..args.txs)
         .into_par_iter()
         .map(|i| {
-            let kp = &keypairs[i % keypairs.len()];
+            let kp_idx = i % keypairs.len();
+            let kp = &keypairs[kp_idx];
             let shard_id = (i % args.shards as usize) as u16;
+            let per_sender_nonce = (i / keypairs.len()) as u64;
 
             let mut tx = Transaction::new(
                 TransactionType::Transfer,
                 kp.address(),
                 [(i % 256) as u8; 32],
                 Amount((1000 + i as u64) as u128),
-                i as u64,
+                per_sender_nonce,
                 21000,
                 None,
                 Vec::new(),
@@ -133,9 +144,6 @@ fn main() {
             );
 
             let sig = kp.sign(&tx.signing_data()).unwrap();
-            // Bypass set_signature() which uses a single-threaded verify_worker
-            // that bottlenecks under parallel load. We just signed this tx ourselves
-            // so the signature is valid — set the fields directly.
             tx.signature = sig;
             tx.public_key = kp.public_key.clone();
             SignedTransaction::new(tx)

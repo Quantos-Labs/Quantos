@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! PQC-Guard — quantum-resistant guarded vault for Solana (Anchor).
 //!
 //! Reference port aligned with MULTIVM_SPEC.md. A `GuardedVault` PDA holds SOL

@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! # Quantos Node Entry Point
 //!
 //! Main binary for running a Quantos L1 blockchain node.
@@ -468,7 +472,7 @@ impl NodeConfig {
             committee_rotation_ms: genesis.chain.block_time_ms / 2,
             checkpoint_interval: genesis.chain.epoch_length,
             max_dag_parents: 8,
-            min_dag_parents: 2,
+            min_dag_parents: 1,
             dynamic_sharding: genesis.chain.dynamic_sharding,
             min_shards: genesis.chain.min_shards as usize,
             max_shards: genesis.chain.max_shards as usize,
@@ -524,7 +528,10 @@ impl NodeConfig {
             committee_rotation_ms: 100,
             checkpoint_interval: 32,
             max_dag_parents: 8,
-            min_dag_parents: 2,
+            min_dag_parents: std::env::var("QUANTOS_MIN_DAG_PARENTS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1),
             dynamic_sharding: true,
             min_shards: 1,
             max_shards: 10_000,

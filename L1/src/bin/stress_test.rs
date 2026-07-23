@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! # Quantos Real-Time Stress Test
 //!
 //! Sends PQC-signed transactions against a live Quantos node over JSON-RPC

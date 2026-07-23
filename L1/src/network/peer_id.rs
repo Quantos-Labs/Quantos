@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! Quantos peer identifier: SHA2-256 multihash (same wire layout as legacy libp2p PeerIds).
 
 use std::fmt;

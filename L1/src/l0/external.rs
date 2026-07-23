@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! External chain checkpoint types and verification logic.
 //!
 //! This module enables Quantos L0 to act as a post-quantum finality layer

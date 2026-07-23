@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 use serde::{Deserialize, Serialize};
 use crate::types::{Address, Hash, hash_data};
 use crate::crypto::{verify_ml_dsa_65, with_domain, DOMAIN_CHECKPOINT};
