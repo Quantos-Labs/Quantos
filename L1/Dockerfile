@@ -8,7 +8,7 @@
 # --------------------------------------------------------------------------
 # Stage 1: Build
 # --------------------------------------------------------------------------
-FROM rust:1.95.0-bookworm AS builder
+FROM rust:1.97.0-bookworm AS builder
 
 ARG GIT_SHA=unknown
 ARG GIT_TAG=unknown
