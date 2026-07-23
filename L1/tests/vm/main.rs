@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! Comprehensive tests for the VM module (vm/runtime, bytecode_protection, abi, mvcc, etc.)
 
 use quantos::vm::*;

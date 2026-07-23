@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 use serde::{Deserialize, Serialize};
 use crate::types::{Address, Hash, ShardId, SignedTransaction, hash_data};
 use crate::crypto::{verify_ml_dsa_65_batch, with_domain, DOMAIN_VERTEX, DOMAIN_COMMITTEE_VOTE};
@@ -101,6 +105,10 @@ impl DAGVertex {
             Err("Invalid vertex signature".to_string())
         }
     }
+
+    pub fn set_signature_unchecked(&mut self, signature: Vec<u8>) {
+        self.signature = signature;
+    }
     
     pub fn validate_timestamp(&self, current_time: u64) -> Result<(), String> {
         if self.timestamp > current_time + MAX_TIMESTAMP_DRIFT {
@@ -194,6 +202,10 @@ impl CommitteeVote {
         } else {
             Err("Invalid vote signature".to_string())
         }
+    }
+
+    pub fn set_signature_unchecked(&mut self, signature: Vec<u8>) {
+        self.signature = signature;
     }
 }
 

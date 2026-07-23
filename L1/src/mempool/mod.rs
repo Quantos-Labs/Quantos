@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 mod secure;
 mod adaptive_routing;
 pub mod fair_ordering;
@@ -246,9 +250,9 @@ impl Mempool {
             return Vec::new();
         }
 
-        let shard_hashes = self.by_shard
+        let shard_hashes: Vec<Hash> = self.by_shard
             .get(&shard_id)
-            .map(|v| v.clone())
+            .map(|v| v.iter().copied().collect())
             .unwrap_or_default();
 
         if shard_hashes.is_empty() {
@@ -278,7 +282,6 @@ impl Mempool {
 
         let mut selected = Vec::new();
         let mut expected_nonce: BTreeMap<Address, u64> = BTreeMap::new();
-        let mut chosen_senders: BTreeMap<Address, ()> = BTreeMap::new();
         let mut account_locks: BTreeMap<Address, ()> = BTreeMap::new();
         let mut resource_locks: BTreeMap<Hash, ()> = BTreeMap::new();
 
@@ -289,10 +292,6 @@ impl Mempool {
 
             let tx = candidate.tx;
             let sender = tx.transaction.from;
-
-            if chosen_senders.contains_key(&sender) {
-                continue;
-            }
 
             let sender_expected = *expected_nonce.entry(sender).or_insert_with(|| {
                 self.state_manager.get_nonce(&sender).unwrap_or(0)
@@ -316,7 +315,8 @@ impl Mempool {
             account_locks.insert(from, ());
             account_locks.insert(to, ());
             resource_locks.insert(resource_key, ());
-            chosen_senders.insert(sender, ());
+            // Advance expected nonce so sequential txs from same sender can be included
+            *expected_nonce.get_mut(&sender).unwrap() = sender_expected + 1;
             selected.push(tx);
         }
 
@@ -479,6 +479,13 @@ impl ShardedMempool {
             .get(&shard_id)
             .map(|m| m.get_pending_for_shard(shard_id, limit))
             .unwrap_or_default()
+    }
+
+    pub fn pending_count_for_shard(&self, shard_id: ShardId) -> usize {
+        self.shards
+            .get(&shard_id)
+            .map(|m| m.pending_count_for_shard(shard_id))
+            .unwrap_or(0)
     }
 
     pub fn get_ready_antichain_for_shard(&self, shard_id: ShardId, limit: usize) -> Vec<SignedTransaction> {

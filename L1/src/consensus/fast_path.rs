@@ -1,8 +1,13 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use tokio::sync::mpsc;
+use rayon::prelude::*;
 
 /// Maximum pending vertices to prevent memory exhaustion
 const MAX_PENDING_VERTICES: usize = 100_000;
@@ -117,7 +122,7 @@ impl FastPath {
     /// - Parallel transaction processing
     /// - Batch state execution
     /// - Memory limit enforcement
-    pub async fn create_vertex(
+    pub fn create_vertex(
         &self,
         shard_id: ShardId,
         creator: Address,
@@ -144,8 +149,7 @@ impl FastPath {
         // Sign vertex
         let signature = sign_ml_dsa_65(secret_key, &vertex.signing_data())
             .map_err(|e| ConsensusError::CryptoError(e.to_string()))?;
-        vertex.set_signature(signature, public_key)
-            .map_err(|e| ConsensusError::CryptoError(e))?;
+        vertex.set_signature_unchecked(signature);
 
         // Check memory limits before adding
         if self.pending_count.load(Ordering::Relaxed) >= MAX_PENDING_VERTICES {
@@ -167,8 +171,8 @@ impl FastPath {
         let tx_hashes: Vec<Hash> = vertex.transactions.iter().map(|tx| tx.hash).collect();
         self.mempool.remove_transactions(shard_id, &tx_hashes);
 
-        // Broadcast vertex
-        let _ = self.vertex_sender.send(vertex.clone()).await;
+        // Broadcast vertex (non-blocking)
+        let _ = self.vertex_sender.try_send(vertex.clone());
 
         tracing::debug!(
             "Created vertex {} for shard {} with {} txs, state_root: 0x{}",
@@ -187,27 +191,21 @@ impl FastPath {
     /// - Process multiple shards concurrently
     /// - Batch transaction fetching
     /// - Atomic vertex creation
-    pub async fn create_vertices_parallel(
+    pub fn create_vertices_parallel(
         &self,
         shard_ids: Vec<ShardId>,
         creator: Address,
         secret_key: &[u8],
         public_key: &[u8],
     ) -> Vec<ConsensusResult<DAGVertex>> {
-        use futures::future::join_all;
-        
-        let tasks: Vec<_> = shard_ids.into_iter()
+        let secret_key = secret_key.to_vec();
+        let public_key = public_key.to_vec();
+
+        shard_ids.into_par_iter()
             .map(|shard_id| {
-                let secret_key = secret_key.to_vec();
-                let public_key = public_key.to_vec();
-                let self_clone = self.clone();
-                async move {
-                    self_clone.create_vertex(shard_id, creator, &secret_key, &public_key).await
-                }
+                self.create_vertex(shard_id, creator, &secret_key, &public_key)
             })
-            .collect();
-        
-        join_all(tasks).await
+            .collect()
     }
 
     pub async fn receive_vertex(&self, vertex: DAGVertex) -> ConsensusResult<()> {
@@ -348,6 +346,16 @@ impl FastPath {
         Ok(())
     }
 
+    /// Directly confirm a vertex without committee voting.
+    /// Used in single-node / auto-confirm mode where all validators run on one node.
+    pub async fn confirm_vertex_direct(&self, vertex: &DAGVertex) -> ConsensusResult<()> {
+        // Remove from pending vertices if present
+        if self.pending_vertices.remove(&vertex.hash).is_some() {
+            self.pending_count.fetch_sub(1, Ordering::Relaxed);
+        }
+        self.confirm_vertex(vertex).await
+    }
+
     pub fn create_vote(
         &self,
         vertex_hash: Hash,
@@ -369,8 +377,7 @@ impl FastPath {
         let public_key_offset = secret_key.len() - MLDSA65_PUBLIC_KEY_SIZE;
         let public_key = &secret_key[public_key_offset..];
 
-        vote.set_signature(signature, public_key)
-            .map_err(|e| ConsensusError::CryptoError(e))?;
+        vote.set_signature_unchecked(signature);
 
         Ok(vote)
     }

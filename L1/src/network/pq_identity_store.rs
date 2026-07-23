@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! Persisted PQ node identity (ML-DSA-65 + Kyber768) for stable [`PeerId`] across restarts.
 
 use std::fs::{self, File};

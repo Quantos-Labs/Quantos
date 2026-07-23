@@ -2,6 +2,7 @@
   "name": "@quantos/pqc-guard-sdk",
   "version": "0.1.0",
   "private": true,
+  "license": "BUSL-1.1",
   "description": "TESTNET SDK for PQC-Guard: SLH-DSA migration + hash-based Winternitz attestations anchored on Quantos.",
   "type": "module",
   "main": "dist/index.js",

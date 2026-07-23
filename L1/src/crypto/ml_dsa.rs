@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! # ML-DSA-65 (FIPS 204) — Checkpoint finality signatures
 //!
 //! Replaces Falcon-512 (FN-DSA / FIPS 206, still a draft) for checkpoint

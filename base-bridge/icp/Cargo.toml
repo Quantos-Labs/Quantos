@@ -3,7 +3,7 @@ name = "quantos_pqc_guard"
 version = "0.1.0"
 edition = "2021"
 description = "PQC-Guard quantum-resistant guarded account for Internet Computer (ICP)"
-license = "MIT"
+license = "BUSL-1.1"
 
 [lib]
 crate-type = ["cdylib"]

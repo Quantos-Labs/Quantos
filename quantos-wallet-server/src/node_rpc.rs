@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 // src/node_rpc.rs — HTTP JSON-RPC client to call the Quantos node
 
 use serde::{Deserialize, Serialize};

@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! TPS Throughput Benchmark — Measured, realistic metrics for PQC tx processing.
 //!
 //! This benchmark measures the **physical bottleneck** of transaction throughput

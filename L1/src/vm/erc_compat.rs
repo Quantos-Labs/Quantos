@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! # ERC Compatibility Shim
 //!
 //! Bridges Ethereum ERC-20/721/1155 ABI calldata to native Quantos

@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! # Quantos P2P Network Layer
 //!
 //! Native TCP stack with **full PQ**: Kyber768 KEM + ML-DSA (MlDsa65) handshake,

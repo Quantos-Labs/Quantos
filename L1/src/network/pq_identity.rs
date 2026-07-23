@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! Canonical Quantos [`PeerId`]: SHA2-256 multihash over domain-separated ML-DSA-65 public key material.
 
 use sha2::{Digest, Sha256};

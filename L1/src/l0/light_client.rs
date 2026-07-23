@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! Cryptographic light client verification — NO RPC, NO FALLBACK.
 //!
 //! Flow: source chain signs with its native crypto (ECDSA, Ed25519, BLS) →

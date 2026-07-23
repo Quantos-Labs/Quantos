@@ -227,8 +227,10 @@ cargo bench
 
 ## License
 
-MIT License - Quantos Labs
+Business Source License 1.1 (**BUSL-1.1**) — Quantos Labs SAS
+
+See the [LICENSE](../LICENSE) file in the project root for the full license text.
 
 ---
 
-**QuantumDAG Chain** - Built for the post-quantum era 🚀
+**Quantos** — Built for the post-quantum era.

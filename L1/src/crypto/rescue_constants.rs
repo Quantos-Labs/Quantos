@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! Rescue-Prime (Rp64_256) constants extracted from winter-crypto.
 //!
 //! winter-crypto 0.9 does not expose the `hash::rescue` module publicly,

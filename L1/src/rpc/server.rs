@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::pin::Pin;
@@ -13,6 +17,7 @@ use jsonrpsee::server::Server;
 use jsonrpsee::core::async_trait;
 use jsonrpsee::proc_macros::rpc;
 use parking_lot::RwLock;
+use rayon::prelude::*;
 use tracing::warn;
 
 /// Maximum contract bytecode size (10MB)
@@ -1073,32 +1078,35 @@ impl QuantosRpcServer for QuantosRpcImpl {
 
         let mut results = Vec::with_capacity(txs_hex.len());
 
-        for tx_hex in &txs_hex {
-            let tx_hex = tx_hex.strip_prefix("QTS:").or_else(|| tx_hex.strip_prefix("0x")).unwrap_or(tx_hex);
-            let tx_bytes = match hex::decode(tx_hex) {
-                Ok(b) => b,
-                Err(_) => {
-                    results.push("error:invalid_hex".to_string());
-                    continue;
+        // Phase 1: Parallel hex decode + bincode deserialize
+        let decoded: Vec<Result<SignedTransaction, String>> = txs_hex
+            .par_iter()
+            .map(|tx_hex| {
+                let tx_hex = tx_hex.strip_prefix("QTS:").or_else(|| tx_hex.strip_prefix("0x")).unwrap_or(tx_hex);
+                let tx_bytes = match hex::decode(tx_hex) {
+                    Ok(b) => b,
+                    Err(_) => return Err("error:invalid_hex".to_string()),
+                };
+                if tx_bytes.len() > MAX_TX_SIZE {
+                    return Err("error:tx_too_large".to_string());
                 }
-            };
-
-            if tx_bytes.len() > MAX_TX_SIZE {
-                results.push("error:tx_too_large".to_string());
-                continue;
-            }
-
-            let tx: SignedTransaction = match bincode::deserialize(&tx_bytes) {
-                Ok(t) => t,
-                Err(_) => {
-                    results.push("error:invalid_format".to_string());
-                    continue;
+                match bincode::deserialize::<SignedTransaction>(&tx_bytes) {
+                    Ok(t) => Ok(t),
+                    Err(_) => Err("error:invalid_format".to_string()),
                 }
-            };
+            })
+            .collect();
 
-            match self.consensus.submit_transaction(tx).await {
-                Ok(hash) => results.push(format!("QTS:{}", hex::encode(hash))),
-                Err(e) => results.push(format!("error:{}", e)),
+        // Phase 2: Submit sequentially (mempool add is fast now that verify is cached)
+        for tx_result in decoded {
+            match tx_result {
+                Ok(tx) => {
+                    match self.consensus.submit_transaction(tx).await {
+                        Ok(hash) => results.push(format!("QTS:{}", hex::encode(hash))),
+                        Err(e) => results.push(format!("error:{}", e)),
+                    }
+                }
+                Err(err) => results.push(err),
             }
         }
 

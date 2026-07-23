@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! # Optimized View Change Protocol
 //!
 //! Fast leader recovery after failures with minimal latency overhead.

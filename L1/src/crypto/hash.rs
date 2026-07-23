@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 use sha3::{Digest, Sha3_256, Shake256};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use crate::types::Hash;

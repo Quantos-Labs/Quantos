@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 #![no_std]
 //! PQC-Guard — quantum-resistant guarded account for Stellar (Soroban).
 //!

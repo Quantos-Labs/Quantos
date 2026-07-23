@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Quantos Labs SAS
+// SPDX-License-Identifier: BUSL-1.1
+// See the LICENSE file in the project root for the full license text.
+
 //! PQC Bloat Benchmark — Measures signature sizes, aggregation compression,
 //! and verification throughput for ML-DSA-65, Falcon-512, and SPHINCS+.
 //!
