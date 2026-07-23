@@ -310,7 +310,14 @@ cd pqc-guard && forge build
 
 ## License
 
-MIT License - Quantos Labs
+Business Source License 1.1 (**BUSL-1.1**) — Quantos Labs SAS
+
+- **Licensor**: Quantos Labs SAS
+- **Change Date**: 2030-07-23 (4 years after publication)
+- **Change License**: Apache-2.0
+- **Additional Use Grant**: Running validator nodes, full nodes, and light clients on the Quantos testnet and mainnet, and building applications, tools, and services that interact with the Quantos blockchain. Forking the software to create a competing blockchain network is prohibited until the Change Date.
+
+See the [LICENSE](LICENSE) file for the full license text.
 
 ---
 

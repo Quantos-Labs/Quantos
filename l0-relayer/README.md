@@ -121,4 +121,6 @@ npm run dev
 
 ## License
 
-MIT
+Business Source License 1.1 (**BUSL-1.1**) — Quantos Labs SAS
+
+See the [LICENSE](../LICENSE) file in the project root for the full license text.

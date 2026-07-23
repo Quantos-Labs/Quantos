@@ -82,3 +82,9 @@ All Quantos addresses (wallets, contracts, recipients) use the **`QTS:` prefix**
 QTS:7f88946d8beb923205b80c0aff63067361fe7d30ad27c691727e12b2581bf460
 ```
 The CLI accepts both `QTS:` and `0x` as input, but always displays `QTS:`.
+
+## License
+
+Business Source License 1.1 (**BUSL-1.1**) — Quantos Labs SAS
+
+See the [LICENSE](../../LICENSE) file in the project root for the full license text.

@@ -76,3 +76,9 @@ npm run start:prod
 # Or with process manager
 pm2 start dist/index.js --name bridge-relayer
 ```
+
+## License
+
+Business Source License 1.1 (**BUSL-1.1**) — Quantos Labs SAS
+
+See the [LICENSE](../LICENSE) file in the project root for the full license text.

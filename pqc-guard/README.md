@@ -180,3 +180,9 @@ Implement `ZkStarkVerifier is IAttestationVerifier` that verifies a single STARK
 proof attesting the SPHINCS+ verification relation (Quantos already produces
 STARK batch proofs in `l0/stark_prover`). Point the account's
 `attestationVerifier` at it. **No change to `PQCGuardAccount`.**
+
+## License
+
+Business Source License 1.1 (**BUSL-1.1**) — Quantos Labs SAS
+
+See the [LICENSE](../LICENSE) file in the project root for the full license text.
