@@ -1,10 +1,14 @@
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
+use std::pin::Pin;
 use std::sync::OnceLock;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
+use std::future::{self, Future};
 
+use hyper::{Body, Request, Response, StatusCode};
+use tower::{Layer, Service};
 use jsonrpsee::server::Server;
 use jsonrpsee::core::async_trait;
 use jsonrpsee::proc_macros::rpc;
@@ -18,13 +22,30 @@ const MAX_TX_SIZE: usize = 1024 * 1024;
 /// Contract execution timeout (5 seconds)
 const CONTRACT_EXEC_TIMEOUT: Duration = Duration::from_secs(5);
 /// Rate limit: requests per IP per minute
-const RATE_LIMIT_PER_MINUTE: usize = 100;
+const DEFAULT_RATE_LIMIT_PER_MINUTE: usize = 100;
 /// Rate limit burst allowance
-const RATE_LIMIT_BURST: usize = 20;
+const DEFAULT_RATE_LIMIT_BURST: usize = 20;
 /// Ban duration for excessive requests (5 minutes)
-const BAN_DURATION_SECS: u64 = 300;
+const DEFAULT_BAN_DURATION_SECS: u64 = 300;
 /// Threshold for banning (requests in ban window)
-const BAN_THRESHOLD: usize = 500;
+const DEFAULT_BAN_THRESHOLD: usize = 500;
+
+fn parse_env_usize(key: &str, default: usize) -> usize {
+    static CACHE: OnceLock<RwLock<HashMap<String, usize>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| RwLock::new(HashMap::new()));
+    *cache.write().entry(key.to_string()).or_insert_with(|| {
+        std::env::var(key)
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(default)
+    })
+}
+
+fn rate_limit_per_minute() -> usize { parse_env_usize("QUANTOS_RATE_LIMIT_PER_MINUTE", DEFAULT_RATE_LIMIT_PER_MINUTE) }
+fn rate_limit_burst() -> usize { parse_env_usize("QUANTOS_RATE_LIMIT_BURST", DEFAULT_RATE_LIMIT_BURST) }
+fn ban_threshold() -> usize { parse_env_usize("QUANTOS_BAN_THRESHOLD", DEFAULT_BAN_THRESHOLD) }
+fn ban_duration() -> Duration { Duration::from_secs(std::env::var("QUANTOS_BAN_DURATION_SECS").ok().and_then(|s| s.parse::<u64>().ok()).unwrap_or(DEFAULT_BAN_DURATION_SECS)) }
 /// Maximum cumulative contract storage per deployer (100MB)
 const MAX_STORAGE_PER_ACCOUNT: usize = 100 * 1024 * 1024;
 /// Maximum concurrent contract executions to prevent CPU exhaustion
@@ -55,6 +76,14 @@ pub struct RateLimiterState {
     requests: Arc<RwLock<HashMap<IpAddr, RateLimitEntry>>>,
     /// Banned IPs with expiry time
     banned: Arc<RwLock<HashMap<IpAddr, Instant>>>,
+    /// Requests per minute allowed per IP
+    per_minute: usize,
+    /// Burst allowance per IP
+    burst: usize,
+    /// Ban duration for excessive requests
+    ban_duration: Duration,
+    /// Threshold for banning an IP
+    ban_threshold: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -70,6 +99,10 @@ impl RateLimiterState {
         Self {
             requests: Arc::new(RwLock::new(HashMap::new())),
             banned: Arc::new(RwLock::new(HashMap::new())),
+            per_minute: rate_limit_per_minute(),
+            burst: rate_limit_burst(),
+            ban_duration: ban_duration(),
+            ban_threshold: ban_threshold(),
         }
     }
 
@@ -105,7 +138,7 @@ impl RateLimiterState {
         }
         
         // Reset ban window if expired (5 minutes)
-        if now.duration_since(entry.ban_window_start) > Duration::from_secs(BAN_DURATION_SECS) {
+        if now.duration_since(entry.ban_window_start) > self.ban_duration {
             entry.total_requests = 0;
             entry.ban_window_start = now;
         }
@@ -114,15 +147,15 @@ impl RateLimiterState {
         entry.total_requests += 1;
         
         // Check for ban threshold
-        if entry.total_requests > BAN_THRESHOLD {
+        if entry.total_requests > self.ban_threshold {
             drop(requests);
-            self.banned.write().insert(ip, now + Duration::from_secs(BAN_DURATION_SECS));
+            self.banned.write().insert(ip, now + self.ban_duration);
             warn!("IP {} banned for excessive requests", ip);
             return Err(format!("IP {} banned for abuse", ip));
         }
         
         // Check rate limit with burst allowance
-        if entry.count > RATE_LIMIT_PER_MINUTE + RATE_LIMIT_BURST {
+        if entry.count > self.per_minute + self.burst {
             return Err(format!("Rate limit exceeded for IP {}", ip));
         }
         
@@ -132,15 +165,107 @@ impl RateLimiterState {
     /// Clean up old entries periodically
     pub fn cleanup(&self) {
         let now = Instant::now();
-        
+
         // Clean old request entries
         self.requests.write().retain(|_, entry| {
-            now.duration_since(entry.ban_window_start) < Duration::from_secs(BAN_DURATION_SECS * 2)
+            now.duration_since(entry.ban_window_start) < self.ban_duration * 2
         });
-        
+
         // Clean expired bans
         self.banned.write().retain(|_, expires| now < *expires);
     }
+}
+
+/// Tower HTTP middleware that enforces real-IP-based rate limiting before
+/// requests reach the JSON-RPC handler. The client IP is extracted from the
+/// `X-Forwarded-For` header (standard behind reverse proxies) or `X-Real-IP`,
+/// with a fallback to an unknown IP for direct connections.
+#[derive(Clone)]
+pub struct RateLimitLayer {
+    limiter: RateLimiterState,
+}
+
+impl RateLimitLayer {
+    pub fn new(limiter: RateLimiterState) -> Self {
+        Self { limiter }
+    }
+}
+
+impl<S> Layer<S> for RateLimitLayer {
+    type Service = RateLimitService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        RateLimitService {
+            inner,
+            limiter: self.limiter.clone(),
+        }
+    }
+}
+
+pub struct RateLimitService<S> {
+    inner: S,
+    limiter: RateLimiterState,
+}
+
+impl<S> Service<Request<Body>> for RateLimitService<S>
+where
+    S: Service<Request<Body>, Response = Response<Body>> + Send + 'static,
+    S::Error: Into<Box<dyn std::error::Error + Send + Sync>> + 'static,
+    S::Future: Send + 'static,
+{
+    type Response = Response<Body>;
+    type Error = S::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Request<Body>) -> Self::Future {
+        let ip = extract_client_ip(&req);
+        match self.limiter.check_ip(ip) {
+            Ok(()) => {
+                let fut = self.inner.call(req);
+                Box::pin(async move { fut.await })
+            }
+            Err(reason) => {
+                warn!("Rate limit exceeded for {}: {}", ip, reason);
+                let body = json_rpc_error(-32005, &reason);
+                let response = Response::builder()
+                    .status(StatusCode::TOO_MANY_REQUESTS)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap_or_else(|_| Response::new(Body::empty()));
+                Box::pin(async move { Ok(response) })
+            }
+        }
+    }
+}
+
+fn extract_client_ip<B>(req: &Request<B>) -> IpAddr {
+    if let Some(forwarded) = req.headers().get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        if let Some(ip_str) = forwarded.split(',').next() {
+            if let Ok(ip) = ip_str.trim().parse::<IpAddr>() {
+                return ip;
+            }
+        }
+    }
+    if let Some(real_ip) = req.headers().get("x-real-ip").and_then(|v| v.to_str().ok()) {
+        if let Ok(ip) = real_ip.trim().parse::<IpAddr>() {
+            return ip;
+        }
+    }
+    // Fallback for direct connections without a reverse proxy.
+    // In production, Quantos should always be behind a proxy that sets X-Forwarded-For.
+    IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
+}
+
+fn json_rpc_error(code: i32, message: &str) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","error":{{"code":{},"message":"{}"}},"id":null}}"#,
+        code,
+        message.replace('"', "\\\"")
+    )
 }
 
 pub struct RpcServer {
@@ -176,8 +301,12 @@ impl RpcServer {
 
     pub async fn run(&self) -> anyhow::Result<()> {
         let addr = format!("0.0.0.0:{}", self.config.rpc_port);
-        
+
+        let http_middleware = tower::ServiceBuilder::new()
+            .layer(RateLimitLayer::new(self.rate_limiter.clone()));
+
         let server = Server::builder()
+            .set_http_middleware(http_middleware)
             .build(&addr)
             .await?;
 
@@ -929,11 +1058,15 @@ impl QuantosRpcServer for QuantosRpcImpl {
     async fn send_raw_transaction_batch(&self, txs_hex: Vec<String>) -> Result<Vec<String>, jsonrpsee::types::ErrorObjectOwned> {
         self.check_rate_limit()?;
 
-        const MAX_BATCH_SIZE: usize = 100;
-        if txs_hex.len() > MAX_BATCH_SIZE {
+        let max_batch_size: usize = std::env::var("QUANTOS_RPC_MAX_BATCH_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2000)
+            .max(1);
+        if txs_hex.len() > max_batch_size {
             return Err(jsonrpsee::types::ErrorObject::owned(
                 -32000,
-                format!("Batch too large: {} (max {})", txs_hex.len(), MAX_BATCH_SIZE),
+                format!("Batch too large: {} (max {})", txs_hex.len(), max_batch_size),
                 None::<()>,
             ));
         }
@@ -1668,37 +1801,13 @@ impl QuantosRpcImpl {
         }
     }
 
-    /// Production rate limiting using the shared RateLimiterState.
-    /// 
-    /// HIGH: The previous implementation used a hardcoded 127.0.0.1 for ALL requests,
-    /// making all callers share a single bucket and providing zero protection.
-    /// Now derives a per-connection IP proxy from the tokio task ID so that
-    /// different connections get separate rate limit buckets.
+    /// DEPRECATED: handler-level rate limiting.
+    ///
+    /// Real per-IP rate limiting is now enforced by the `RateLimitLayer` HTTP
+    /// middleware before requests reach the JSON-RPC handler. This method is kept
+    /// for minimal diff and is intentionally a no-op.
     fn check_rate_limit(&self) -> Result<(), jsonrpsee::types::ErrorObjectOwned> {
-        // Derive a pseudo-IP from the current thread ID to separate concurrent connections.
-        // The real IP-based rate limiting should be enforced at the transport/proxy layer;
-        // this handler-level check provides defense-in-depth per-connection bucketing.
-        let thread_id = std::thread::current().id();
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        thread_id.hash(&mut hasher);
-        let hash_val = hasher.finish();
-        // Map hash to an IPv4 address space (avoid 127.x.x.x to prevent collisions with localhost)
-        let ip = IpAddr::V4(std::net::Ipv4Addr::new(
-            10,
-            ((hash_val >> 16) & 0xFF) as u8,
-            ((hash_val >> 8) & 0xFF) as u8,
-            (hash_val & 0xFF) as u8,
-        ));
-        
-        self.rate_limiter.check_ip(ip)
-            .map_err(|reason| {
-                warn!("Rate limit exceeded: {}", reason);
-                jsonrpsee::types::ErrorObject::owned(
-                    -32005,
-                    "Rate limit exceeded",
-                    Some(reason)
-                )
-            })
+        Ok(())
     }
 }
 
