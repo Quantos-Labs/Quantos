@@ -4220,6 +4220,8 @@ dependencies = [
  "futures",
  "hex",
  "hkdf",
+ "http 0.2.12",
+ "hyper 0.14.32",
  "jsonrpsee",
  "k256",
  "lru",
