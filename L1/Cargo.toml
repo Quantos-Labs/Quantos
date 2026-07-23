@@ -24,7 +24,7 @@ winter-crypto = "0.9"
 winter-air = "0.9"
 winter-prover = "0.9"
 winter-verifier = "0.9"
-winter-utils = "0.9"
+winter-utils = "0.13"
 
 # Hashing
 sha3 = "0.10"

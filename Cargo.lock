@@ -4264,7 +4264,7 @@ dependencies = [
  "winter-crypto",
  "winter-math",
  "winter-prover",
- "winter-utils",
+ "winter-utils 0.13.1",
  "winter-verifier",
  "winterfell",
  "zeroize",
@@ -7060,7 +7060,7 @@ dependencies = [
  "winter-crypto",
  "winter-fri",
  "winter-math",
- "winter-utils",
+ "winter-utils 0.9.3",
 ]
 
 [[package]]
@@ -7072,7 +7072,7 @@ dependencies = [
  "blake3",
  "sha3 0.10.9",
  "winter-math",
- "winter-utils",
+ "winter-utils 0.9.3",
 ]
 
 [[package]]
@@ -7083,7 +7083,7 @@ checksum = "3ab6077cf4c23c0411f591f4ba29378e27f26acb8cef3c51cadd93daaf6080b3"
 dependencies = [
  "winter-crypto",
  "winter-math",
- "winter-utils",
+ "winter-utils 0.9.3",
 ]
 
 [[package]]
@@ -7092,7 +7092,7 @@ version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b0e685b3b872d82e58a86519294a814b7bc7a4d3cd2c93570a7d80c0c5a1aba"
 dependencies = [
- "winter-utils",
+ "winter-utils 0.9.3",
 ]
 
 [[package]]
@@ -7118,7 +7118,7 @@ dependencies = [
  "winter-fri",
  "winter-math",
  "winter-maybe-async",
- "winter-utils",
+ "winter-utils 0.9.3",
 ]
 
 [[package]]
@@ -7126,6 +7126,12 @@ name = "winter-utils"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "961e81e9388877a25db1c034ba38253de2055f569633ae6a665d857a0556391b"
+
+[[package]]
+name = "winter-utils"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9951263ef5317740cd0f49e618db00c72fabb70b75756ea26c4d5efe462c04dd"
 
 [[package]]
 name = "winter-verifier"
@@ -7137,7 +7143,7 @@ dependencies = [
  "winter-crypto",
  "winter-fri",
  "winter-math",
- "winter-utils",
+ "winter-utils 0.9.3",
 ]
 
 [[package]]
