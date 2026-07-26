@@ -358,6 +358,27 @@ impl FastPath {
         self.confirm_vertex(vertex).await
     }
 
+    /// Batch-confirm multiple vertices without committee voting.
+    /// Confirms all vertices, collects receipts and txs, and returns them
+    /// for a single batch storage call. This reduces RocksDB write overhead
+    /// by batching the finalization writes.
+    pub async fn confirm_vertices_batch_direct(
+        &self,
+        vertices: &[DAGVertex],
+    ) -> ConsensusResult<Vec<(Hash, Vec<TransactionReceipt>, Vec<SignedTransaction>)>> {
+        let mut results = Vec::with_capacity(vertices.len());
+        for vertex in vertices {
+            if self.pending_vertices.remove(&vertex.hash).is_some() {
+                self.pending_count.fetch_sub(1, Ordering::Relaxed);
+            }
+            let confirm = self.confirm_vertex(vertex).await?;
+            if let Some((state_root, receipts)) = confirm {
+                results.push((state_root, receipts, vertex.transactions.clone()));
+            }
+        }
+        Ok(results)
+    }
+
     pub fn create_vote(
         &self,
         vertex_hash: Hash,

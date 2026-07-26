@@ -464,22 +464,46 @@ impl QuantosConsensus {
             &keys.signing_key.public_key,
         );
 
-        // Phase 3: Auto-confirm vertices (single-node / auto-confirm mode)
+        // Phase 3: Confirm vertices
         let mut all_receipts = Vec::new();
         let mut all_txs = Vec::new();
         let mut committed_count = 0;
 
-        for vertex_result in results {
-            match vertex_result {
-                Ok(vertex) => {
-                    let tx_count = vertex.tx_count();
-                    let shard_id = vertex.shard_id;
+        if auto_confirm {
+            // Batch confirm: collect all successful vertices, confirm in one pass
+            let successful_vertices: Vec<DAGVertex> = results
+                .into_iter()
+                .filter_map(|r| r.ok())
+                .collect();
 
-                    let confirm_result = if auto_confirm {
-                        // Directly confirm the vertex without committee voting
-                        fast_path.confirm_vertex_direct(&vertex).await?
-                    } else {
-                        // Multi-node: create self-vote and submit
+            if successful_vertices.is_empty() {
+                return Ok(());
+            }
+
+            let batch_results = fast_path.confirm_vertices_batch_direct(&successful_vertices).await?;
+
+            for (vertex, (_state_root, receipts, txs)) in successful_vertices.iter().zip(batch_results.iter()) {
+                let tx_count = vertex.tx_count();
+                let shard_id = vertex.shard_id;
+                all_receipts.extend(receipts.clone());
+                all_txs.extend(txs.clone());
+                committed_count += 1;
+
+                tracing::info!(
+                    "Committed vertex {} for shard {} — {} txs",
+                    hex::encode(&vertex.hash[..4]),
+                    shard_id,
+                    tx_count,
+                );
+            }
+        } else {
+            // Multi-node: create self-vote and submit for each vertex
+            for vertex_result in results {
+                match vertex_result {
+                    Ok(vertex) => {
+                        let tx_count = vertex.tx_count();
+                        let shard_id = vertex.shard_id;
+
                         let vote = fast_path.create_vote(
                             vertex.hash,
                             keys.address,
@@ -487,24 +511,24 @@ impl QuantosConsensus {
                             1,
                             &keys.signing_key.secret_key,
                         )?;
-                        fast_path.receive_vote(vote).await?
-                    };
+                        let confirm_result = fast_path.receive_vote(vote).await?;
 
-                    if let Some((_state_root, receipts)) = confirm_result {
-                        all_receipts.extend(receipts);
-                        all_txs.extend(vertex.transactions);
-                        committed_count += 1;
+                        if let Some((_state_root, receipts)) = confirm_result {
+                            all_receipts.extend(receipts);
+                            all_txs.extend(vertex.transactions);
+                            committed_count += 1;
 
-                        tracing::info!(
-                            "Committed vertex {} for shard {} — {} txs",
-                            hex::encode(&vertex.hash[..4]),
-                            shard_id,
-                            tx_count,
-                        );
+                            tracing::info!(
+                                "Committed vertex {} for shard {} — {} txs",
+                                hex::encode(&vertex.hash[..4]),
+                                shard_id,
+                                tx_count,
+                            );
+                        }
                     }
-                }
-                Err(e) => {
-                    tracing::warn!("No vertex produced: {}", e);
+                    Err(e) => {
+                        tracing::warn!("No vertex produced: {}", e);
+                    }
                 }
             }
         }
