@@ -524,7 +524,7 @@ impl NodeConfig {
             num_shards: std::env::var("QUANTOS_INITIAL_SHARDS")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(4),
+                .unwrap_or(8),
             committee_rotation_ms: 100,
             checkpoint_interval: 32,
             max_dag_parents: 8,
@@ -731,7 +731,7 @@ fn create_genesis_from_keys(
         NetworkId::Testnet => crate::genesis::ChainConfig {
             chain_id: 2,
             block_time_ms: 200,
-            initial_shards: 4,
+            initial_shards: 8,
             dynamic_sharding: true,
             min_shards: 1,
             max_shards: 10_000,
