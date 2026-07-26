@@ -3,6 +3,7 @@
 // See the LICENSE file in the project root for the full license text.
 
 use std::collections::{BTreeMap, HashMap};
+use rayon::prelude::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -625,6 +626,109 @@ impl StateManager {
     }
 
     fn execute_transactions_overlay(
+        &self,
+        txs: &[SignedTransaction],
+        persist_contracts: bool,
+    ) -> StateResult<StateExecution> {
+        if txs.len() <= 8 {
+            return self.execute_transactions_overlay_sequential(txs, persist_contracts);
+        }
+
+        let mut groups: HashMap<Address, Vec<usize>> = HashMap::new();
+        for (i, tx) in txs.iter().enumerate() {
+            groups.entry(tx.transaction.from).or_default().push(i);
+        }
+
+        let group_indices: Vec<Vec<usize>> = groups.into_values().collect();
+
+        struct GroupResult {
+            receipts: Vec<(usize, Result<TransactionReceipt, StateError>)>,
+            overlay: HashMap<Address, Account>,
+        }
+
+        let group_results: Vec<GroupResult> = group_indices
+            .par_iter()
+            .map(|indices| {
+                let mut local_overlay: HashMap<Address, Account> = HashMap::new();
+                let receipts: Vec<(usize, Result<TransactionReceipt, StateError>)> = indices.iter()
+                    .map(|&i| {
+                        let tx = &txs[i];
+                        let result = self.execute_transaction_overlay(tx, &mut local_overlay, persist_contracts);
+                        (i, result)
+                    })
+                    .collect();
+                GroupResult { receipts, overlay: local_overlay }
+            })
+            .collect();
+
+        let mut indexed_receipts: Vec<(usize, TransactionReceipt)> = Vec::with_capacity(txs.len());
+        for gr in &group_results {
+            for (i, result) in &gr.receipts {
+                match result {
+                    Ok(receipt) => {
+                        indexed_receipts.push((*i, receipt.clone()));
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "Transaction {} failed during parallel overlay execution: {}",
+                            hex::encode(&txs[*i].hash[..8]),
+                            err
+                        );
+                        indexed_receipts.push((*i, TransactionReceipt {
+                            tx_hash: txs[*i].hash,
+                            status: TransactionStatus::Failed(err.to_string()),
+                            cu_used: txs[*i].transaction.max_compute_units,
+                            vertex_hash: [0u8; 32],
+                            shard_id: txs[*i].transaction.shard_id,
+                            logs: Vec::new(),
+                            slot: 0,
+                            from: txs[*i].transaction.from,
+                            to: txs[*i].transaction.to,
+                            success: false,
+                        }));
+                    }
+                }
+            }
+        }
+
+        indexed_receipts.sort_by_key(|(i, _)| *i);
+        let receipts: Vec<TransactionReceipt> = indexed_receipts.into_iter().map(|(_, r)| r).collect();
+
+        let mut overlay: HashMap<Address, Account> = HashMap::new();
+        for gr in group_results {
+            for (addr, account) in gr.overlay {
+                if let Some(existing) = overlay.get(&addr) {
+                    let base = self.get_account(&addr).unwrap_or_else(|_| Account::new(addr));
+                    let merged_balance = account.balance.0 + existing.balance.0 - base.balance.0;
+                    let merged_stake = account.stake.0 + existing.stake.0 - base.stake.0;
+                    let merged = Account {
+                        address: addr,
+                        balance: Amount(merged_balance),
+                        nonce: account.nonce.max(existing.nonce),
+                        stake: Amount(merged_stake),
+                        code_hash: account.code_hash.or(existing.code_hash),
+                        storage_root: account.storage_root,
+                        is_validator: account.is_validator || existing.is_validator,
+                    };
+                    overlay.insert(addr, merged);
+                } else {
+                    overlay.insert(addr, account);
+                }
+            }
+        }
+
+        let state_root = self.compute_state_root_with_overlay(&overlay)?;
+        let mut accounts: Vec<_> = overlay.into_values().collect();
+        accounts.sort_by(|a, b| a.address.cmp(&b.address));
+
+        Ok(StateExecution {
+            state_root,
+            receipts,
+            accounts,
+        })
+    }
+
+    fn execute_transactions_overlay_sequential(
         &self,
         txs: &[SignedTransaction],
         persist_contracts: bool,

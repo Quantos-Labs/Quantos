@@ -56,6 +56,7 @@ pub struct QuantosConsensus {
     subnet_manager: Option<Arc<SubnetManager>>,
 }
 
+#[derive(Clone)]
 struct ValidatorKeys {
     signing_key: MlDsa65Keypair,
     vrf_key: VRFKeypair,
@@ -325,9 +326,22 @@ impl QuantosConsensus {
         }
 
         if let Some(ref keys) = self.validator_keys {
-            tracing::debug!("Calling try_produce_vertices for slot {}", slot);
-            self.try_produce_vertices(keys, slot).await?;
-            tracing::debug!("try_produce_vertices done for slot {}", slot);
+            tracing::debug!("Spawning try_produce_vertices for slot {}", slot);
+            let keys = keys.clone();
+            let fast_path = self.fast_path.clone();
+            let mempool = self.mempool.clone();
+            let storage = self.storage.clone();
+            let committee_manager = self.committee_manager.clone();
+            let config = self.config.clone();
+            let current_slot = self.current_slot.clone();
+            tokio::task::spawn(async move {
+                if let Err(e) = QuantosConsensus::try_produce_vertices_static(
+                    &config, &fast_path, &mempool, &storage, &committee_manager, &current_slot, &keys, slot,
+                ).await {
+                    tracing::error!("pipelined try_produce_vertices error for slot {}: {}", slot, e);
+                }
+            });
+            tracing::debug!("try_produce_vertices spawned for slot {}", slot);
         }
 
         tracing::debug!("Checking checkpoint for slot {}", slot);
@@ -414,22 +428,38 @@ impl QuantosConsensus {
     }
 
     async fn try_produce_vertices(&self, keys: &ValidatorKeys, slot: u64) -> ConsensusResult<()> {
+        Self::try_produce_vertices_static(
+            &self.config, &self.fast_path, &self.mempool, &self.storage,
+            &self.committee_manager, &self.current_slot, keys, slot,
+        ).await
+    }
+
+    async fn try_produce_vertices_static(
+        config: &NodeConfig,
+        fast_path: &Arc<FastPath>,
+        mempool: &Arc<ShardedMempool>,
+        storage: &Storage,
+        committee_manager: &Arc<CommitteeManager>,
+        _current_slot: &Arc<RwLock<u64>>,
+        keys: &ValidatorKeys,
+        slot: u64,
+    ) -> ConsensusResult<()> {
         let epoch = slot / 32;
-        let total_validators = self.committee_manager.total_validators();
+        let total_validators = committee_manager.total_validators();
         let single_node = total_validators <= 1;
         // Auto-confirm mode: if we control all validators on this node, skip voting
         let auto_confirm = total_validators <= 5;
 
         // Phase 1: Collect non-empty shards that we're allowed to produce for
-        let active_shards: Vec<u16> = (0..self.config.num_shards as u16)
+        let active_shards: Vec<u16> = (0..config.num_shards as u16)
             .filter(|&shard_id| {
                 if single_node || auto_confirm {
                     return true;
                 }
-                let committee_id = shard_id % self.config.num_committees as u16;
-                self.committee_manager.is_committee_member(epoch, committee_id, &keys.address)
+                let committee_id = shard_id % config.num_committees as u16;
+                committee_manager.is_committee_member(epoch, committee_id, &keys.address)
             })
-            .filter(|&shard_id| self.mempool.pending_count_for_shard(shard_id) > 0)
+            .filter(|&shard_id| mempool.pending_count_for_shard(shard_id) > 0)
             .collect();
 
         if active_shards.is_empty() {
@@ -440,7 +470,7 @@ impl QuantosConsensus {
         tracing::info!("Creating vertices for {} active shards at slot {}", active_shards.len(), slot);
 
         // Phase 2: Create vertices in parallel across shards (rayon, CPU-bound)
-        let results = self.fast_path.create_vertices_parallel(
+        let results = fast_path.create_vertices_parallel(
             active_shards,
             keys.address,
             &keys.signing_key.secret_key,
@@ -460,17 +490,17 @@ impl QuantosConsensus {
 
                     let confirm_result = if auto_confirm {
                         // Directly confirm the vertex without committee voting
-                        self.fast_path.confirm_vertex_direct(&vertex).await?
+                        fast_path.confirm_vertex_direct(&vertex).await?
                     } else {
                         // Multi-node: create self-vote and submit
-                        let vote = self.fast_path.create_vote(
+                        let vote = fast_path.create_vote(
                             vertex.hash,
                             keys.address,
                             true,
                             1,
                             &keys.signing_key.secret_key,
                         )?;
-                        self.fast_path.receive_vote(vote).await?
+                        fast_path.receive_vote(vote).await?
                     };
 
                     if let Some((_state_root, receipts)) = confirm_result {
@@ -493,7 +523,7 @@ impl QuantosConsensus {
         }
 
         if committed_count > 0 {
-            if let Err(e) = self.storage.put_finalized_batch(&all_receipts, &all_txs) {
+            if let Err(e) = storage.put_finalized_batch(&all_receipts, &all_txs) {
                 tracing::error!(
                     "Failed to store {} receipts and {} transactions: {}",
                     all_receipts.len(),

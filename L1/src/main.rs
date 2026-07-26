@@ -469,7 +469,7 @@ impl NodeConfig {
             num_committees: 1000,
             validators_per_committee: genesis.chain.max_validators_per_committee as usize,
             num_shards: genesis.chain.initial_shards as usize,
-            committee_rotation_ms: genesis.chain.block_time_ms / 2,
+            committee_rotation_ms: genesis.chain.block_time_ms / 4,
             checkpoint_interval: genesis.chain.epoch_length,
             max_dag_parents: 8,
             min_dag_parents: 1,
@@ -524,8 +524,8 @@ impl NodeConfig {
             num_shards: std::env::var("QUANTOS_INITIAL_SHARDS")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(4),
-            committee_rotation_ms: 100,
+                .unwrap_or(64),
+            committee_rotation_ms: 50,
             checkpoint_interval: 32,
             max_dag_parents: 8,
             min_dag_parents: std::env::var("QUANTOS_MIN_DAG_PARENTS")
@@ -731,7 +731,7 @@ fn create_genesis_from_keys(
         NetworkId::Testnet => crate::genesis::ChainConfig {
             chain_id: 2,
             block_time_ms: 200,
-            initial_shards: 4,
+            initial_shards: 64,
             dynamic_sharding: true,
             min_shards: 1,
             max_shards: 10_000,
