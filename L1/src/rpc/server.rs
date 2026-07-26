@@ -1076,7 +1076,7 @@ impl QuantosRpcServer for QuantosRpcImpl {
             ));
         }
 
-        let mut results = Vec::with_capacity(txs_hex.len());
+        let mut results: Vec<String> = Vec::with_capacity(txs_hex.len());
 
         // Phase 1: Parallel hex decode + bincode deserialize
         let decoded: Vec<Result<SignedTransaction, String>> = txs_hex
@@ -1097,16 +1097,29 @@ impl QuantosRpcServer for QuantosRpcImpl {
             })
             .collect();
 
-        // Phase 2: Submit sequentially (mempool add is fast now that verify is cached)
-        for tx_result in decoded {
+        // Phase 2: Submit as one batch so the mempool can verify all ML-DSA-65
+        // signatures in parallel (rayon) and insert atomically per shard.
+        let mut results = Vec::with_capacity(decoded.len());
+        let mut batch = Vec::with_capacity(decoded.len());
+        for (i, tx_result) in decoded.into_iter().enumerate() {
             match tx_result {
-                Ok(tx) => {
-                    match self.consensus.submit_transaction(tx).await {
-                        Ok(hash) => results.push(format!("QTS:{}", hex::encode(hash))),
-                        Err(e) => results.push(format!("error:{}", e)),
-                    }
+                Ok(tx) => batch.push((i, tx)),
+                Err(err) => {
+                    results.resize(i + 1, String::new());
+                    results[i] = err;
                 }
-                Err(err) => results.push(err),
+            }
+        }
+
+        if !batch.is_empty() {
+            let (indices, txs): (Vec<usize>, Vec<SignedTransaction>) = batch.into_iter().unzip();
+            let batch_results = self.consensus.submit_transactions_batch(txs);
+            results.resize(indices.len().max(results.len()), String::new());
+            for (idx, res) in indices.into_iter().zip(batch_results.into_iter()) {
+                results[idx] = match res {
+                    Ok(hash) => format!("QTS:{}", hex::encode(hash)),
+                    Err(e) => format!("error:{}", e),
+                };
             }
         }
 

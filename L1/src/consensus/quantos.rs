@@ -409,7 +409,7 @@ impl QuantosConsensus {
             }
         }
 
-        tracing::info!("on_slot_tick completed: slot={}", slot);
+        tracing::debug!("on_slot_tick completed: slot={}", slot);
         Ok(())
     }
 
@@ -559,6 +559,22 @@ impl QuantosConsensus {
         let hash = tx.hash;
         self.fast_path.process_transaction(tx).await?;
         Ok(hash)
+    }
+
+    /// Submit a batch of transactions in one pass.
+    ///
+    /// Bypasses the single-tx `FastPath::process_transaction` wrapper to route
+    /// the batch directly to `ShardedMempool::add_transactions_batch`, which
+    /// verifies all ML-DSA-65 signatures in parallel and inserts atomically.
+    pub fn submit_transactions_batch(&self, txs: Vec<SignedTransaction>) -> Vec<ConsensusResult<Hash>> {
+        self.mempool
+            .add_transactions_batch(txs)
+            .into_iter()
+            .map(|res| match res {
+                Ok(hash) => Ok(hash),
+                Err(e) => Err(ConsensusError::InvalidVertex(e.to_string())),
+            })
+            .collect()
     }
     
     /// PRODUCTION: Execute atomic cross-shard operation
