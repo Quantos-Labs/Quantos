@@ -20,7 +20,7 @@ pub use mempool_policy::*;
 pub use pbs::*;
 pub use blob_transactions::*;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
@@ -113,103 +113,164 @@ impl Mempool {
     }
 
     pub fn add_transaction(&self, tx: SignedTransaction) -> MempoolResult<()> {
-        // Phase 1: Validation OUTSIDE any lock — signature verification,
-        // prefilter, and nonce checks are CPU-bound and do not need
-        // mutual exclusion with other insertions.
-        self.validate_transaction(&tx)?;
+        self.add_transactions_batch(vec![tx])
+            .into_iter()
+            .next()
+            .unwrap_or(Ok([0u8; 32]))
+            .map(|_hash| ())
+    }
 
-        // Phase 2: STACC admission (has its own internal mutex)
-        let now_block = 0u64;
-        if !self.stacc_require_activation {
-            self.stacc.lock().activation.activate(tx.transaction.from, now_block);
-        } else if let Ok(acct) = self.state_manager.get_account(&tx.transaction.from) {
-            if acct.stake.0 >= ACTIVATION_DEPOSIT as u128 {
+    /// Add a batch of transactions in one pass: validate all signatures in
+    /// parallel, then insert each transaction atomically.
+    /// On success returns the transaction hash so callers can map results.
+    pub fn add_transactions_batch(&self, txs: Vec<SignedTransaction>) -> Vec<MempoolResult<Hash>> {
+        let mut results: Vec<MempoolResult<Hash>> = (0..txs.len()).map(|_| Ok([0u8; 32])).collect();
+
+        // Phase 1: Batch validation OUTSIDE any lock.
+        let validation_results = self.validate_transactions_batch(&txs);
+
+        // Phase 2: per-tx insertion (already atomic via DashMap entry API).
+        for (i, (tx, validation)) in txs.into_iter().zip(validation_results.into_iter()).enumerate() {
+            let hash = tx.hash;
+            if let Err(e) = validation {
+                results[i] = Err(e);
+                continue;
+            }
+
+            // STACC admission (has its own internal mutex)
+            let now_block = 0u64;
+            if !self.stacc_require_activation {
                 self.stacc.lock().activation.activate(tx.transaction.from, now_block);
+            } else if let Ok(acct) = self.state_manager.get_account(&tx.transaction.from) {
+                if acct.stake.0 >= ACTIVATION_DEPOSIT as u128 {
+                    self.stacc.lock().activation.activate(tx.transaction.from, now_block);
+                }
             }
-        }
-        self.stacc.lock().admit(tx.clone(), now_block)?;
-
-        // Phase 3: Atomic insert using DashMap entry API — no global lock needed.
-        // The entry() call atomically checks for duplicates and inserts.
-        let hash = tx.hash;
-        let sender = tx.transaction.from;
-        let nonce = tx.transaction.nonce;
-        let shard_id = tx.transaction.shard_id;
-
-        // Size check before insert (non-atomic with insert, but acceptable:
-        // a few extra txs over the limit is harmless and self-correcting)
-        if self.pending.len() >= self.max_size {
-            return Err(MempoolError::MempoolFull);
-        }
-
-        match self.pending.entry(hash) {
-            dashmap::mapref::entry::Entry::Occupied(_) => {
-                return Err(MempoolError::DuplicateTransaction);
+            if let Err(e) = self.stacc.lock().admit(tx.clone(), now_block) {
+                results[i] = Err(e);
+                continue;
             }
-            dashmap::mapref::entry::Entry::Vacant(vacant) => {
-                vacant.insert(tx.clone());
+
+            let hash = tx.hash;
+            let sender = tx.transaction.from;
+            let nonce = tx.transaction.nonce;
+            let shard_id = tx.transaction.shard_id;
+
+            if self.pending.len() >= self.max_size {
+                results[i] = Err(MempoolError::MempoolFull);
+                continue;
             }
-        }
 
-        self.by_sender
-            .entry(sender)
-            .or_insert_with(BTreeMap::new)
-            .insert(nonce, hash);
-
-        // Limit shard index size to prevent DoS
-        let mut shard_txs = self.by_shard
-            .entry(shard_id)
-            .or_insert_with(Vec::new);
-        
-        if shard_txs.len() >= MAX_SHARD_TXS {
-            if let Some(_old_hash) = shard_txs.first().copied() {
-                shard_txs.remove(0);
+            match self.pending.entry(hash) {
+                dashmap::mapref::entry::Entry::Occupied(_) => {
+                    results[i] = Err(MempoolError::DuplicateTransaction);
+                    continue;
+                }
+                dashmap::mapref::entry::Entry::Vacant(vacant) => {
+                    vacant.insert(tx.clone());
+                }
             }
-        }
-        shard_txs.push(hash);
-        drop(shard_txs);
 
-        if let Err(e) = self.tx_sender.try_send(tx) {
-            warn!("Failed to send transaction to subscribers: {:?}", e);
+            self.by_sender
+                .entry(sender)
+                .or_insert_with(BTreeMap::new)
+                .insert(nonce, hash);
+
+            let mut shard_txs = self.by_shard
+                .entry(shard_id)
+                .or_insert_with(Vec::new);
+
+            if shard_txs.len() >= MAX_SHARD_TXS {
+                if let Some(_old_hash) = shard_txs.first().copied() {
+                    shard_txs.remove(0);
+                }
+            }
+            shard_txs.push(hash);
+            drop(shard_txs);
+
+            if let Err(e) = self.tx_sender.try_send(tx) {
+                warn!("Failed to send transaction to subscribers: {:?}", e);
+            }
+
+            results[i] = Ok(hash);
         }
 
-        Ok(())
+        results
     }
 
     fn validate_transaction(&self, tx: &SignedTransaction) -> MempoolResult<()> {
-        let signing_data = tx.transaction.signing_data();
-        // Stateless prefilter to drop obvious garbage before expensive verify
-        let tx_bytes = bincode::serialize(&tx)
-            .map_err(|e| MempoolError::InvalidTransaction(format!("Failed to serialize: {}", e)))?;
-        if let Err(e) = prefilter_tx_bytes(&tx_bytes) {
-            tracing::warn!("Prefilter rejected tx: {}", e);
-            return Err(MempoolError::InvalidTransaction(format!("Prefilter: {}", e)));
+        match self.add_transactions_batch(vec![tx.clone()]).into_iter().next() {
+            Some(result) => result.map(|_hash| ()),
+            None => Err(MempoolError::InvalidTransaction("empty validation batch".to_string())),
         }
-        // Use batched verification worker to reduce per-tx overhead
-        let valid = crate::crypto::verify_ml_dsa_65_batch(
-            tx.transaction.public_key.clone(),
-            signing_data.clone(),
-            tx.transaction.signature.clone(),
-        );
+    }
 
-        if !valid {
-            tracing::error!("SIGCHECK: signature did not verify (valid=false)");
-            return Err(MempoolError::InvalidTransaction("Invalid signature".to_string()));
+    /// Validate a batch of transactions. Prefilter and all ML-DSA-65 signatures
+    /// are verified in parallel via `verify_ml_dsa_65_parallel_batch`.
+    fn validate_transactions_batch(&self, txs: &[SignedTransaction]) -> Vec<MempoolResult<()>> {
+        // Stateless prefilter to drop obvious garbage before expensive verify.
+        let mut results: Vec<MempoolResult<()>> = (0..txs.len()).map(|_| Ok(())).collect();
+        let mut verify_inputs = Vec::with_capacity(txs.len());
+        let mut verify_indices = Vec::with_capacity(txs.len());
+
+        for (i, tx) in txs.iter().enumerate() {
+            if results[i].is_err() {
+                continue;
+            }
+
+            let tx_bytes = match bincode::serialize(tx) {
+                Ok(b) => b,
+                Err(e) => {
+                    results[i] = Err(MempoolError::InvalidTransaction(format!("Failed to serialize: {}", e)));
+                    continue;
+                }
+            };
+            if let Err(e) = prefilter_tx_bytes(&tx_bytes) {
+                tracing::warn!("Prefilter rejected tx: {}", e);
+                results[i] = Err(MempoolError::InvalidTransaction(format!("Prefilter: {}", e)));
+                continue;
+            }
+
+            verify_inputs.push((
+                tx.transaction.public_key.clone(),
+                tx.transaction.signing_data(),
+                tx.transaction.signature.clone(),
+            ));
+            verify_indices.push(i);
         }
 
-        let account_nonce = self.state_manager
-            .get_nonce(&tx.transaction.from)
-            .map_err(|e| MempoolError::InvalidTransaction(e.to_string()))?;
-
-        if tx.transaction.nonce < account_nonce {
-            return Err(MempoolError::NonceTooLow);
+        // One parallel batch verification for the whole set.
+        let verify_results = crate::crypto::verify_ml_dsa_65_parallel_batch(&verify_inputs);
+        for (batch_idx, valid) in verify_results.into_iter().enumerate() {
+            let i = verify_indices[batch_idx];
+            if !valid {
+                tracing::error!("SIGCHECK: signature did not verify (valid=false)");
+                results[i] = Err(MempoolError::InvalidTransaction("Invalid signature".to_string()));
+            }
         }
 
-        if tx.transaction.nonce > account_nonce + self.max_per_sender as u64 {
-            return Err(MempoolError::NonceGap);
+        // Nonce checks (cannot be batched across senders easily, but are cheap).
+        for (i, tx) in txs.iter().enumerate() {
+            if results[i].is_err() {
+                continue;
+            }
+            let account_nonce = match self.state_manager.get_nonce(&tx.transaction.from) {
+                Ok(n) => n,
+                Err(e) => {
+                    results[i] = Err(MempoolError::InvalidTransaction(e.to_string()));
+                    continue;
+                }
+            };
+            if tx.transaction.nonce < account_nonce {
+                results[i] = Err(MempoolError::NonceTooLow);
+                continue;
+            }
+            if tx.transaction.nonce > account_nonce + self.max_per_sender as u64 {
+                results[i] = Err(MempoolError::NonceGap);
+            }
         }
 
-        Ok(())
+        results
     }
 
     pub fn get_transaction(&self, hash: &Hash) -> Option<SignedTransaction> {
@@ -454,6 +515,49 @@ impl ShardedMempool {
         }
         
         result
+    }
+
+    /// Add a batch of transactions in one pass. Grouped by signed shard_id,
+    /// each shard batch is validated (ML-DSA signatures in parallel) and
+    /// inserted atomically. Returns the transaction hash for each success.
+    pub fn add_transactions_batch(&self, txs: Vec<SignedTransaction>) -> Vec<MempoolResult<Hash>> {
+        let mut results: Vec<MempoolResult<Hash>> = (0..txs.len()).map(|_| Ok([0u8; 32])).collect();
+
+        // Group by signed shard_id to avoid crossing shards.
+        let mut per_shard: HashMap<ShardId, Vec<(usize, SignedTransaction)>> = HashMap::new();
+        for (i, tx) in txs.into_iter().enumerate() {
+            per_shard
+                .entry(tx.transaction.shard_id)
+                .or_insert_with(Vec::new)
+                .push((i, tx));
+        }
+
+        // Process each shard independently. The underlying Mempool validates
+        // signatures in parallel across the whole shard batch.
+        for (shard_id, indexed_txs) in per_shard {
+            let (indices, txs): (Vec<usize>, Vec<SignedTransaction>) = indexed_txs.into_iter().unzip();
+            let mempool = match self.shards.get(&shard_id) {
+                Some(m) => m,
+                None => {
+                    for i in indices {
+                        results[i] = Err(MempoolError::InvalidTransaction("Invalid shard".to_string()));
+                    }
+                    continue;
+                }
+            };
+
+            let batch_results = mempool.add_transactions_batch(txs);
+            for (i, res) in indices.into_iter().zip(batch_results.into_iter()) {
+                results[i] = res;
+            }
+
+            // Update AMR routing metrics for the batch.
+            let mut metrics = self.routing_metrics.write();
+            metrics.total_routed += 1;
+            metrics.load_balanced += 1;
+        }
+
+        results
     }
     
     /// Reports TX execution outcome back to AMR for learning
