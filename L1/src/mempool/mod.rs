@@ -67,8 +67,6 @@ pub struct Mempool {
     max_per_sender: usize,
     tx_sender: Sender<SignedTransaction>,
     tx_receiver: Receiver<SignedTransaction>,
-    /// Lock for atomic transaction insertion
-    insert_lock: Arc<Mutex<()>>,
     /// STACC admission + WFQ ordering per shard mempool instance.
     stacc: Arc<Mutex<StaccAdmission<ZeroStakeProvider, FixedAgeProvider>>>,
     /// Whether STACC must see sender as activated before admitting tx.
@@ -109,28 +107,18 @@ impl Mempool {
             max_per_sender: 100,
             tx_sender,
             tx_receiver,
-            insert_lock: Arc::new(Mutex::new(())),
             stacc: Arc::new(Mutex::new(stacc)),
             stacc_require_activation,
         }
     }
 
     pub fn add_transaction(&self, tx: SignedTransaction) -> MempoolResult<()> {
-        // CRITICAL: Atomic check-and-insert to prevent race condition
-        let _lock = self.insert_lock.lock();
-        
-        if self.pending.contains_key(&tx.hash) {
-            return Err(MempoolError::DuplicateTransaction);
-        }
-
-        if self.pending.len() >= self.max_size {
-            return Err(MempoolError::MempoolFull);
-        }
-
+        // Phase 1: Validation OUTSIDE any lock — signature verification,
+        // prefilter, and nonce checks are CPU-bound and do not need
+        // mutual exclusion with other insertions.
         self.validate_transaction(&tx)?;
-        // STACC activation behavior by network profile:
-        // - mainnet-like: require explicit activation (stake/deposit heuristic)
-        // - testnet/devnet-like: auto-activate sender to allow QTEST-only flows
+
+        // Phase 2: STACC admission (has its own internal mutex)
         let now_block = 0u64;
         if !self.stacc_require_activation {
             self.stacc.lock().activation.activate(tx.transaction.from, now_block);
@@ -141,23 +129,39 @@ impl Mempool {
         }
         self.stacc.lock().admit(tx.clone(), now_block)?;
 
+        // Phase 3: Atomic insert using DashMap entry API — no global lock needed.
+        // The entry() call atomically checks for duplicates and inserts.
+        let hash = tx.hash;
         let sender = tx.transaction.from;
         let nonce = tx.transaction.nonce;
         let shard_id = tx.transaction.shard_id;
-        let hash = tx.hash;
+
+        // Size check before insert (non-atomic with insert, but acceptable:
+        // a few extra txs over the limit is harmless and self-correcting)
+        if self.pending.len() >= self.max_size {
+            return Err(MempoolError::MempoolFull);
+        }
+
+        match self.pending.entry(hash) {
+            dashmap::mapref::entry::Entry::Occupied(_) => {
+                return Err(MempoolError::DuplicateTransaction);
+            }
+            dashmap::mapref::entry::Entry::Vacant(vacant) => {
+                vacant.insert(tx.clone());
+            }
+        }
 
         self.by_sender
             .entry(sender)
             .or_insert_with(BTreeMap::new)
             .insert(nonce, hash);
 
-        // CRITICAL: Limit shard index size to prevent DoS
+        // Limit shard index size to prevent DoS
         let mut shard_txs = self.by_shard
             .entry(shard_id)
             .or_insert_with(Vec::new);
         
         if shard_txs.len() >= MAX_SHARD_TXS {
-            // Remove oldest transaction from shard index
             if let Some(_old_hash) = shard_txs.first().copied() {
                 shard_txs.remove(0);
             }
@@ -165,9 +169,6 @@ impl Mempool {
         shard_txs.push(hash);
         drop(shard_txs);
 
-        self.pending.insert(hash, tx.clone());
-
-        // CRITICAL: Handle channel overflow with logging
         if let Err(e) = self.tx_sender.try_send(tx) {
             warn!("Failed to send transaction to subscribers: {:?}", e);
         }

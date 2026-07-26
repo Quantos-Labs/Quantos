@@ -36,18 +36,32 @@ impl VerifyCache {
     }
 
     /// Get cached result or compute and store it.
+    ///
+    /// `compute` runs OUTSIDE the mutex: holding the lock across a signature
+    /// verification would serialize every verification in the process. Two
+    /// threads racing on the same key may both compute it, which is harmless
+    /// because the result is deterministic.
     pub fn get_or_compute<F: FnOnce() -> bool>(&self, key: &[u8], compute: F) -> bool {
-        let mut cache = self.cache.lock().unwrap();
-        if let Some(v) = cache.get(key) {
-            return *v;
+        {
+            let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(v) = cache.get(key) {
+                return *v;
+            }
         }
 
         let res = compute();
-        cache.put(key.to_vec(), res);
+
+        self.cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .put(key.to_vec(), res);
+
         res
     }
 
-    pub fn size(&self) -> usize { self.cache.lock().unwrap().len() }
+    pub fn size(&self) -> usize {
+        self.cache.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
 }
 
 /// Global verification cache instance (LRU, bounded by entries).
@@ -66,22 +80,29 @@ impl PublicKeyCache {
     }
 
     /// Get parsed public key by bytes, or parse and insert.
+    ///
+    /// Parsing runs outside the mutex for the same reason as `VerifyCache`.
     pub fn get_or_parse(&self, key: &[u8]) -> Option<mldsa65::PublicKey> {
-        let mut cache = self.cache.lock().unwrap();
-        if let Some(pk) = cache.get(key) {
-            return Some(pk.clone());
+        {
+            let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(pk) = cache.get(key) {
+                return Some(pk.clone());
+            }
         }
 
-        match mldsa65::PublicKey::from_bytes(key) {
-            Ok(parsed) => {
-                cache.put(key.to_vec(), parsed.clone());
-                Some(parsed)
-            }
-            Err(_) => None,
-        }
+        let parsed = mldsa65::PublicKey::from_bytes(key).ok()?;
+
+        self.cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .put(key.to_vec(), parsed.clone());
+
+        Some(parsed)
     }
 
-    pub fn size(&self) -> usize { self.cache.lock().unwrap().len() }
+    pub fn size(&self) -> usize {
+        self.cache.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
 }
 
 pub static PUBLIC_KEY_CACHE: Lazy<PublicKeyCache> = Lazy::new(|| PublicKeyCache::new(50_000));

@@ -391,6 +391,22 @@ impl Storage {
             .map_err(|e| StorageError::DatabaseError(e.to_string()))
     }
 
+    pub fn put_receipts_batch(&self, receipts: &[TransactionReceipt]) -> StorageResult<()> {
+        let cf = self.db.cf_handle(CF_RECEIPTS)
+            .ok_or_else(|| StorageError::DatabaseError("CF not found".to_string()))?;
+
+        let mut batch = WriteBatch::default();
+        for receipt in receipts {
+            let key = receipt_key(&receipt.tx_hash);
+            let data = bincode::serialize(receipt)
+                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+            batch.put_cf(&cf, &key, &data);
+        }
+
+        self.db.write(batch)
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))
+    }
+
     pub fn get_checkpoint(&self, epoch: u64, slot: u64) -> StorageResult<Option<Checkpoint>> {
         let cf = self.db.cf_handle(CF_CHECKPOINTS)
             .ok_or_else(|| StorageError::DatabaseError("CF not found".to_string()))?;
