@@ -326,22 +326,9 @@ impl QuantosConsensus {
         }
 
         if let Some(ref keys) = self.validator_keys {
-            tracing::debug!("Spawning try_produce_vertices for slot {}", slot);
-            let keys = keys.clone();
-            let fast_path = self.fast_path.clone();
-            let mempool = self.mempool.clone();
-            let storage = self.storage.clone();
-            let committee_manager = self.committee_manager.clone();
-            let config = self.config.clone();
-            let current_slot = self.current_slot.clone();
-            tokio::task::spawn(async move {
-                if let Err(e) = QuantosConsensus::try_produce_vertices_static(
-                    &config, &fast_path, &mempool, &storage, &committee_manager, &current_slot, &keys, slot,
-                ).await {
-                    tracing::error!("pipelined try_produce_vertices error for slot {}: {}", slot, e);
-                }
-            });
-            tracing::debug!("try_produce_vertices spawned for slot {}", slot);
+            tracing::debug!("Calling try_produce_vertices for slot {}", slot);
+            self.try_produce_vertices(keys, slot).await?;
+            tracing::debug!("try_produce_vertices done for slot {}", slot);
         }
 
         tracing::debug!("Checking checkpoint for slot {}", slot);

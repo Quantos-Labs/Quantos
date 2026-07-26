@@ -149,7 +149,7 @@ impl Default for ChainConfig {
             block_cu_limit: 30_000_000,
             min_validator_stake: 100_000 * 10u128.pow(18), // 100,000 QTS
             max_validators_per_committee: 21,
-            initial_shards: 64,
+            initial_shards: 16,
             epoch_length: 32,
             double_sign_slash_bps: 500, // 5%
             downtime_slash_bps: 100, // 1%
@@ -268,7 +268,7 @@ impl GenesisConfig {
             chain: ChainConfig {
                 chain_id,
                 block_time_ms: 200, // 200ms production DAG slot
-                initial_shards: 64, // 64 shards for parallel execution
+                initial_shards: 16, // 16 shards for parallel execution
                 dynamic_sharding: true,
                 min_shards: 1,
                 max_shards: 10_000,
