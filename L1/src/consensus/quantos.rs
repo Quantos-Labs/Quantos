@@ -459,15 +459,11 @@ impl QuantosConsensus {
                         self.fast_path.confirm_vertex_direct(&vertex).await?;
 
                         if let Some((_state_root, receipts)) = self.executor.confirm_execution(&vertex.hash) {
-                            for receipt in &receipts {
-                                if let Err(e) = self.storage.put_receipt(receipt) {
-                                    tracing::error!("Failed to store receipt: {}", e);
-                                }
+                            if let Err(e) = self.storage.put_receipts_batch(&receipts) {
+                                tracing::error!("Failed to store {} receipts: {}", receipts.len(), e);
                             }
-                            for tx in &vertex.transactions {
-                                if let Err(e) = self.storage.put_transaction(tx) {
-                                    tracing::error!("Failed to store transaction: {}", e);
-                                }
+                            if let Err(e) = self.storage.put_transactions_batch(&vertex.transactions) {
+                                tracing::error!("Failed to store {} transactions: {}", vertex.transactions.len(), e);
                             }
                             tracing::info!(
                                 "Committed vertex {} for shard {} — {} txs, {} receipts",
@@ -489,15 +485,11 @@ impl QuantosConsensus {
                         self.fast_path.receive_vote(vote).await?;
 
                         if let Some((_state_root, receipts)) = self.executor.confirm_execution(&vertex.hash) {
-                            for receipt in &receipts {
-                                if let Err(e) = self.storage.put_receipt(receipt) {
-                                    tracing::error!("Failed to store receipt: {}", e);
-                                }
+                            if let Err(e) = self.storage.put_receipts_batch(&receipts) {
+                                tracing::error!("Failed to store {} receipts: {}", receipts.len(), e);
                             }
-                            for tx in &vertex.transactions {
-                                if let Err(e) = self.storage.put_transaction(tx) {
-                                    tracing::error!("Failed to store transaction: {}", e);
-                                }
+                            if let Err(e) = self.storage.put_transactions_batch(&vertex.transactions) {
+                                tracing::error!("Failed to store {} transactions: {}", vertex.transactions.len(), e);
                             }
                             tracing::info!(
                                 "Committed vertex {} for shard {} — {} txs, {} receipts",
