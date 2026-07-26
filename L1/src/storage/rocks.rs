@@ -198,12 +198,29 @@ impl Storage {
     pub fn put_account(&self, account: &Account) -> StorageResult<()> {
         let cf = self.db.cf_handle(CF_ACCOUNTS)
             .ok_or_else(|| StorageError::DatabaseError("CF not found".to_string()))?;
-        
+
         let key = account_key(&account.address);
         let data = bincode::serialize(account)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-        
+
         self.db.put_cf(&cf, &key, &data)
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))
+    }
+
+    /// Persist a batch of accounts atomically using a single RocksDB WriteBatch.
+    pub fn put_accounts_batch(&self, accounts: &[Account]) -> StorageResult<()> {
+        let cf = self.db.cf_handle(CF_ACCOUNTS)
+            .ok_or_else(|| StorageError::DatabaseError("CF not found".to_string()))?;
+
+        let mut batch = WriteBatch::default();
+        for account in accounts {
+            let key = account_key(&account.address);
+            let data = bincode::serialize(account)
+                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+            batch.put_cf(&cf, &key, &data);
+        }
+
+        self.db.write(batch)
             .map_err(|e| StorageError::DatabaseError(e.to_string()))
     }
 

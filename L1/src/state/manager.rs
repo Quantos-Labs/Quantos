@@ -598,9 +598,10 @@ impl StateManager {
     /// Used by the optimistic executor to commit a speculative result without
     /// re-executing the transactions.
     pub fn commit_execution(&self, execution: &StateExecution) -> StateResult<()> {
+        self.storage.put_accounts_batch(&execution.accounts)
+            .map_err(|e| StateError::StorageError(format!("Failed to commit accounts: {}", e)))?;
+
         for account in &execution.accounts {
-            self.storage.put_account(account)
-                .map_err(|e| StateError::StorageError(format!("Failed to commit account: {}", e)))?;
             self.account_cache.insert(account.address, account.clone());
         }
 
