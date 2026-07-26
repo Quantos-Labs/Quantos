@@ -126,6 +126,9 @@ pub struct StateManager {
     account_cache: Arc<DashMap<Address, Account>>,
     pending_state: Arc<DashMap<Address, Account>>,
     state_root: Arc<RwLock<Hash>>,
+    /// Cached account hashes used to compute state roots without re-reading
+    /// every account from RocksDB for each vertex execution.
+    account_hash_index: Arc<RwLock<Option<BTreeMap<Address, Hash>>>>,
     /// Authorization token for privileged operations
     auth_token: Arc<Mutex<[u8; 32]>>,
     /// Atomic counter for speculative execution ordering
@@ -226,18 +229,33 @@ impl StateManager {
         // CRITICAL (w1): Use OsRng for cryptographically secure auth token
         let mut token = [0u8; 32];
         OsRng.fill_bytes(&mut token);
-        
+
         Self {
             storage,
             account_cache: Arc::new(DashMap::new()),
             pending_state: Arc::new(DashMap::new()),
             state_root: Arc::new(RwLock::new([0u8; 32])),
+            account_hash_index: Arc::new(RwLock::new(None)),
             auth_token: Arc::new(Mutex::new(token)),
             speculative_counter: Arc::new(AtomicU64::new(0)),
             state_compressor: Arc::new(QuantumStateCompressor::new()),
             contract_manager: Arc::new(RwLock::new(None)),
             evm_engine: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Persist accounts to durable storage and update all in-memory caches.
+    fn persist_accounts(&self, accounts: &[Account]) -> StateResult<()> {
+        self.storage.put_accounts_batch(accounts)
+            .map_err(|e| StateError::StorageError(format!("Failed to persist accounts: {}", e)))?;
+
+        for account in accounts {
+            self.account_cache.insert(account.address, account.clone());
+            if let Some(index) = self.account_hash_index.write().as_mut() {
+                index.insert(account.address, account.hash());
+            }
+        }
+        Ok(())
     }
 
     /// Sets the contract manager after initialization (avoids circular deps).
@@ -548,14 +566,8 @@ impl StateManager {
         sender.increment_nonce()
             .map_err(|e| StateError::StorageError(e))?;
 
-        self.storage.put_account(&sender)
-            .map_err(|_| StateError::StorageError("Failed to store sender account".to_string()))?;
-        self.storage.put_account(&recipient)
-            .map_err(|_| StateError::StorageError("Failed to store recipient account".to_string()))?;
-
         let receipt_to = recipient.address;
-        self.account_cache.insert(sender.address, sender);
-        self.account_cache.insert(recipient.address, recipient);
+        self.persist_accounts(&[sender, recipient])?;
 
         Ok(TransactionReceipt {
             tx_hash: tx.hash,
@@ -598,12 +610,7 @@ impl StateManager {
     /// Used by the optimistic executor to commit a speculative result without
     /// re-executing the transactions.
     pub fn commit_execution(&self, execution: &StateExecution) -> StateResult<()> {
-        self.storage.put_accounts_batch(&execution.accounts)
-            .map_err(|e| StateError::StorageError(format!("Failed to commit accounts: {}", e)))?;
-
-        for account in &execution.accounts {
-            self.account_cache.insert(account.address, account.clone());
-        }
+        self.persist_accounts(&execution.accounts)?;
 
         *self.state_root.write() = execution.state_root;
         Ok(())
@@ -891,15 +898,30 @@ impl StateManager {
         Ok(())
     }
 
+    fn load_account_hash_index(&self) -> StateResult<BTreeMap<Address, Hash>> {
+        {
+            let guard = self.account_hash_index.read();
+            if let Some(index) = guard.as_ref() {
+                return Ok(index.clone());
+            }
+        }
+
+        let mut index = BTreeMap::new();
+        for account in self.storage.iter_accounts()
+            .map_err(|e| StateError::StorageError(e.to_string()))? {
+            index.insert(account.address, account.hash());
+        }
+
+        let mut guard = self.account_hash_index.write();
+        *guard = Some(index.clone());
+        Ok(index)
+    }
+
     fn compute_state_root_with_overlay(
         &self,
         overlay: &HashMap<Address, Account>,
     ) -> StateResult<Hash> {
-        let mut accounts: BTreeMap<Address, Hash> = self.storage.iter_accounts()
-            .map_err(|e| StateError::StorageError(e.to_string()))?
-            .into_iter()
-            .map(|account| (account.address, account.hash()))
-            .collect();
+        let mut accounts = self.load_account_hash_index()?;
 
         for account in overlay.values() {
             accounts.insert(account.address, account.hash());
@@ -942,16 +964,12 @@ impl StateManager {
         // CRITICAL: Require authorization for state manipulation
         self.verify_auth(auth_token)?;
         
-        let mut account_hashes = Vec::new();
+        let accounts: Vec<Account> = self.pending_state
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
 
-        for entry in self.pending_state.iter() {
-            let account = entry.value();
-            self.storage.put_account(account)
-                .map_err(|_| StateError::StorageError("Failed to commit account".to_string()))?;
-            self.account_cache.insert(account.address, account.clone());
-            account_hashes.push(account.hash());
-        }
-
+        self.persist_accounts(&accounts)?;
         self.pending_state.clear();
 
         // CRITICAL: Compute state root from ALL accounts, not just pending
@@ -981,16 +999,11 @@ impl StateManager {
     /// Restores an account to a previous state (for atomic rollback)
     /// Used by cross-shard atomic protocol during rollback
     pub fn restore_account(&self, address: &Address, account: crate::types::Account) -> StateResult<()> {
-        // Update storage
-        self.storage.put_account(&account)
-            .map_err(|e| StateError::StorageError(format!("Restore failed: {}", e)))?;
-        
-        // Update cache
-        self.account_cache.insert(*address, account);
-        
+        self.persist_accounts(&[account])?;
+
         // Clear any pending state for this account
         self.pending_state.remove(address);
-        
+
         Ok(())
     }
 
@@ -998,15 +1011,18 @@ impl StateManager {
         self.compute_full_state_root()
     }
     
-    /// Computes state root from all accounts with deterministic ordering
+    /// Computes state root from all accounts with deterministic ordering.
+    /// Reloads the cached account hash index from durable storage so that it
+    /// stays consistent after writes that did not go through persist_accounts.
     fn compute_full_state_root(&self) -> StateResult<Hash> {
-        let accounts: Vec<(Address, Hash)> = self.storage.iter_accounts()
-            .map_err(|e| StateError::StorageError(e.to_string()))?
-            .into_iter()
-            .map(|account| (account.address, account.hash()))
-            .collect();
+        let mut index = BTreeMap::new();
+        for account in self.storage.iter_accounts()
+            .map_err(|e| StateError::StorageError(e.to_string()))? {
+            index.insert(account.address, account.hash());
+        }
 
-        Ok(sparse_merkle_root(accounts))
+        *self.account_hash_index.write() = Some(index.clone());
+        Ok(sparse_merkle_root(index.into_iter().collect()))
     }
 
     /// Sets account balance (requires authorization - CRITICAL OPERATION)
@@ -1016,10 +1032,8 @@ impl StateManager {
         
         let mut account = self.get_account(address)?;
         account.balance = balance;
-        
-        self.storage.put_account(&account)
-            .map_err(|_| StateError::StorageError("Failed to set balance".to_string()))?;
-        self.account_cache.insert(*address, account);
+
+        self.persist_accounts(&[account])?;
         
         Ok(())
     }
@@ -1068,13 +1082,7 @@ impl StateManager {
         tracing::info!("Total genesis supply: {} (raw units)", total_supply);
         
         // Atomic storage batch write for performance
-        for account in &accounts {
-            self.storage.put_account(account)
-                .map_err(|e| StateError::StorageError(format!("Genesis storage failed: {}", e)))?;
-            
-            // Populate cache
-            self.account_cache.insert(account.address, account.clone());
-        }
+        self.persist_accounts(&accounts)?;
         
         // Compute and update state root from durable storage using the same
         // Sparse Merkle Tree used by normal execution.
@@ -1095,11 +1103,7 @@ impl StateManager {
         // CRITICAL: Require authorization
         self.verify_auth(auth_token)?;
         
-        for account in &accounts {
-            self.storage.put_account(account)
-                .map_err(|e| StateError::StorageError(format!("Batch update failed: {}", e)))?;
-            self.account_cache.insert(account.address, account.clone());
-        }
+        self.persist_accounts(&accounts)?;
         
         // Update state root
         let new_state_root = self.compute_full_state_root()?;

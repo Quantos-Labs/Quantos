@@ -424,6 +424,41 @@ impl Storage {
             .map_err(|e| StorageError::DatabaseError(e.to_string()))
     }
 
+    /// Persist receipts and transactions together in a single atomic WriteBatch.
+    /// Reduces RocksDB write amplification when finalizing many vertices per slot.
+    pub fn put_finalized_batch(
+        &self,
+        receipts: &[TransactionReceipt],
+        txs: &[SignedTransaction],
+    ) -> StorageResult<()> {
+        let mut batch = WriteBatch::default();
+
+        if !receipts.is_empty() {
+            let cf = self.db.cf_handle(CF_RECEIPTS)
+                .ok_or_else(|| StorageError::DatabaseError("CF not found".to_string()))?;
+            for receipt in receipts {
+                let key = receipt_key(&receipt.tx_hash);
+                let data = bincode::serialize(receipt)
+                    .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+                batch.put_cf(&cf, &key, &data);
+            }
+        }
+
+        if !txs.is_empty() {
+            let cf = self.db.cf_handle(CF_TRANSACTIONS)
+                .ok_or_else(|| StorageError::DatabaseError("CF not found".to_string()))?;
+            for tx in txs {
+                let key = transaction_key(&tx.hash);
+                let data = bincode::serialize(tx)
+                    .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+                batch.put_cf(&cf, &key, &data);
+            }
+        }
+
+        self.db.write(batch)
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))
+    }
+
     pub fn get_checkpoint(&self, epoch: u64, slot: u64) -> StorageResult<Option<Checkpoint>> {
         let cf = self.db.cf_handle(CF_CHECKPOINTS)
             .ok_or_else(|| StorageError::DatabaseError("CF not found".to_string()))?;

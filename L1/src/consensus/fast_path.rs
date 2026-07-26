@@ -26,7 +26,7 @@ use crate::crypto::{sign_ml_dsa_65, verify_ml_dsa_65, MlDsa65BatchVerifier, MLDS
 use crate::dag::DAGGraph;
 use crate::mempool::ShardedMempool;
 use crate::state::OptimisticExecutor;
-use crate::types::{Address, CommitteeVote, Hash, ShardId, SignedTransaction, DAGVertex, VertexStatus};
+use crate::types::{Address, CommitteeVote, Hash, ShardId, SignedTransaction, TransactionReceipt, DAGVertex, VertexStatus};
 
 #[derive(Clone)]
 pub struct FastPath {
@@ -259,9 +259,11 @@ impl FastPath {
         Ok(())
     }
 
-    pub async fn receive_vote(&self, vote: CommitteeVote) -> ConsensusResult<()> {
+    pub async fn receive_vote(&self, vote: CommitteeVote) -> ConsensusResult<Option<(Hash, Vec<TransactionReceipt>)>> {
         let epoch = self.committee_manager.current_epoch();
-        
+
+        let mut confirmed: Option<(Hash, Vec<TransactionReceipt>)> = None;
+
         if let Some(mut pending) = self.pending_vertices.get_mut(&vote.vertex_hash) {
             let committee = self.committee_manager
                 .get_committee_for_shard(epoch, pending.vertex.shard_id)
@@ -316,21 +318,21 @@ impl FastPath {
                 ).is_ok() {
                     // Only one thread will succeed in this exchange
                     pending.vertex.status = VertexStatus::PreConfirmed;
-                    
+
                     // Clone vertex before dropping the lock
                     let vertex = pending.vertex.clone();
                     drop(pending);
-                    
-                    self.confirm_vertex(&vertex).await?;
+
+                    confirmed = self.confirm_vertex(&vertex).await?;
                 }
             }
         }
 
-        Ok(())
+        Ok(confirmed)
     }
 
-    async fn confirm_vertex(&self, vertex: &DAGVertex) -> ConsensusResult<()> {
-        self.executor.confirm_execution(&vertex.hash);
+    async fn confirm_vertex(&self, vertex: &DAGVertex) -> ConsensusResult<Option<(Hash, Vec<TransactionReceipt>)>> {
+        let result = self.executor.confirm_execution(&vertex.hash);
 
         self.dag.add_vertex(vertex.clone())
             .map_err(|e| ConsensusError::StorageError(e.to_string()))?;
@@ -343,12 +345,12 @@ impl FastPath {
         self.dag.update_vertex_status_internal(&vertex.hash, VertexStatus::Confirmed)
             .map_err(|e| ConsensusError::StorageError(e.to_string()))?;
 
-        Ok(())
+        Ok(result)
     }
 
     /// Directly confirm a vertex without committee voting.
     /// Used in single-node / auto-confirm mode where all validators run on one node.
-    pub async fn confirm_vertex_direct(&self, vertex: &DAGVertex) -> ConsensusResult<()> {
+    pub async fn confirm_vertex_direct(&self, vertex: &DAGVertex) -> ConsensusResult<Option<(Hash, Vec<TransactionReceipt>)>> {
         // Remove from pending vertices if present
         if self.pending_vertices.remove(&vertex.hash).is_some() {
             self.pending_count.fetch_sub(1, Ordering::Relaxed);

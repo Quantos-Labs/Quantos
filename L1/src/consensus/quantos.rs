@@ -448,31 +448,19 @@ impl QuantosConsensus {
         );
 
         // Phase 3: Auto-confirm vertices (single-node / auto-confirm mode)
+        let mut all_receipts = Vec::new();
+        let mut all_txs = Vec::new();
+        let mut committed_count = 0;
+
         for vertex_result in results {
             match vertex_result {
                 Ok(vertex) => {
                     let tx_count = vertex.tx_count();
                     let shard_id = vertex.shard_id;
 
-                    if auto_confirm {
+                    let confirm_result = if auto_confirm {
                         // Directly confirm the vertex without committee voting
-                        self.fast_path.confirm_vertex_direct(&vertex).await?;
-
-                        if let Some((_state_root, receipts)) = self.executor.confirm_execution(&vertex.hash) {
-                            if let Err(e) = self.storage.put_receipts_batch(&receipts) {
-                                tracing::error!("Failed to store {} receipts: {}", receipts.len(), e);
-                            }
-                            if let Err(e) = self.storage.put_transactions_batch(&vertex.transactions) {
-                                tracing::error!("Failed to store {} transactions: {}", vertex.transactions.len(), e);
-                            }
-                            tracing::info!(
-                                "Committed vertex {} for shard {} — {} txs, {} receipts",
-                                hex::encode(&vertex.hash[..4]),
-                                shard_id,
-                                tx_count,
-                                receipts.len()
-                            );
-                        }
+                        self.fast_path.confirm_vertex_direct(&vertex).await?
                     } else {
                         // Multi-node: create self-vote and submit
                         let vote = self.fast_path.create_vote(
@@ -482,28 +470,44 @@ impl QuantosConsensus {
                             1,
                             &keys.signing_key.secret_key,
                         )?;
-                        self.fast_path.receive_vote(vote).await?;
+                        self.fast_path.receive_vote(vote).await?
+                    };
 
-                        if let Some((_state_root, receipts)) = self.executor.confirm_execution(&vertex.hash) {
-                            if let Err(e) = self.storage.put_receipts_batch(&receipts) {
-                                tracing::error!("Failed to store {} receipts: {}", receipts.len(), e);
-                            }
-                            if let Err(e) = self.storage.put_transactions_batch(&vertex.transactions) {
-                                tracing::error!("Failed to store {} transactions: {}", vertex.transactions.len(), e);
-                            }
-                            tracing::info!(
-                                "Committed vertex {} for shard {} — {} txs, {} receipts",
-                                hex::encode(&vertex.hash[..4]),
-                                shard_id,
-                                tx_count,
-                                receipts.len()
-                            );
-                        }
+                    if let Some((_state_root, receipts)) = confirm_result {
+                        all_receipts.extend(receipts);
+                        all_txs.extend(vertex.transactions);
+                        committed_count += 1;
+
+                        tracing::info!(
+                            "Committed vertex {} for shard {} — {} txs",
+                            hex::encode(&vertex.hash[..4]),
+                            shard_id,
+                            tx_count,
+                        );
                     }
                 }
                 Err(e) => {
                     tracing::warn!("No vertex produced: {}", e);
                 }
+            }
+        }
+
+        if committed_count > 0 {
+            if let Err(e) = self.storage.put_finalized_batch(&all_receipts, &all_txs) {
+                tracing::error!(
+                    "Failed to store {} receipts and {} transactions: {}",
+                    all_receipts.len(),
+                    all_txs.len(),
+                    e
+                );
+            } else {
+                tracing::info!(
+                    "Finalized slot {} — {} vertices, {} receipts, {} transactions",
+                    slot,
+                    committed_count,
+                    all_receipts.len(),
+                    all_txs.len()
+                );
             }
         }
 
@@ -613,7 +617,8 @@ impl QuantosConsensus {
     }
 
     pub async fn receive_vote(&self, vote: CommitteeVote) -> ConsensusResult<()> {
-        self.fast_path.receive_vote(vote).await
+        let _ = self.fast_path.receive_vote(vote).await?;
+        Ok(())
     }
 
     pub fn get_vertex(&self, hash: &Hash) -> Option<DAGVertex> {
