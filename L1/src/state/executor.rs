@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use rayon::prelude::*;
 use dashmap::DashMap;
 
-use crate::state::{StateManager, StateResult, StateError};
+use crate::state::{StateManager, StateResult, StateError, StateExecution};
 use crate::types::{
     Address, Amount, Hash, ShardId, SignedTransaction, 
     TransactionReceipt, TransactionStatus, DAGVertex,
@@ -58,6 +58,19 @@ impl ParallelExecutor {
     pub fn execute_vertex_speculative(&self, vertex: &DAGVertex) -> StateResult<(Hash, Vec<TransactionReceipt>)> {
         let execution = self.state_manager.simulate_transactions(&vertex.transactions)?;
         Ok((execution.state_root, execution.receipts))
+    }
+
+    /// Prepare a full execution (including contract side effects) without
+    /// persisting accounts. The returned `StateExecution` can be committed
+    /// later via `commit_execution`, avoiding re-execution.
+    pub fn prepare_vertex(&self, vertex: &DAGVertex) -> StateResult<StateExecution> {
+        self.state_manager.prepare_transactions(&vertex.transactions)
+    }
+
+    /// Persist a pre-computed `StateExecution` to the state manager without
+    /// re-executing the transactions.
+    pub fn commit_execution(&self, execution: &StateExecution) -> StateResult<()> {
+        self.state_manager.commit_execution(execution)
     }
 
     /// HIGH (w4): Improved conflict detection that properly tracks all account touches.
@@ -175,8 +188,7 @@ pub struct OptimisticExecutor {
 struct SpeculativeResult {
     vertex: DAGVertex,
     vertex_hash: Hash,
-    state_root: Hash,
-    receipts: Vec<TransactionReceipt>,
+    execution: StateExecution,
     conflicts: Vec<Hash>,
 }
 
@@ -188,25 +200,30 @@ impl OptimisticExecutor {
         }
     }
 
+    /// Speculatively execute the vertex once, fully (including contract side
+    /// effects), and store the resulting `StateExecution`. The state is not
+    /// persisted until `confirm_execution` is called.
     pub fn speculative_execute(&self, vertex: &DAGVertex) -> StateResult<Hash> {
-        let (state_root, receipts) = self.executor.execute_vertex_speculative(vertex)?;
-        
+        let execution = self.executor.prepare_vertex(vertex)?;
+        let state_root = execution.state_root;
+
         self.speculative_results.insert(vertex.hash, SpeculativeResult {
             vertex: vertex.clone(),
             vertex_hash: vertex.hash,
-            state_root,
-            receipts,
+            execution,
             conflicts: Vec::new(),
         });
 
         Ok(state_root)
     }
 
+    /// Confirm the previously prepared execution by persisting the stored
+    /// `StateExecution` without re-executing the transactions.
     pub fn confirm_execution(&self, vertex_hash: &Hash) -> Option<(Hash, Vec<TransactionReceipt>)> {
         self.speculative_results.remove(vertex_hash)
             .and_then(|(_, result)| {
-                match self.executor.execute_vertex(&result.vertex) {
-                    Ok((state_root, receipts)) => Some((state_root, receipts)),
+                match self.executor.commit_execution(&result.execution) {
+                    Ok(()) => Some((result.execution.state_root, result.execution.receipts)),
                     Err(err) => {
                         tracing::error!(
                             "Failed to commit speculative execution for vertex {}: {}",
@@ -225,6 +242,6 @@ impl OptimisticExecutor {
 
     pub fn get_speculative_result(&self, vertex_hash: &Hash) -> Option<Hash> {
         self.speculative_results.get(vertex_hash)
-            .map(|r| r.state_root)
+            .map(|r| r.execution.state_root)
     }
 }

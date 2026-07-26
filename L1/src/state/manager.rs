@@ -580,15 +580,24 @@ impl StateManager {
 
     /// Executes transactions against an in-memory overlay and returns the
     /// resulting state root without writing accounts or contract storage.
+    /// Contract side effects are simulated, not persisted.
     pub fn simulate_transactions(&self, txs: &[SignedTransaction]) -> StateResult<StateExecution> {
         self.execute_transactions_overlay(txs, false)
     }
 
-    /// Executes transactions deterministically, then atomically persists the
-    /// changed accounts only after the full overlay execution succeeds.
-    pub fn apply_transactions_atomically(&self, txs: &[SignedTransaction]) -> StateResult<StateExecution> {
-        let execution = self.execute_transactions_overlay(txs, true)?;
+    /// Executes transactions fully (including contract side effects) against an
+    /// in-memory overlay, returning the resulting `StateExecution` without
+    /// persisting accounts. This is used by the optimistic executor to prepare
+    /// a result that can be committed later without re-execution.
+    pub fn prepare_transactions(&self, txs: &[SignedTransaction]) -> StateResult<StateExecution> {
+        self.execute_transactions_overlay(txs, true)
+    }
 
+    /// Atomically persist a pre-computed `StateExecution`.
+    ///
+    /// Used by the optimistic executor to commit a speculative result without
+    /// re-executing the transactions.
+    pub fn commit_execution(&self, execution: &StateExecution) -> StateResult<()> {
         for account in &execution.accounts {
             self.storage.put_account(account)
                 .map_err(|e| StateError::StorageError(format!("Failed to commit account: {}", e)))?;
@@ -596,6 +605,14 @@ impl StateManager {
         }
 
         *self.state_root.write() = execution.state_root;
+        Ok(())
+    }
+
+    /// Executes transactions deterministically, then atomically persists the
+    /// changed accounts only after the full overlay execution succeeds.
+    pub fn apply_transactions_atomically(&self, txs: &[SignedTransaction]) -> StateResult<StateExecution> {
+        let execution = self.prepare_transactions(txs)?;
+        self.commit_execution(&execution)?;
         Ok(execution)
     }
 
