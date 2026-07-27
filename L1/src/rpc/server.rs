@@ -851,6 +851,7 @@ impl QuantosRpcServer for QuantosRpcImpl {
             pending_vertices: metrics.pending_vertices,
             confirmed_vertices: metrics.confirmed_vertices,
             total_validators: metrics.total_validators,
+            num_shards: self.consensus.num_shards(),
         })
     }
 
@@ -1968,6 +1969,10 @@ pub struct MetricsInfo {
     pub pending_vertices: usize,
     pub confirmed_vertices: usize,
     pub total_validators: usize,
+    /// Number of shards the node actually produces vertices for. Clients that
+    /// route transactions by shard need this to avoid stranding transactions
+    /// in shards the node never visits.
+    pub num_shards: usize,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

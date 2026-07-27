@@ -35,17 +35,29 @@ struct Args {
     #[arg(long, default_value_t = 50)]
     batch_size: usize,
 
-    /// Number of shards to distribute across
-    #[arg(long, default_value_t = 16)]
-    shards: u16,
+    /// Number of shards to distribute across. Defaults to the node's own shard
+    /// count, which is what you want unless you are deliberately testing a
+    /// mismatch (see --force-shards).
+    #[arg(long)]
+    shards: Option<u16>,
+
+    /// Send to --shards even when it disagrees with the node's shard count.
+    /// Transactions routed to shards the node does not serve are never mined,
+    /// so this will produce an incomplete run by construction.
+    #[arg(long, default_value_t = false)]
+    force_shards: bool,
 
     /// Number of unique senders (keypairs). More senders = more txs per vertex.
     #[arg(long, default_value_t = 100)]
     senders: usize,
 
-    /// Poll interval for metrics (seconds)
-    #[arg(long, default_value_t = 30)]
-    poll_interval: u64,
+    /// Maximum time to wait for submitted txs to drain (seconds)
+    #[arg(long = "max-wait", alias = "poll-interval", default_value_t = 120)]
+    max_wait: u64,
+
+    /// Abort the wait after this many seconds with no drain progress (seconds)
+    #[arg(long, default_value_t = 15)]
+    stall_timeout: u64,
 }
 
 #[derive(serde::Deserialize, Debug, Default)]
@@ -71,6 +83,37 @@ struct Metrics {
     pending_vertices: usize,
     confirmed_vertices: usize,
     total_validators: usize,
+    /// Absent on nodes older than the metrics change that added it.
+    #[serde(default)]
+    num_shards: usize,
+}
+
+/// How the run ended. Only `Complete` yields a TPS figure worth quoting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    /// Every accepted transaction left the mempool.
+    Complete,
+    /// The node stopped draining before finishing.
+    Stalled,
+    /// Ran out of the allotted wait window.
+    Timeout,
+    /// The node accepted nothing, so there was nothing to measure.
+    NothingAccepted,
+}
+
+/// Fetch node metrics, surfacing every failure mode instead of silently
+/// degrading to `Default`. A benchmark that treats an unreachable node as
+/// "zero pending transactions" reports success for a run that never happened.
+fn fetch_metrics(client: &reqwest::blocking::Client, url: &str) -> Result<Metrics, String> {
+    let raw = rpc_call(client, url, "qnt_getMetrics", "");
+    let parsed: RpcResponse<Metrics> = serde_json::from_str(&raw).map_err(|e| {
+        let snippet: String = raw.chars().take(160).collect();
+        format!("malformed metrics response: {} (raw: {})", e, snippet)
+    })?;
+    if let Some(err) = parsed.error {
+        return Err(format!("RPC error {}: {}", err.code, err.message));
+    }
+    parsed.result.ok_or_else(|| "metrics response contained no result".to_string())
 }
 
 fn rpc_call(client: &reqwest::blocking::Client, url: &str, method: &str, params: &str) -> String {
@@ -98,19 +141,56 @@ fn main() {
     println!("  Endpoint:    {}", args.url);
     println!("  Total txs:   {}", args.txs);
     println!("  Batch size:  {}", args.batch_size);
-    println!("  Shards:      {}", args.shards);
     println!("  Senders:     {}", args.senders);
     println!();
 
     // ── Get initial metrics ──
-    let initial = rpc_call(&client, &args.url, "qnt_getMetrics", "");
-    let initial_metrics: RpcResponse<Metrics> = serde_json::from_str(&initial).unwrap_or(RpcResponse::<Metrics>::default());
-    let initial_slot = initial_metrics.result.as_ref().map(|m| m.current_slot).unwrap_or(0);
-    let initial_finalized = initial_metrics.result.as_ref().map(|m| m.finalized_slot).unwrap_or(0);
-    let initial_pending = initial_metrics.result.as_ref().map(|m| m.pending_transactions).unwrap_or(0);
+    let initial_m = match fetch_metrics(&client, &args.url) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("❌ Cannot read node metrics: {}", e);
+            eprintln!("   Refusing to benchmark a node we cannot measure.");
+            std::process::exit(1);
+        }
+    };
+    let initial_slot = initial_m.current_slot;
+    let initial_finalized = initial_m.finalized_slot;
+    // Transactions already stuck in the mempool before we start. They are not
+    // ours and may never drain, so every measurement below is relative to this.
+    let baseline_pending = initial_m.pending_transactions;
+
+    // ── Resolve shard count against what the node actually serves ──
+    let node_shards = initial_m.num_shards;
+    let shards: u16 = match (args.shards, node_shards) {
+        (Some(requested), node) if node > 0 && requested as usize != node => {
+            if args.force_shards {
+                println!("⚠️  Shard mismatch forced: sending to {} shards, node serves {}.", requested, node);
+                println!("    Transactions in shards >= {} will never be mined.\n", node);
+                requested
+            } else {
+                println!("⚠️  Requested {} shards but node serves {} — using {}.", requested, node, node);
+                println!("    Pass --force-shards to override (produces an incomplete run).\n");
+                node as u16
+            }
+        }
+        (Some(requested), _) => requested,
+        (None, node) if node > 0 => node as u16,
+        (None, _) => {
+            println!("⚠️  Node does not report num_shards (old build); defaulting to 4.\n");
+            4
+        }
+    };
+    if shards == 0 {
+        eprintln!("❌ Resolved shard count is 0 — nothing to send to.");
+        std::process::exit(1);
+    }
 
     println!("📊 Initial state:");
-    println!("   Slot: {} | Finalized: {} | Pending: {}", initial_slot, initial_finalized, initial_pending);
+    println!("   Slot: {} | Finalized: {} | Pending: {}", initial_slot, initial_finalized, baseline_pending);
+    println!("   Shards: {} (node reports {})", shards, node_shards);
+    if baseline_pending > 0 {
+        println!("   ℹ️  {} txs were already pending; they are excluded from this run's totals.", baseline_pending);
+    }
     println!();
 
     // ── Generate + sign transactions ──
@@ -128,7 +208,7 @@ fn main() {
         .map(|i| {
             let kp_idx = i % keypairs.len();
             let kp = &keypairs[kp_idx];
-            let shard_id = (i % args.shards as usize) as u16;
+            let shard_id = (i % shards as usize) as u16;
             let per_sender_nonce = (i / keypairs.len()) as u64;
 
             let mut tx = Transaction::new(
@@ -208,48 +288,106 @@ fn main() {
     println!("   Submit time: {:?}", submit_time);
     println!("   Submit TPS:  {:.0} tx/s\n", submit_tps);
 
-    // ── Poll metrics for finalization (fast polling) ──
-    println!("⏳ Polling finalization (200ms interval, max {}s)...", args.poll_interval);
+    // ── Wait for our transactions to drain out of the mempool ──
+    //
+    // "Drained" is measured against the pre-run baseline: txs that were already
+    // stuck before we started are not ours and may never clear, so waiting for
+    // pending == 0 would hang forever and waiting for a fixed window would just
+    // time out. We track how many of *our* accepted txs have left the mempool.
+    println!(
+        "⏳ Waiting for {} txs to drain (200ms polls, max {}s, stall abort after {}s)...",
+        accepted, args.max_wait, args.stall_timeout
+    );
     let poll_start = Instant::now();
-    let mut last_pending = usize::MAX;
-    let mut first_zero_pending: Option<Duration> = None;
+    let max_wait = Duration::from_secs(args.max_wait);
+    let stall_timeout = Duration::from_secs(args.stall_timeout);
 
-    while poll_start.elapsed() < Duration::from_secs(args.poll_interval) {
-        std::thread::sleep(Duration::from_millis(200));
-        let resp = rpc_call(&client, &args.url, "qnt_getMetrics", "");
-        let parsed: RpcResponse<Metrics> = serde_json::from_str(&resp).unwrap_or(RpcResponse::<Metrics>::default());
-        if let Some(m) = parsed.result {
+    let mut drained = 0usize;
+    let mut last_progress_at = Duration::ZERO;
+    let mut last_reported_drained = usize::MAX;
+    let mut rpc_failures = 0usize;
+    let mut last_rpc_error: Option<String> = None;
+    let mut last_metrics = initial_m.clone();
+    // Stays as-is unless the loop reaches a more specific conclusion.
+    let mut outcome = if accepted == 0 { Outcome::NothingAccepted } else { Outcome::Timeout };
+
+    if accepted > 0 {
+        loop {
             let elapsed = poll_start.elapsed();
-            let pending = m.pending_transactions;
-            if pending != last_pending {
-                println!("   [{:.1}s] Slot: {} | Finalized: {} | Pending: {} | Vertices: {}",
-                    elapsed.as_secs_f64(), m.current_slot, m.finalized_slot, pending, m.confirmed_vertices);
-                last_pending = pending;
+            if elapsed >= max_wait {
+                break;
             }
-            if pending == 0 && first_zero_pending.is_none() {
-                first_zero_pending = Some(elapsed);
-                println!("   ✅ All pending cleared at {:.1}s", elapsed.as_secs_f64());
+
+            std::thread::sleep(Duration::from_millis(200));
+
+            let m = match fetch_metrics(&client, &args.url) {
+                Ok(m) => m,
+                Err(e) => {
+                    rpc_failures += 1;
+                    last_rpc_error = Some(e);
+                    continue;
+                }
+            };
+            let elapsed = poll_start.elapsed();
+            last_metrics = m.clone();
+
+            // Anything above the baseline is still-unprocessed work from this run.
+            let ours_left = m.pending_transactions.saturating_sub(baseline_pending).min(accepted);
+            let now_drained = accepted - ours_left;
+
+            if now_drained > drained {
+                drained = now_drained;
+                last_progress_at = elapsed;
+            }
+
+            if drained != last_reported_drained {
+                println!(
+                    "   [{:>5.1}s] drained {}/{} ({:.0}%) | slot {} | finalized {} | mempool {} | vertices {}",
+                    elapsed.as_secs_f64(),
+                    drained,
+                    accepted,
+                    100.0 * drained as f64 / accepted as f64,
+                    m.current_slot,
+                    m.finalized_slot,
+                    m.pending_transactions,
+                    m.confirmed_vertices,
+                );
+                last_reported_drained = drained;
+            }
+
+            if drained >= accepted {
+                outcome = Outcome::Complete;
+                println!("   ✅ All {} submitted txs drained at {:.1}s", accepted, elapsed.as_secs_f64());
+                break;
+            }
+
+            if elapsed.saturating_sub(last_progress_at) >= stall_timeout {
+                outcome = Outcome::Stalled;
                 break;
             }
         }
     }
 
     // ── Final metrics ──
-    let final_resp = rpc_call(&client, &args.url, "qnt_getMetrics", "");
-    let final_metrics: RpcResponse<Metrics> = serde_json::from_str(&final_resp).unwrap_or(RpcResponse::<Metrics>::default());
-    let final_m = final_metrics.result.unwrap_or_default();
+    match fetch_metrics(&client, &args.url) {
+        Ok(m) => last_metrics = m,
+        Err(e) => {
+            rpc_failures += 1;
+            last_rpc_error = Some(e);
+        }
+    }
+    let final_m = last_metrics;
 
     let slots_advanced = final_m.current_slot.saturating_sub(initial_slot);
     let finalized_advanced = final_m.finalized_slot.saturating_sub(initial_finalized);
     let poll_elapsed = poll_start.elapsed();
+    let stranded = accepted - drained;
 
-    // Real processing time = submission time + time until pending=0
-    let processing_time = first_zero_pending
-        .map(|d| submit_time + d)
-        .unwrap_or(submit_time + poll_elapsed);
-    let txs_finalized = accepted.saturating_sub(final_m.pending_transactions);
-    let real_tps = if processing_time.as_secs_f64() > 0.0 {
-        txs_finalized as f64 / processing_time.as_secs_f64()
+    // End-to-end time covers submission plus the drain, but stops at the last
+    // observed progress: idle time spent waiting on a stalled node is not work.
+    let processing_time = submit_time + last_progress_at;
+    let real_tps = if drained > 0 && processing_time.as_secs_f64() > 0.0 {
+        drained as f64 / processing_time.as_secs_f64()
     } else {
         0.0
     };
@@ -264,32 +402,80 @@ fn main() {
     println!("├──────────────────────────────────────────────────────────────┤");
     println!("│ Transactions generated        │ {:>28} │", args.txs);
     println!("│ Transactions accepted by node │ {:>28} │", accepted);
-    println!("│ Transactions finalized        │ {:>28} │", txs_finalized);
+    println!("│ Transactions drained          │ {:>28} │", drained);
+    println!("│ Transactions stranded         │ {:>28} │", stranded);
     println!("│ Generation + signing rate     │ {:>23.0} tx/s │", args.txs as f64 / gen_time.as_secs_f64());
     println!("│ RPC submission rate           │ {:>23.0} tx/s │", submit_tps);
     println!("│ Submit time                   │ {:>28?} │", submit_time);
+    println!("│ Drain time (to last progress) │ {:>28?} │", last_progress_at);
     println!("│ Processing time (submit→done) │ {:>28?} │", processing_time);
     println!("│ Slots advanced                │ {:>28} │", slots_advanced);
     println!("│ Slots finalized               │ {:>28} │", finalized_advanced);
-    println!("│ Final pending txs             │ {:>28} │", final_m.pending_transactions);
+    println!("│ Mempool pending (baseline)    │ {:>28} │", baseline_pending);
+    println!("│ Mempool pending (final)       │ {:>28} │", final_m.pending_transactions);
     println!("│ Confirmed vertices            │ {:>28} │", final_m.confirmed_vertices);
+    println!("│ Metrics RPC failures          │ {:>28} │", rpc_failures);
     println!("└──────────────────────────────────────────────────────────────┘");
     println!();
 
-    println!("🎯 REAL TPS (submit→finalized): {:.0} tx/s", real_tps);
-    println!("🎯 Submission TPS:              {:.0} tx/s", submit_tps);
-    println!("🎯 Total wall time:             {:?}", gen_time + submit_time + poll_elapsed);
-    println!();
-
-    if real_tps >= 10000.0 {
-        println!("✅ EXCELLENT: {:.0} TPS — STARK batch aggregation working", real_tps);
-    } else if real_tps >= 1000.0 {
-        println!("✅ GOOD: {:.0} TPS — node processing well", real_tps);
-    } else if real_tps > 0.0 {
-        println!("📈 {:.0} TPS — node is processing but below target", real_tps);
-    } else if accepted == 0 {
-        println!("⚠️  No transactions accepted — check node logs");
+    match outcome {
+        Outcome::Complete => {
+            println!("🎯 REAL TPS (submit→drained): {:.0} tx/s", real_tps);
+            println!("🎯 Submission TPS:            {:.0} tx/s", submit_tps);
+            println!("🎯 Total wall time:           {:?}", gen_time + submit_time + poll_elapsed);
+            println!();
+            if real_tps >= 10000.0 {
+                println!("✅ EXCELLENT: {:.0} TPS", real_tps);
+            } else if real_tps >= 1000.0 {
+                println!("✅ GOOD: {:.0} TPS — node processing well", real_tps);
+            } else {
+                println!("📈 {:.0} TPS — node is processing but below target", real_tps);
+            }
+        }
+        Outcome::Stalled => {
+            println!("❌ INVALID RUN — node stopped making progress");
+            println!();
+            println!(
+                "   {} of {} txs drained, then no progress for {}s.",
+                drained, accepted, args.stall_timeout
+            );
+            println!("   {} txs are stranded in the mempool.", stranded);
+            println!();
+            println!("   Partial rate before the stall: {:.0} tx/s (NOT a valid TPS figure).", real_tps);
+            println!();
+            println!("   Common causes:");
+            println!("     • Transactions routed to shards the node does not serve");
+            println!("       (node reports {} shards, run used {}).", node_shards, shards);
+            println!("     • Nonce gaps: txs whose sender nonce never becomes current.");
+            println!("     • Vertex production failing — check the node log for");
+            println!("       repeated \"Creating vertices\" with no \"Committed vertex\".");
+        }
+        Outcome::Timeout => {
+            println!("❌ INVALID RUN — timed out after {}s", args.max_wait);
+            println!();
+            println!("   {} of {} txs drained, {} still stranded.", drained, accepted, stranded);
+            println!("   Partial rate: {:.0} tx/s (NOT a valid TPS figure).", real_tps);
+            println!("   Raise --max-wait if the node is simply slower than the window.");
+        }
+        Outcome::NothingAccepted => {
+            println!("❌ INVALID RUN — the node accepted 0 transactions");
+            println!("   Check the submission errors above and the node log.");
+        }
     }
+
+    if rpc_failures > 0 {
+        println!();
+        println!("⚠️  {} metrics RPC call(s) failed during the run.", rpc_failures);
+        if let Some(err) = last_rpc_error {
+            println!("    Last error: {}", err);
+        }
+        println!("    Figures above may be based on stale readings.");
+    }
+
     println!();
     println!("═══════════════════════════════════════════════════════════════");
+
+    if !matches!(outcome, Outcome::Complete) {
+        std::process::exit(2);
+    }
 }
