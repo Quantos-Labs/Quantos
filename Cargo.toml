@@ -19,5 +19,15 @@ opt-level = 3
 lto = true
 codegen-units = 1
 
+# Fast-iteration profile for debugging on the VPS.  Same optimisation level as
+# release, but without fat LTO and with parallel codegen, so a one-line change
+# relinks in ~1 min instead of ~10.  Use for diagnosing logic bugs; use the
+# real `release` profile for published TPS figures.
+[profile.release-diag]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+
 [profile.release.package.quantos-wallet-core]
 opt-level = "s"
