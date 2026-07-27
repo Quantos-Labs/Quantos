@@ -208,8 +208,15 @@ fn main() {
         .map(|i| {
             let kp_idx = i % keypairs.len();
             let kp = &keypairs[kp_idx];
-            let shard_id = (i % shards as usize) as u16;
+            // Each sender's txs are at indices kp_idx, kp_idx+senders,
+            // kp_idx+2*senders, …  The nonce must be sequential per sender
+            // (the node increments it after every tx regardless of shard).
             let per_sender_nonce = (i / keypairs.len()) as u64;
+            // All txs from the same sender must go to the SAME shard.  If they
+            // were spread across shards the node would not find nonce N+1 in
+            // the shard that just processed nonce N, because the mempool is
+            // bucketed by shard and the nonce order is global per sender.
+            let shard_id = (kp_idx % shards as usize) as u16;
 
             let mut tx = Transaction::new(
                 TransactionType::Transfer,
