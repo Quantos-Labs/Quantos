@@ -464,6 +464,13 @@ impl QuantosConsensus {
             &keys.signing_key.public_key,
         );
 
+        // Log any vertex creation failures for diagnosis
+        for r in &results {
+            if let Err(e) = r {
+                tracing::warn!("Vertex creation failed at slot {}: {}", slot, e);
+            }
+        }
+
         // Phase 3: Confirm vertices
         let mut all_receipts = Vec::new();
         let mut all_txs = Vec::new();
