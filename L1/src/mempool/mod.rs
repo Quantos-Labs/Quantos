@@ -20,7 +20,7 @@ pub use mempool_policy::*;
 pub use pbs::*;
 pub use blob_transactions::*;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
@@ -321,65 +321,66 @@ impl Mempool {
             return Vec::new();
         }
 
-        #[derive(Clone)]
-        struct Candidate {
-            tx: SignedTransaction,
+        // P9.2: Collect (hash, score) without cloning txs yet — defer clone to selection
+        struct CandidateRef {
+            hash: Hash,
             score: u128,
         }
 
-        let mut candidates = Vec::with_capacity(shard_hashes.len());
+        let mut candidates: Vec<CandidateRef> = Vec::with_capacity(shard_hashes.len());
         for h in shard_hashes {
             let Some(tx_ref) = self.pending.get(&h) else { continue; };
-            let tx = tx_ref.clone();
-            let fee_signal = tx.transaction.amount.0 as u128;
-            let cu_signal = tx.transaction.max_compute_units.max(1) as u128;
-            let boost_signal = tx.transaction.boost_locked_tokens() as u128;
+            let fee_signal = tx_ref.transaction.amount.0 as u128;
+            let cu_signal = tx_ref.transaction.max_compute_units.max(1) as u128;
+            let boost_signal = tx_ref.transaction.boost_locked_tokens() as u128;
             let score = (boost_signal.saturating_mul(10) + fee_signal.saturating_mul(2))
                 .saturating_mul(1_000_000)
                 / cu_signal;
-            candidates.push(Candidate { tx, score });
+            candidates.push(CandidateRef { hash: h, score });
         }
 
         candidates.sort_by(|a, b| b.score.cmp(&a.score));
 
-        let mut selected = Vec::new();
-        let mut expected_nonce: BTreeMap<Address, u64> = BTreeMap::new();
-        let mut account_locks: BTreeMap<Address, ()> = BTreeMap::new();
-        let mut resource_locks: BTreeMap<Hash, ()> = BTreeMap::new();
+        let mut selected: Vec<SignedTransaction> = Vec::new();
+        let mut expected_nonce: HashMap<Address, u64> = HashMap::new();
+        let mut account_locks: HashSet<Address> = HashSet::new();
+        let mut resource_locks: HashSet<Hash> = HashSet::new();
 
         for candidate in candidates {
             if selected.len() >= limit {
                 break;
             }
 
-            let tx = candidate.tx;
-            let sender = tx.transaction.from;
+            let Some(tx_ref) = self.pending.get(&candidate.hash) else { continue; };
+            let sender = tx_ref.transaction.from;
 
+            // P9.2: Batch nonce lookup with local cache — avoid repeated RocksDB reads
             let sender_expected = *expected_nonce.entry(sender).or_insert_with(|| {
                 self.state_manager.get_nonce(&sender).unwrap_or(0)
             });
 
-            if tx.transaction.nonce != sender_expected {
+            if tx_ref.transaction.nonce != sender_expected {
                 continue;
             }
 
-            let from = tx.transaction.from;
-            let to = tx.transaction.to;
-            if account_locks.contains_key(&from) || account_locks.contains_key(&to) {
+            let from = tx_ref.transaction.from;
+            let to = tx_ref.transaction.to;
+            if account_locks.contains(&from) || account_locks.contains(&to) {
                 continue;
             }
 
-            let resource_key = resource_conflict_key(&tx);
-            if resource_locks.contains_key(&resource_key) {
+            let resource_key = resource_conflict_key(&tx_ref);
+            if resource_locks.contains(&resource_key) {
                 continue;
             }
 
-            account_locks.insert(from, ());
-            account_locks.insert(to, ());
-            resource_locks.insert(resource_key, ());
+            account_locks.insert(from);
+            account_locks.insert(to);
+            resource_locks.insert(resource_key);
             // Advance expected nonce so sequential txs from same sender can be included
             *expected_nonce.get_mut(&sender).unwrap() = sender_expected + 1;
-            selected.push(tx);
+            // P9.2: Clone only selected txs, not all candidates
+            selected.push(tx_ref.clone());
         }
 
         selected

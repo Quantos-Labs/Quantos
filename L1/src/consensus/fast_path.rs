@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 // See the LICENSE file in the project root for the full license text.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -43,6 +44,8 @@ pub struct FastPath {
     sig_aggregator: Arc<crate::crypto::signature_aggregation::SignatureAggregator>,
     /// Track pending vertex count for memory limits
     pending_count: Arc<AtomicUsize>,
+    /// P9.3: Prefetch cache — pre-fetched transactions per shard for the next slot
+    prefetch_cache: Arc<parking_lot::Mutex<HashMap<ShardId, Vec<SignedTransaction>>>>,
 }
 
 struct PendingVertex {
@@ -72,6 +75,7 @@ impl FastPath {
             batch_verifier: Arc::new(MlDsa65BatchVerifier::new(64)),
             sig_aggregator: Arc::new(crate::crypto::signature_aggregation::SignatureAggregator::new(1000)),
             pending_count: Arc::new(AtomicUsize::new(0)),
+            prefetch_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         };
 
         // Start automatic cleanup task
@@ -129,8 +133,19 @@ impl FastPath {
         secret_key: &[u8],
         public_key: &[u8],
     ) -> ConsensusResult<DAGVertex> {
-        // DAG-native selection: pull a nonce-ready conflict-minimized antichain.
-        let transactions = self.mempool.get_ready_antichain_for_shard(shard_id, 10000);
+        // P9.3: Try prefetch cache first, fall back to mempool
+        let transactions = {
+            let mut cache = self.prefetch_cache.lock();
+            if let Some(txs) = cache.remove(&shard_id) {
+                if !txs.is_empty() {
+                    txs
+                } else {
+                    self.mempool.get_ready_antichain_for_shard(shard_id, 10000)
+                }
+            } else {
+                self.mempool.get_ready_antichain_for_shard(shard_id, 10000)
+            }
+        };
         
         if transactions.is_empty() {
             return Err(ConsensusError::InvalidVertex("No transactions".to_string()));
@@ -206,6 +221,24 @@ impl FastPath {
                 self.create_vertex(shard_id, creator, &secret_key, &public_key)
             })
             .collect()
+    }
+
+    /// P9.3: Prefetch transactions for the given shards into the prefetch cache.
+    /// This should be called after vertex creation to pre-fetch txs for the next slot
+    /// while the current slot's vertices are being confirmed.
+    pub fn prefetch_shard_transactions(&self, shard_ids: &[ShardId]) {
+        use rayon::prelude::*;
+        let prefetched: Vec<(ShardId, Vec<SignedTransaction>)> = shard_ids
+            .par_iter()
+            .map(|&shard_id| {
+                let txs = self.mempool.get_ready_antichain_for_shard(shard_id, 10000);
+                (shard_id, txs)
+            })
+            .collect();
+        let mut cache = self.prefetch_cache.lock();
+        for (shard_id, txs) in prefetched {
+            cache.insert(shard_id, txs);
+        }
     }
 
     pub async fn receive_vertex(&self, vertex: DAGVertex) -> ConsensusResult<()> {

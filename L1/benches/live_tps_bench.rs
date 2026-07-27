@@ -44,7 +44,7 @@ struct Args {
     senders: usize,
 
     /// Poll interval for metrics (seconds)
-    #[arg(long, default_value_t = 5)]
+    #[arg(long, default_value_t = 30)]
     poll_interval: u64,
 }
 
