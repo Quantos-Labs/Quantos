@@ -334,6 +334,13 @@ impl FastPath {
 
     async fn confirm_vertex(&self, vertex: &DAGVertex) -> ConsensusResult<Option<(Hash, Vec<TransactionReceipt>)>> {
         let result = self.executor.confirm_execution(&vertex.hash);
+        if result.is_none() {
+            tracing::warn!(
+                "confirm_execution returned None for vertex {} (shard {}) — state NOT updated, nonces will not advance",
+                hex::encode(&vertex.hash[..4]),
+                vertex.shard_id,
+            );
+        }
 
         self.dag.add_vertex(vertex.clone())
             .map_err(|e| ConsensusError::StorageError(e.to_string()))?;

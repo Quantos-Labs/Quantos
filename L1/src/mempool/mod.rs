@@ -353,8 +353,10 @@ impl Mempool {
         let mut expected_nonce: HashMap<Address, u64> = HashMap::new();
         let mut account_locks: HashSet<Address> = HashSet::new();
         let mut resource_locks: HashSet<Hash> = HashSet::new();
+        let mut nonce_skipped: usize = 0;
+        let mut lock_skipped: usize = 0;
 
-        for candidate in candidates {
+        for candidate in &candidates {
             if selected.len() >= limit {
                 break;
             }
@@ -368,17 +370,20 @@ impl Mempool {
             });
 
             if tx_ref.transaction.nonce != sender_expected {
+                nonce_skipped += 1;
                 continue;
             }
 
             let from = tx_ref.transaction.from;
             let to = tx_ref.transaction.to;
             if account_locks.contains(&from) || account_locks.contains(&to) {
+                lock_skipped += 1;
                 continue;
             }
 
             let resource_key = resource_conflict_key(&tx_ref);
             if resource_locks.contains(&resource_key) {
+                lock_skipped += 1;
                 continue;
             }
 
@@ -389,6 +394,13 @@ impl Mempool {
             *expected_nonce.get_mut(&sender).unwrap() = sender_expected + 1;
             // P9.2: Clone only selected txs, not all candidates
             selected.push(tx_ref.clone());
+        }
+
+        if !candidates.is_empty() && selected.is_empty() {
+            tracing::warn!(
+                "Shard {} antichain: {} candidates but 0 selected — nonce_skipped={} lock_skipped={}",
+                shard_id, candidates.len(), nonce_skipped, lock_skipped,
+            );
         }
 
         selected
