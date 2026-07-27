@@ -339,7 +339,15 @@ impl Mempool {
             candidates.push(CandidateRef { hash: h, score });
         }
 
-        candidates.sort_by(|a, b| b.score.cmp(&a.score));
+        // P10.3: `limit` is always >= the number of candidates (both bounded by
+        // MAX_SHARD_TXS), so a top-K partial select would never truncate anything.
+        // The win here is avoiding the stable sort's allocation: sort in place with
+        // the tx hash as tiebreak so the ordering stays deterministic.
+        if candidates.len() > 1 {
+            candidates.sort_unstable_by(|a, b| {
+                b.score.cmp(&a.score).then_with(|| a.hash.cmp(&b.hash))
+            });
+        }
 
         let mut selected: Vec<SignedTransaction> = Vec::new();
         let mut expected_nonce: HashMap<Address, u64> = HashMap::new();

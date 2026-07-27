@@ -309,6 +309,12 @@ impl StateManager {
     }
 
     pub fn get_nonce(&self, address: &Address) -> StateResult<u64> {
+        // Fast path: read the nonce straight out of the cache without cloning
+        // the whole `Account` (hot path in mempool antichain selection).
+        if let Some(account) = self.account_cache.get(address) {
+            return Ok(account.nonce);
+        }
+
         let account = self.get_account(address)?;
         Ok(account.nonce)
     }

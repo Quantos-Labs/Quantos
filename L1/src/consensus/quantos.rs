@@ -458,14 +458,11 @@ impl QuantosConsensus {
 
         // Phase 2: Create vertices in parallel across shards (rayon, CPU-bound)
         let results = fast_path.create_vertices_parallel(
-            active_shards.clone(),
+            active_shards,
             keys.address,
             &keys.signing_key.secret_key,
             &keys.signing_key.public_key,
         );
-
-        // P9.3: Prefetch transactions for the next slot while confirming current vertices
-        fast_path.prefetch_shard_transactions(&active_shards);
 
         // Phase 3: Confirm vertices
         let mut all_receipts = Vec::new();
