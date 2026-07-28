@@ -1,0 +1,128 @@
+name: Fuzz (nightly long-duration)
+
+on:
+  schedule:
+    # 03:00 UTC every day
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Seconds per target"
+        required: false
+        default: "600"
+      max_len:
+        description: "Max input length"
+        required: false
+        default: "65536"
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fuzz-long-duration:
+    name: Long-duration fuzzing (${{ github.event.inputs.duration || '600' }}s/target)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_tx_deserialize
+          - fuzz_tx_prefilter
+          - fuzz_network_message
+          - fuzz_rlp_decode
+          - fuzz_chain_proof_json
+          - fuzz_dag_vertex
+          - fuzz_committee_vote
+          - fuzz_l0_finality_proof
+          - fuzz_external_checkpoint
+          - fuzz_vm_wasm_bytecode
+          - fuzz_vm_calldata
+          - fuzz_contract_deploy_payload
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            build-essential clang cmake libclang-dev libssl-dev pkg-config protobuf-compiler
+
+      - name: Restore corpus cache
+        uses: actions/cache/restore@v7
+        with:
+          path: L1/fuzz/corpus
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
+      - name: Seed corpus from repository
+        working-directory: L1
+        run: |
+          mkdir -p corpus/${{ matrix.target }}
+          if [ -d seeds/${{ matrix.target }} ]; then
+            cp -v seeds/${{ matrix.target }}/* corpus/${{ matrix.target }}/
+          fi
+
+      - name: Build fuzz target
+        working-directory: L1
+        run: cargo +nightly fuzz build ${{ matrix.target }}
+
+      - name: Run long-duration fuzzing
+        working-directory: L1
+        env:
+          DURATION: ${{ github.event.inputs.duration || '600' }}
+          MAX_LEN: ${{ github.event.inputs.max_len || '65536' }}
+        run: |
+          echo "=== Fuzzing ${{ matrix.target }} for ${DURATION}s (max_len=${MAX_LEN}) ==="
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time=${DURATION} \
+            -max_len=${MAX_LEN} \
+            -print_final_stats=1 \
+            -use_value_profile=1
+
+      - name: Minimize corpus
+        working-directory: L1
+        if: always()
+        run: |
+          if [ -d corpus/${{ matrix.target }} ] && [ "$(ls -A corpus/${{ matrix.target }} 2>/dev/null)" ]; then
+            echo "=== Minimizing corpus for ${{ matrix.target }} ==="
+            cargo +nightly fuzz cmin ${{ matrix.target }} -- -max_len=${MAX_LEN:-65536}
+          else
+            echo "No corpus to minimize for ${{ matrix.target }}"
+          fi
+
+      - name: Save corpus cache
+        if: always()
+        uses: actions/cache/save@v7
+        with:
+          path: L1/fuzz/corpus
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crash-${{ matrix.target }}-${{ github.run_id }}
+          path: |
+            L1/fuzz/artifacts/
+            L1/fuzz/crash-*
+            L1/fuzz/oom-*
+            L1/fuzz/timeout-*
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload corpus snapshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          path: L1/fuzz/corpus/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 30

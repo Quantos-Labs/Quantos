@@ -52,3 +52,52 @@ path = "fuzz_targets/fuzz_chain_proof_json.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_dag_vertex"
+path = "fuzz_targets/fuzz_dag_vertex.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_committee_vote"
+path = "fuzz_targets/fuzz_committee_vote.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_l0_finality_proof"
+path = "fuzz_targets/fuzz_l0_finality_proof.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_external_checkpoint"
+path = "fuzz_targets/fuzz_external_checkpoint.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_vm_wasm_bytecode"
+path = "fuzz_targets/fuzz_vm_wasm_bytecode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_vm_calldata"
+path = "fuzz_targets/fuzz_vm_calldata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_contract_deploy_payload"
+path = "fuzz_targets/fuzz_contract_deploy_payload.rs"
+test = false
+doc = false
+bench = false

@@ -82,10 +82,19 @@ jobs:
       - name: Build fuzz targets
         working-directory: L1
         run: cargo +nightly fuzz build
+      - name: Seed corpus from repository
+        working-directory: L1
+        run: |
+          for target in fuzz_tx_deserialize fuzz_tx_prefilter fuzz_network_message fuzz_rlp_decode fuzz_chain_proof_json fuzz_dag_vertex fuzz_committee_vote fuzz_l0_finality_proof fuzz_external_checkpoint fuzz_vm_wasm_bytecode fuzz_vm_calldata fuzz_contract_deploy_payload; do
+            mkdir -p corpus/$target
+            if [ -d seeds/$target ]; then
+              cp -v seeds/$target/* corpus/$target/ 2>/dev/null || true
+            fi
+          done
       - name: Smoke test each target (10s)
         working-directory: L1
         run: |
-          for target in fuzz_tx_deserialize fuzz_tx_prefilter fuzz_network_message fuzz_rlp_decode fuzz_chain_proof_json; do
+          for target in fuzz_tx_deserialize fuzz_tx_prefilter fuzz_network_message fuzz_rlp_decode fuzz_chain_proof_json fuzz_dag_vertex fuzz_committee_vote fuzz_l0_finality_proof fuzz_external_checkpoint fuzz_vm_wasm_bytecode fuzz_vm_calldata fuzz_contract_deploy_payload; do
             echo "=== Fuzzing $target ==="
             cargo +nightly fuzz run "$target" -- -max_total_time=10 -max_len=4096
           done
