@@ -114,6 +114,23 @@ impl Account {
             false
         }
     }
+
+    /// Directly subtract stake without adding to balance (for StakeTransfer).
+    pub fn subtract_stake(&mut self, amount: &Amount) -> bool {
+        if let Some(new_stake) = self.stake.checked_sub(amount) {
+            self.stake = new_stake;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Directly add stake without subtracting from balance (for StakeTransfer).
+    pub fn add_stake_direct(&mut self, amount: &Amount) {
+        if let Some(new_stake) = self.stake.checked_add(amount) {
+            self.stake = new_stake;
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

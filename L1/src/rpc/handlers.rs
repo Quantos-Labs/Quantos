@@ -174,6 +174,44 @@ impl TransactionBuilder {
 
         Ok(SignedTransaction::new(tx))
     }
+
+    pub fn build_stake_transfer(
+        &self,
+        keypair: &MlDsa65Keypair,
+        to: Address,
+        amount: Amount,
+        max_compute_units: u64,
+    ) -> RpcResult<SignedTransaction> {
+        validate_amount(&amount)?;
+
+        let from = keypair.address();
+
+        let _lock = self.nonce_lock.lock();
+        let nonce = self.state_manager.get_nonce(&from)
+            .map_err(|e| RpcError::InternalError(format!("Failed to get nonce: {}", e)))?;
+
+        let shard_id = Transaction::target_shard(&from, self.num_shards);
+
+        let mut tx = Transaction::new(
+            TransactionType::StakeTransfer,
+            from,
+            to,
+            amount,
+            nonce,
+            max_compute_units,
+            None,
+            Vec::new(),
+            shard_id,
+        );
+
+        let signature = keypair.sign(&tx.signing_data())
+            .map_err(|e| RpcError::InternalError(e.to_string()))?;
+
+        tx.set_signature(signature, keypair.public_key.clone())
+            .map_err(|e| RpcError::InternalError(e))?;
+
+        Ok(SignedTransaction::new(tx))
+    }
 }
 
 pub fn serialize_transaction(tx: &SignedTransaction) -> RpcResult<String> {

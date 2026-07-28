@@ -14,6 +14,7 @@ pub enum TransactionType {
     Transfer,
     Stake,
     Unstake,
+    StakeTransfer,
     ValidatorRegister,
     ValidatorExit,
     ContractCall,

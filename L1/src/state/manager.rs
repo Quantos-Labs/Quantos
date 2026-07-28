@@ -355,6 +355,7 @@ impl StateManager {
         let requires_amount = matches!(
             tx.transaction.tx_type,
             TransactionType::Transfer | TransactionType::Stake | TransactionType::Unstake
+            | TransactionType::StakeTransfer
         );
         if requires_amount && amount_value < MIN_TRANSACTION_AMOUNT {
             return Err(StateError::InvalidAmount);
@@ -408,6 +409,12 @@ impl StateManager {
                 if !sender.remove_stake(&tx.transaction.amount) {
                     return Err(StateError::InsufficientBalance);
                 }
+            }
+            TransactionType::StakeTransfer => {
+                if !sender.subtract_stake(&tx.transaction.amount) {
+                    return Err(StateError::InsufficientBalance);
+                }
+                recipient.add_stake_direct(&tx.transaction.amount);
             }
             TransactionType::ContractDeploy => {
                 match tx.transaction.vm_kind {
@@ -826,6 +833,12 @@ impl StateManager {
                     return Err(StateError::InsufficientBalance);
                 }
             }
+            TransactionType::StakeTransfer => {
+                if !sender.subtract_stake(&tx.transaction.amount) {
+                    return Err(StateError::InsufficientBalance);
+                }
+                recipient.add_stake_direct(&tx.transaction.amount);
+            }
             TransactionType::ContractDeploy => {
                 let (bytecode, constructor_data) = decode_contract_deploy_payload(&tx.transaction.data)
                     .map_err(|e| StateError::ExecutionError(format!("Invalid deploy payload: {}", e)))?;
@@ -986,6 +999,7 @@ impl StateManager {
         let requires_amount = matches!(
             tx.transaction.tx_type,
             TransactionType::Transfer | TransactionType::Stake | TransactionType::Unstake
+            | TransactionType::StakeTransfer
         );
         if requires_amount && amount_value < MIN_TRANSACTION_AMOUNT {
             return Err(StateError::InvalidAmount);
@@ -1240,5 +1254,97 @@ mod tests {
         
         let balance = state.get_balance(&address).unwrap();
         assert_eq!(balance.0, 1000);
+    }
+
+    #[test]
+    fn test_stake_transfer() {
+        let dir = tempdir().unwrap();
+        let storage = Storage::new(dir.path()).unwrap();
+        let state = StateManager::new(storage);
+
+        let keypair = crate::crypto::MlDsa65Keypair::generate().unwrap();
+        let sender = keypair.address();
+        let recipient = [2u8; 32];
+        let auth_token = state.bootstrap_auth_token();
+
+        // Fund sender with balance, then stake it
+        state.set_balance(&sender, Amount(1000), &auth_token).unwrap();
+        let mut acct = state.get_account(&sender).unwrap();
+        acct.add_stake(&Amount(500));
+        state.persist_accounts(&[acct]).unwrap();
+
+        // Verify initial state
+        let sender_acct = state.get_account(&sender).unwrap();
+        assert_eq!(sender_acct.stake.0, 500);
+        assert_eq!(sender_acct.balance.0, 500);
+
+        // Build and apply a StakeTransfer tx
+        let mut tx = crate::types::Transaction::new(
+            TransactionType::StakeTransfer,
+            sender,
+            recipient,
+            Amount(300),
+            0,
+            100_000,
+            None,
+            Vec::new(),
+            0,
+        );
+        let sig = keypair.sign(&tx.signing_data()).unwrap();
+        tx.set_signature(sig, keypair.public_key.clone()).unwrap();
+        let signed_tx = SignedTransaction::new(tx);
+
+        let result = state.apply_transaction(&signed_tx);
+        assert!(result.is_ok(), "StakeTransfer should succeed: {:?}", result);
+
+        // Verify: sender lost 300 stake, recipient gained 300 stake
+        let sender_acct = state.get_account(&sender).unwrap();
+        assert_eq!(sender_acct.stake.0, 200, "sender stake should be 200");
+        assert_eq!(sender_acct.balance.0, 500, "sender balance unchanged");
+
+        let recipient_acct = state.get_account(&recipient).unwrap();
+        assert_eq!(recipient_acct.stake.0, 300, "recipient stake should be 300");
+        assert_eq!(recipient_acct.balance.0, 0, "recipient balance unchanged");
+    }
+
+    #[test]
+    fn test_stake_transfer_insufficient_stake() {
+        let dir = tempdir().unwrap();
+        let storage = Storage::new(dir.path()).unwrap();
+        let state = StateManager::new(storage);
+
+        let keypair = crate::crypto::MlDsa65Keypair::generate().unwrap();
+        let sender = keypair.address();
+        let recipient = [2u8; 32];
+        let auth_token = state.bootstrap_auth_token();
+
+        // Fund sender with balance, stake only 100
+        state.set_balance(&sender, Amount(1000), &auth_token).unwrap();
+        let mut acct = state.get_account(&sender).unwrap();
+        acct.add_stake(&Amount(100));
+        state.persist_accounts(&[acct]).unwrap();
+
+        // Try to transfer 300 stake (only 100 available)
+        let mut tx = crate::types::Transaction::new(
+            TransactionType::StakeTransfer,
+            sender,
+            recipient,
+            Amount(300),
+            0,
+            100_000,
+            None,
+            Vec::new(),
+            0,
+        );
+        let sig = keypair.sign(&tx.signing_data()).unwrap();
+        tx.set_signature(sig, keypair.public_key.clone()).unwrap();
+        let signed_tx = SignedTransaction::new(tx);
+
+        let result = state.apply_transaction(&signed_tx);
+        assert!(result.is_err(), "StakeTransfer with insufficient stake should fail");
+
+        // Verify state unchanged
+        let sender_acct = state.get_account(&sender).unwrap();
+        assert_eq!(sender_acct.stake.0, 100, "sender stake unchanged after failed transfer");
     }
 }
