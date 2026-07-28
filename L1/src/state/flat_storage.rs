@@ -310,17 +310,18 @@ impl FlatStorage {
         self.stats.lock().cache_misses += 1;
         
         // Fall back to flat storage
-        let accounts = self.accounts.read();
-        if let Some(mut account) = accounts.get(address).cloned() {
+        let mut accounts = self.accounts.write();
+        if let Some(account) = accounts.get_mut(address) {
             account.access_count += 1;
-            
+            let access_count = account.access_count;
+
             // Promote to cache if hot
-            if account.access_count >= self.config.hot_threshold {
+            if access_count >= self.config.hot_threshold {
                 account.is_hot = true;
                 self.account_cache.lock().insert(*address, account.clone());
             }
-            
-            Some(account)
+
+            Some(account.clone())
         } else {
             None
         }

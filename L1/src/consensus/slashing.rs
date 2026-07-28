@@ -1330,8 +1330,10 @@ mod tests {
         let validator = keypair.address();
         let message1_hash = [1u8; 32];
         let message2_hash = [3u8; 32];
-        let signature1 = keypair.sign(&message1_hash).unwrap();
-        let signature2 = keypair.sign(&message2_hash).unwrap();
+        let payload1 = with_domain(DOMAIN_SLASH_DOUBLE_SIGN, &message1_hash);
+        let payload2 = with_domain(DOMAIN_SLASH_DOUBLE_SIGN, &message2_hash);
+        let signature1 = keypair.sign(&payload1).unwrap();
+        let signature2 = keypair.sign(&payload2).unwrap();
         manager
             .register_validator_with_pubkey(validator, 1000000, keypair.public_key)
             .unwrap();
