@@ -7,6 +7,9 @@ script = "script"
 solc = "0.8.24"
 optimizer = true
 optimizer_runs = 200
+# AttestorRegistry.slashOnReuse takes 8 params (two full WOTS sig+path sets);
+# the legacy codegen runs out of stack slots. viaIR resolves it.
+via_ir = true
 # WOTS verification does many keccak ops; allow generous gas in tests.
 gas_limit = "18446744073709551615"
 fs_permissions = [{ access = "read", path = "./" }]

@@ -10,8 +10,8 @@ pragma solidity ^0.8.24;
 /// @dev THIS IS A POC. // AUDIT REQUIRED across the whole library.
 /// Hand-rolled hash-based crypto is acceptable here ONLY because:
 ///   1. It is built solely from keccak256 (no novel primitive).
-///   2. @noble/post-quantum does not expose raw Winternitz, so it cannot be
-///      reused; the SDK mirrors this exact construction.
+///   2. the noble/post-quantum library does not expose raw Winternitz, so it
+///      cannot be reused; the SDK mirrors this exact construction.
 /// Do NOT use on mainnet without a formal audit and parameter review.
 ///
 /// ## Parameters (fixed for the MVP)
