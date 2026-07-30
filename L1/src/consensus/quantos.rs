@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 // See the LICENSE file in the project root for the full license text.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -12,15 +11,16 @@ use parking_lot::RwLock;
 use crate::consensus::{
     ConsensusError, ConsensusResult, CommitteeManager, FastPath, FinalityLayer,
     FinalizedCheckpoint, CrossShardAtomicProtocol, ShardOperation, AtomicResult,
-    AtomicStatus,
+    AtomicStatus, SharedValidatorPerformanceTracker, ValidatorPerformanceRecord,
 };
 use crate::crypto::{MlDsa65Keypair, VRFKeypair};
-use crate::dag::DAGGraph;
+use crate::dag::{DAGGraph, TxIngressBuffer, VertexBuilder};
 use crate::l0::{CheckpointGossip, CheckpointPool, FinalityHub, HttpRelayTransport, LightClientRegistry, RelayDispatcher, ChainRegistry, ValidatorSetSnapshot, SubnetManager, SubnetId, SubnetConfig};
 use crate::l0::hub::SignatureContribution;
 use crate::l0::proof::PqcSignatureAlgo;
-use crate::mempool::ShardedMempool;
+use crate::mempool::{ZeroStakeProvider, FixedAgeProvider};
 use crate::state::{StateManager, OptimisticExecutor};
+use crate::stacc::{ActivationLedger, QuotaManager, StaccAdmission};
 use crate::storage::Storage;
 use crate::types::{
     Address, Checkpoint, CommitteeVote, DAGVertex, Hash,
@@ -33,7 +33,7 @@ pub struct QuantosConsensus {
     storage: Storage,
     state_manager: StateManager,
     dag: Arc<DAGGraph>,
-    mempool: Arc<ShardedMempool>,
+    ingress: Arc<TxIngressBuffer>,
     executor: Arc<OptimisticExecutor>,
     committee_manager: Arc<CommitteeManager>,
     fast_path: Arc<FastPath>,
@@ -54,6 +54,8 @@ pub struct QuantosConsensus {
     light_client_registry: Option<Arc<LightClientRegistry>>,
     /// L0 Sovereign Subnet manager
     subnet_manager: Option<Arc<SubnetManager>>,
+    /// Validator performance tracker (per-epoch metrics in RAM, flushed to RocksDB)
+    performance_tracker: SharedValidatorPerformanceTracker,
 }
 
 #[derive(Clone)]
@@ -76,11 +78,9 @@ impl QuantosConsensus {
             config.max_dag_parents,
         ));
 
-        let mempool = Arc::new(ShardedMempool::new(
+        let ingress = Arc::new(TxIngressBuffer::new(
             state_manager.clone(),
             config.num_shards as u16,
-            100_000,
-            config.stacc_require_activation,
         ));
 
         let executor = Arc::new(OptimisticExecutor::new(
@@ -95,9 +95,22 @@ impl QuantosConsensus {
         ));
         let (vertex_tx, _vertex_rx) = mpsc::channel(10000);
 
+        // Build the DAG-native VertexBuilder with STACC admission.
+        let activation = ActivationLedger::default();
+        let quota = QuotaManager::new(ZeroStakeProvider, FixedAgeProvider);
+        let stacc = if config.stacc_require_activation {
+            StaccAdmission::new_with_policy(activation, quota, true, true)
+        } else {
+            StaccAdmission::new_with_policy(activation, quota, false, false)
+        };
+        let vertex_builder = Arc::new(parking_lot::Mutex::new(
+            VertexBuilder::new(ingress.clone(), state_manager.clone(), stacc),
+        ));
+
         let fast_path = Arc::new(FastPath::new(
             dag.clone(),
-            mempool.clone(),
+            ingress.clone(),
+            vertex_builder.clone(),
             executor.clone(),
             committee_manager.clone(),
             vertex_tx,
@@ -165,7 +178,7 @@ impl QuantosConsensus {
             storage,
             state_manager,
             dag,
-            mempool,
+            ingress,
             executor,
             committee_manager,
             fast_path,
@@ -179,6 +192,7 @@ impl QuantosConsensus {
             checkpoint_gossip,
             light_client_registry,
             subnet_manager,
+            performance_tracker: SharedValidatorPerformanceTracker::new(),
         })
     }
 
@@ -319,6 +333,14 @@ impl QuantosConsensus {
         let epoch = slot / 32;
         tracing::debug!("on_slot_tick: slot={}, epoch={}", slot, epoch);
 
+        // Epoch boundary: finalize performance records and persist to RocksDB
+        if slot % 32 == 0 && slot > 0 {
+            let prev_epoch = self.performance_tracker.current_epoch();
+            if prev_epoch != epoch {
+                self.finalize_and_persist_epoch(prev_epoch, epoch);
+            }
+        }
+
         if slot % 32 == 0 {
             let randomness = self.compute_epoch_randomness(epoch);
             self.committee_manager.rotate_committees(epoch, slot, &randomness)?;
@@ -343,6 +365,7 @@ impl QuantosConsensus {
                     &keys.finality_key,
                 ).await {
                     Ok(sig) => {
+                        self.performance_tracker.record_checkpoint_signature(&keys.address);
                         match self.finality.receive_checkpoint_signature(&checkpoint.hash(), sig).await {
                             Ok(Some(finalized)) => {
                                 tracing::info!("Checkpoint finalized at slot {}", slot);
@@ -416,15 +439,30 @@ impl QuantosConsensus {
 
     async fn try_produce_vertices(&self, keys: &ValidatorKeys, slot: u64) -> ConsensusResult<()> {
         Self::try_produce_vertices_static(
-            &self.config, &self.fast_path, &self.mempool, &self.storage,
+            &self.config, &self.fast_path, &self.ingress, &self.storage,
             &self.committee_manager, &self.current_slot, keys, slot,
-        ).await
+        ).await?;
+
+        // Record block proposal in performance tracker
+        // Count CU from committed vertices at this slot
+        let validator_set = self.committee_manager.get_validator_set();
+        for v in &validator_set.validators {
+            if v.address == keys.address {
+                // Approximate CU: count pending txs that were processed
+                // The actual CU is tracked in receipts, but for performance tracking
+                // we use a simpler heuristic: 1 block proposed per slot with active shards
+                self.performance_tracker.record_block_proposed(&keys.address, 0);
+                break;
+            }
+        }
+
+        Ok(())
     }
 
     async fn try_produce_vertices_static(
         config: &NodeConfig,
         fast_path: &Arc<FastPath>,
-        mempool: &Arc<ShardedMempool>,
+        ingress: &Arc<TxIngressBuffer>,
         storage: &Storage,
         committee_manager: &Arc<CommitteeManager>,
         _current_slot: &Arc<RwLock<u64>>,
@@ -446,7 +484,7 @@ impl QuantosConsensus {
                 let committee_id = shard_id % config.num_committees as u16;
                 committee_manager.is_committee_member(epoch, committee_id, &keys.address)
             })
-            .filter(|&shard_id| mempool.pending_count_for_shard(shard_id) > 0)
+            .filter(|&shard_id| ingress.pending_for_shard(shard_id) > 0)
             .collect();
 
         if active_shards.is_empty() {
@@ -615,16 +653,17 @@ impl QuantosConsensus {
 
     /// Submit a batch of transactions in one pass.
     ///
-    /// Bypasses the single-tx `FastPath::process_transaction` wrapper to route
-    /// the batch directly to `ShardedMempool::add_transactions_batch`, which
-    /// verifies all ML-DSA-65 signatures in parallel and inserts atomically.
+    /// Routes each transaction through the DAG-native ingress buffer, which
+    /// validates ML-DSA-65 signatures and routes to the appropriate shard channel.
     pub fn submit_transactions_batch(&self, txs: Vec<SignedTransaction>) -> Vec<ConsensusResult<Hash>> {
-        self.mempool
-            .add_transactions_batch(txs)
-            .into_iter()
-            .map(|res| match res {
-                Ok(hash) => Ok(hash),
-                Err(e) => Err(ConsensusError::InvalidVertex(e.to_string())),
+        txs.into_iter()
+            .map(|tx| {
+                let hash = tx.hash;
+                if self.ingress.ingest(tx) {
+                    Ok(hash)
+                } else {
+                    Err(ConsensusError::InvalidVertex("Transaction rejected by ingress buffer".to_string()))
+                }
             })
             .collect()
     }
@@ -655,9 +694,9 @@ impl QuantosConsensus {
         self.csap.get_status(atomic_id)
     }
     
-    /// Gets mempool for external access
-    pub fn mempool(&self) -> &Arc<ShardedMempool> {
-        &self.mempool
+    /// Gets the ingress buffer for external access (replaces mempool accessor)
+    pub fn ingress(&self) -> &Arc<TxIngressBuffer> {
+        &self.ingress
     }
 
     pub async fn receive_vertex(&self, vertex: DAGVertex) -> ConsensusResult<()> {
@@ -665,6 +704,7 @@ impl QuantosConsensus {
     }
 
     pub async fn receive_vote(&self, vote: CommitteeVote) -> ConsensusResult<()> {
+        self.performance_tracker.record_vote(&vote.validator);
         let _ = self.fast_path.receive_vote(vote).await?;
         Ok(())
     }
@@ -711,7 +751,7 @@ impl QuantosConsensus {
     }
 
     pub fn pending_tx_count(&self) -> usize {
-        self.mempool.total_pending()
+        self.ingress.total_pending()
     }
 
     pub fn confirmed_vertex_count(&self) -> usize {
@@ -809,6 +849,73 @@ impl QuantosConsensus {
     pub fn l0_relay_dispatcher(&self) -> Option<Arc<RelayDispatcher>> {
         self.relay_dispatcher.clone()
     }
+
+    /// Returns the validator performance tracker for RPC access.
+    pub fn performance_tracker(&self) -> &SharedValidatorPerformanceTracker {
+        &self.performance_tracker
+    }
+
+    /// Finalize the current epoch: flush in-RAM metrics, build serializable
+    /// records, and persist them to RocksDB.
+    fn finalize_and_persist_epoch(&self, prev_epoch: u64, new_epoch: u64) {
+        let completed = self.performance_tracker.finalize_epoch(new_epoch);
+
+        if completed.is_empty() {
+            return;
+        }
+
+        let validator_set = self.committee_manager.get_validator_set();
+        let total_stake: u128 = validator_set.validators.iter()
+            .map(|v| v.effective_stake())
+            .sum();
+
+        let mut records = Vec::with_capacity(completed.len());
+        for (addr, metrics) in &completed {
+            // Compute reward using the tokenomics engine (simplified: no rent/slash for now)
+            let stake = validator_set.validators.iter()
+                .find(|v| v.address == *addr)
+                .map(|v| v.effective_stake())
+                .unwrap_or(0);
+
+            let stake_weight = if total_stake == 0 {
+                0.0
+            } else {
+                stake as f64 / total_stake as f64
+            };
+
+            let performance = metrics.performance_score();
+            // Base epoch reward: 1,000,000,000 base units (placeholder, will be
+            // replaced by TokenomicsEngine::compute_epoch_reward output)
+            let base_reward = 1_000_000_000u128;
+            let reward = (base_reward as f64 * stake_weight * performance).round() as u128;
+
+            let record = ValidatorPerformanceRecord::from_metrics(
+                prev_epoch, *addr, metrics, reward,
+            );
+            records.push(record);
+        }
+
+        // Persist records to RocksDB
+        for record in &records {
+            match bincode::serialize(record) {
+                Ok(value) => {
+                    let key = crate::storage::validator_performance_key(prev_epoch, &record.validator);
+                    if let Err(e) = self.storage.put_validator_performance(&key, &value) {
+                        tracing::warn!("Failed to persist validator performance for {:?} epoch {}: {}", record.validator, prev_epoch, e);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to serialize validator performance record: {}", e);
+                }
+            }
+        }
+
+        tracing::info!(
+            epoch = prev_epoch,
+            records = records.len(),
+            "Validator performance records persisted"
+        );
+    }
 }
 
 impl Clone for QuantosConsensus {
@@ -818,7 +925,7 @@ impl Clone for QuantosConsensus {
             storage: self.storage.clone(),
             state_manager: self.state_manager.clone(),
             dag: self.dag.clone(),
-            mempool: self.mempool.clone(),
+            ingress: self.ingress.clone(),
             executor: self.executor.clone(),
             committee_manager: self.committee_manager.clone(),
             fast_path: self.fast_path.clone(),
@@ -832,6 +939,7 @@ impl Clone for QuantosConsensus {
             checkpoint_gossip: self.checkpoint_gossip.clone(),
             light_client_registry: self.light_client_registry.clone(),
             subnet_manager: self.subnet_manager.clone(),
+            performance_tracker: self.performance_tracker.clone(),
         }
     }
 }

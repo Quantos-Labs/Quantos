@@ -15,7 +15,7 @@
 import { keccak256 } from "ethers";
 import type { AttestorProofStruct } from "./account.js";
 
-export type ChainKind = "evm" | "tron" | "sui" | "aptos" | "solana" | "near" | "stellar";
+export type ChainKind = "evm" | "tron" | "sui" | "aptos" | "solana" | "near" | "stellar" | "bitcoinStacks" | "canton" | "icp";
 
 /** Canonical PQCG chain ids (spec §6). EVM/Tron use the live network id. */
 export const CHAIN_IDS: Record<Exclude<ChainKind, "evm" | "tron">, bigint> = {
@@ -24,6 +24,9 @@ export const CHAIN_IDS: Record<Exclude<ChainKind, "evm" | "tron">, bigint> = {
   stellar: 0x5354000000000001n,
   near: 0x4e45000000000001n,
   solana: 0x534f000000000001n,
+  bitcoinStacks: 0x53544b5400000001n,
+  canton: 0x434e000000000001n,
+  icp: 0x4943500000000001n,
 };
 
 // ── byte helpers ────────────────────────────────────────────────────────────
@@ -144,6 +147,9 @@ export function normalizeTo(chain: ChainKind, to: string): string {
     case "sui":
     case "aptos":
     case "solana":
+    case "bitcoinStacks":
+    case "canton":
+    case "icp":
       return bytesToHex(word32(to)); // require canonical 32-byte hex
     case "near":
     case "stellar":

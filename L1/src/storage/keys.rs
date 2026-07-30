@@ -36,6 +36,7 @@ pub const CF_QN8_COLLECTIONS: &str = "qn8_collections";
 pub const CF_QN8_OWNER_TOKENS: &str = "qn8_owner_tokens";
 pub const CF_QN4_TOKENS: &str = "qn4_tokens";
 pub const CF_QN4_OWNER_BALANCES: &str = "qn4_owner_balances";
+pub const CF_VALIDATOR_PERFORMANCE: &str = "validator_performance";
 
 pub fn account_key(address: &Address) -> Vec<u8> {
     let mut key = vec![0x01, PREFIX_SEPARATOR];
@@ -242,4 +243,32 @@ pub fn qn4_owner_prefix(owner_address: &Address) -> Vec<u8> {
 /// Prefix for iterating all QN4 tokens
 pub fn qn4_tokens_prefix() -> Vec<u8> {
     vec![0x17, PREFIX_SEPARATOR]
+}
+
+// ========================================================================
+// Validator Performance Keys
+// ========================================================================
+
+/// Key for a validator performance record (epoch + validator address).
+/// Format: 0x19 || 0xFF || epoch_be_bytes || validator_address
+pub fn validator_performance_key(epoch: u64, validator: &Address) -> Vec<u8> {
+    let mut key = vec![0x19, PREFIX_SEPARATOR];
+    key.extend_from_slice(&epoch.to_be_bytes());
+    key.extend_from_slice(validator);
+    key
+}
+
+/// Prefix for iterating all validator performance records in an epoch.
+pub fn validator_performance_epoch_prefix(epoch: u64) -> Vec<u8> {
+    let mut key = vec![0x19, PREFIX_SEPARATOR];
+    key.extend_from_slice(&epoch.to_be_bytes());
+    key
+}
+
+/// Prefix for iterating all validator performance records for a specific validator.
+pub fn validator_performance_validator_prefix(validator: &Address) -> Vec<u8> {
+    // We can't prefix-scan by validator directly since the key is epoch-first.
+    // For validator-specific queries, we iterate all epochs and filter.
+    // This prefix matches all records.
+    vec![0x19, PREFIX_SEPARATOR]
 }

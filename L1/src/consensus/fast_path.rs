@@ -23,15 +23,16 @@ const MAX_PENDING_AGE_SECS: u64 = 30;
 
 use crate::consensus::{ConsensusError, ConsensusResult, CommitteeManager};
 use crate::crypto::{sign_ml_dsa_65, verify_ml_dsa_65, MlDsa65BatchVerifier, MLDSA65_PUBLIC_KEY_SIZE};
-use crate::dag::DAGGraph;
-use crate::mempool::ShardedMempool;
+use crate::dag::{DAGGraph, TxIngressBuffer, VertexBuilder};
+use crate::mempool::{ZeroStakeProvider, FixedAgeProvider};
 use crate::state::OptimisticExecutor;
 use crate::types::{Address, CommitteeVote, Hash, ShardId, SignedTransaction, TransactionReceipt, DAGVertex, VertexStatus};
 
 #[derive(Clone)]
 pub struct FastPath {
     dag: Arc<DAGGraph>,
-    mempool: Arc<ShardedMempool>,
+    ingress: Arc<TxIngressBuffer>,
+    vertex_builder: Arc<parking_lot::Mutex<VertexBuilder<ZeroStakeProvider, FixedAgeProvider>>>,
     executor: Arc<OptimisticExecutor>,
     committee_manager: Arc<CommitteeManager>,
     pending_vertices: Arc<DashMap<Hash, PendingVertex>>,
@@ -56,14 +57,16 @@ struct PendingVertex {
 impl FastPath {
     pub fn new(
         dag: Arc<DAGGraph>,
-        mempool: Arc<ShardedMempool>,
+        ingress: Arc<TxIngressBuffer>,
+        vertex_builder: Arc<parking_lot::Mutex<VertexBuilder<ZeroStakeProvider, FixedAgeProvider>>>,
         executor: Arc<OptimisticExecutor>,
         committee_manager: Arc<CommitteeManager>,
         vertex_sender: mpsc::Sender<DAGVertex>,
     ) -> Self {
         let fast_path = Self {
             dag,
-            mempool,
+            ingress,
+            vertex_builder,
             executor,
             committee_manager,
             pending_vertices: Arc::new(DashMap::new()),
@@ -111,8 +114,9 @@ impl FastPath {
     }
 
     pub async fn process_transaction(&self, tx: SignedTransaction) -> ConsensusResult<()> {
-        self.mempool.add_transaction(tx)
-            .map_err(|e| ConsensusError::InvalidVertex(e.to_string()))?;
+        if !self.ingress.ingest(tx) {
+            return Err(ConsensusError::InvalidVertex("Transaction rejected by ingress buffer".to_string()));
+        }
         Ok(())
     }
 
@@ -129,8 +133,8 @@ impl FastPath {
         secret_key: &[u8],
         public_key: &[u8],
     ) -> ConsensusResult<DAGVertex> {
-        // DAG-native selection: pull a nonce-ready conflict-minimized antichain.
-        let transactions = self.mempool.get_ready_antichain_for_shard(shard_id, 10000);
+        // DAG-native selection: drain ingress buffer and build a conflict-minimized vertex payload.
+        let transactions = self.vertex_builder.lock().build_vertex_payload(shard_id, 0);
         
         if transactions.is_empty() {
             return Err(ConsensusError::InvalidVertex("No transactions".to_string()));
@@ -167,9 +171,7 @@ impl FastPath {
         });
         self.pending_count.fetch_add(1, Ordering::Relaxed);
 
-        // Remove processed transactions from mempool
-        let tx_hashes: Vec<Hash> = vertex.transactions.iter().map(|tx| tx.hash).collect();
-        self.mempool.remove_transactions(shard_id, &tx_hashes);
+        // Ingress buffer is already drained by build_vertex_payload — no removal needed.
 
         // Broadcast vertex (non-blocking)
         let _ = self.vertex_sender.try_send(vertex.clone());
@@ -345,8 +347,7 @@ impl FastPath {
         self.dag.add_vertex(vertex.clone())
             .map_err(|e| ConsensusError::StorageError(e.to_string()))?;
 
-        let tx_hashes: Vec<Hash> = vertex.transactions.iter().map(|t| t.hash).collect();
-        self.mempool.remove_transactions(vertex.shard_id, &tx_hashes);
+        // Ingress buffer was already drained at vertex creation time — no removal needed.
 
         self.confirmed_vertices.insert(vertex.hash, vertex.clone());
 
@@ -434,6 +435,10 @@ pub fn max_pending_vertices(&self) -> usize {
 
     pub fn confirmed_count(&self) -> usize {
         self.dag.vertex_count()
+    }
+
+    pub fn ingress(&self) -> &Arc<TxIngressBuffer> {
+        &self.ingress
     }
 
     /// Batch verifies multiple vertices efficiently

@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build output
+.next/
+out/
+dist/
+
+# Vercel
+.vercel/
+.vercel/deploy_config.json
+.vercel/project.json
+.vercel/README.txt
+
+# Environment variables (contains API keys, RPC URLs, etc.)
+.env
+.env.local
+.env.production
+.env.development
+.env*.local
+
+# Vercel CLI config (contains tokens/org IDs)
+.vercel/token.json
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# SDK build artifacts
+../sdk/dist/
+../sdk/node_modules/

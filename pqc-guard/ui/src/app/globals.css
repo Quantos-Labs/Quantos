@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-bg text-gray-200 antialiased;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a2b35 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: #2a2b35;
+  border-radius: 3px;
+}
+
+@layer components {
+  .card {
+    @apply bg-bg-card border border-border rounded-xl p-5;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-accent hover:bg-accent-hover text-white;
+  }
+  .btn-ghost {
+    @apply btn bg-bg-hover hover:bg-border text-gray-300;
+  }
+  .btn-danger {
+    @apply btn bg-err/20 hover:bg-err/30 text-err border border-err/30;
+  }
+  .input {
+    @apply w-full bg-bg-input border border-border rounded-lg px-3 py-2 text-sm text-gray-200 placeholder:text-muted focus:outline-none focus:border-accent transition-colors;
+  }
+  .label {
+    @apply block text-xs font-medium text-muted mb-1.5 uppercase tracking-wide;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium;
+  }
+  .badge-ok {
+    @apply badge bg-ok/15 text-ok border border-ok/20;
+  }
+  .badge-warn {
+    @apply badge bg-warn/15 text-warn border border-warn/20;
+  }
+  .badge-err {
+    @apply badge bg-err/15 text-err border border-err/20;
+  }
+  .badge-muted {
+    @apply badge bg-bg-hover text-muted border border-border;
+  }
+}

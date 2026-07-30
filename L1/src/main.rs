@@ -36,10 +36,6 @@ mod parallel;
 mod sharding;
 mod sidechain;
 mod zk;
-mod compression;
-mod batching;
-mod sync;
-mod light_client;
 mod security;
 mod vm;
 mod standards;
@@ -350,7 +346,7 @@ async fn main() -> Result<()> {
     info!("✓ Self-Healing background task started");
 
     // Initialize P2P network
-    let network = P2PNetwork::new(config.clone(), consensus.clone()).await?;
+    let network = std::sync::Arc::new(P2PNetwork::new(config.clone(), consensus.clone()).await?);
     info!("✓ P2P Network initialized on port {}", config.p2p_port);
 
     // Initialize VM components for RPC
@@ -383,6 +379,7 @@ async fn main() -> Result<()> {
         config.clone(),
         state_manager.clone(),
         consensus.clone(),
+        network.clone(),
         bytecode_protector,
         contract_manager,
     );

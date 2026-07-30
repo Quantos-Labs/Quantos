@@ -21,7 +21,7 @@ export interface PqcKeypair {
 /** Generate an SLH-DSA (SPHINCS+ SHA2-128f) keypair. */
 export function genKeypair(seed?: Uint8Array): PqcKeypair {
   // @noble exposes keygen() (random) and keygen(seed) on some versions.
-  const keys = seed ? slh_dsa_sha2_128f.keygen(seed) : slh_dsa_sha2_128f.keygen();
+  const keys = seed ? slh_dsa_sha2_128f.keygen(seed) : (slh_dsa_sha2_128f.keygen as () => { publicKey: Uint8Array; secretKey: Uint8Array })();
   return { publicKey: keys.publicKey, secretKey: keys.secretKey };
 }
 

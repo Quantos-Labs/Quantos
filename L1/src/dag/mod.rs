@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: BUSL-1.1
 // See the LICENSE file in the project root for the full license text.
 
+pub mod ingress;
 mod graph;
 mod ordering;
 
 pub use graph::*;
 pub use ordering::*;
+pub use ingress::{TxIngressBuffer, VertexBuilder};
 
 use thiserror::Error;
 

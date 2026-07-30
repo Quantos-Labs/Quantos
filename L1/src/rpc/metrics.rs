@@ -162,9 +162,8 @@ pub fn spawn_metrics_updater(
             let max_report = num_shards.min(50);
             for shard_id in 0..max_report as u16 {
                 let pending = consensus
-                    .mempool()
-                    .get_pending_for_shard(shard_id, 1)
-                    .len();
+                    .ingress()
+                    .pending_for_shard(shard_id);
                 metrics
                     .shard_pending_txs
                     .with_label_values(&[&shard_id.to_string()])

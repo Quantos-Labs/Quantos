@@ -68,6 +68,7 @@ fn max_concurrent_executions() -> usize {
 }
 
 use crate::consensus::QuantosConsensus;
+use crate::network::P2PNetwork;
 use crate::state::StateManager;
 use crate::types::{SignedTransaction, TransactionReceipt, TransactionStatus};
 use crate::vm::{BytecodeProtector, ContractManager};
@@ -277,6 +278,7 @@ pub struct RpcServer {
     config: NodeConfig,
     state_manager: StateManager,
     consensus: QuantosConsensus,
+    network: Arc<P2PNetwork>,
     bytecode_protector: Arc<BytecodeProtector>,
     contract_manager: Arc<ContractManager>,
     /// Production rate limiter with IP tracking
@@ -290,6 +292,7 @@ impl RpcServer {
         config: NodeConfig,
         state_manager: StateManager,
         consensus: QuantosConsensus,
+        network: Arc<P2PNetwork>,
         bytecode_protector: Arc<BytecodeProtector>,
         contract_manager: Arc<ContractManager>,
     ) -> Self {
@@ -297,6 +300,7 @@ impl RpcServer {
             config,
             state_manager,
             consensus,
+            network,
             bytecode_protector,
             contract_manager,
             rate_limiter: RateLimiterState::new(),
@@ -318,6 +322,7 @@ impl RpcServer {
         let rpc_impl = QuantosRpcImpl {
             state_manager: self.state_manager.clone(),
             consensus: self.consensus.clone(),
+            network: self.network.clone(),
             bytecode_protector: self.bytecode_protector.clone(),
             contract_manager: self.contract_manager.clone(),
             rate_limiter: self.rate_limiter.clone(),
@@ -379,21 +384,18 @@ impl RpcServer {
             let mut interval = tokio::time::interval(Duration::from_millis(200));
             loop {
                 interval.tick().await;
-                let mempool = consensus_pending.mempool();
-                let current_count = mempool.total_pending();
+                let ingress = consensus_pending.ingress();
+                let current_count = ingress.total_pending();
                 if current_count != last_pending_count {
                     if current_count > last_pending_count {
                         // New transactions appeared - broadcast them
                         let new_count = current_count - last_pending_count;
                         for shard_id in 0..consensus_pending.num_shards() as u16 {
-                            let txs = mempool.get_pending_for_shard(shard_id, new_count);
-                            for tx in txs {
+                            let pending = ingress.pending_for_shard(shard_id);
+                            if pending > 0 {
                                 let notification = serde_json::json!({
-                                    "hash": format!("QTS:{}", hex::encode(tx.hash)),
-                                    "from": format!("QTS:{}", hex::encode(tx.transaction.from)),
-                                    "to": format!("QTS:{}", hex::encode(tx.transaction.to)),
-                                    "value": format!("QTS:{:x}", tx.transaction.amount.0),
-                                    "nonce": format!("QTS:{:x}", tx.transaction.nonce),
+                                    "shard": shard_id,
+                                    "pending": pending,
                                 });
                                 sub_mgr_pending.broadcast("newPendingTransactions", notification);
                             }
@@ -494,6 +496,9 @@ pub trait QuantosRpc {
     #[method(name = "qnt_peerCount")]
     async fn peer_count(&self) -> Result<String, jsonrpsee::types::ErrorObjectOwned>;
 
+    #[method(name = "qnt_getPeers")]
+    async fn get_peers(&self) -> Result<Vec<PeerInfoResponse>, jsonrpsee::types::ErrorObjectOwned>;
+
     // ====================================================================
     // Production API — Validators
     // ====================================================================
@@ -503,6 +508,12 @@ pub trait QuantosRpc {
 
     #[method(name = "qnt_getValidatorByAddress")]
     async fn get_validator_by_address(&self, address: String) -> Result<Option<ValidatorInfoResponse>, jsonrpsee::types::ErrorObjectOwned>;
+
+    #[method(name = "qnt_getValidatorStats")]
+    async fn get_validator_stats(&self, address: String) -> Result<Option<ValidatorStatsResponse>, jsonrpsee::types::ErrorObjectOwned>;
+
+    #[method(name = "qnt_getEpochRewards")]
+    async fn get_epoch_rewards(&self, epoch: u64) -> Result<EpochRewardsResponse, jsonrpsee::types::ErrorObjectOwned>;
 
     // ====================================================================
     // Production API — Mempool
@@ -598,6 +609,7 @@ pub trait QuantosRpc {
 pub struct QuantosRpcImpl {
     state_manager: StateManager,
     consensus: QuantosConsensus,
+    network: Arc<P2PNetwork>,
     bytecode_protector: Arc<BytecodeProtector>,
     contract_manager: Arc<ContractManager>,
     rate_limiter: RateLimiterState,
@@ -856,7 +868,7 @@ impl QuantosRpcServer for QuantosRpcImpl {
     }
 
     async fn get_shard_info(&self, shard_id: u16) -> Result<ShardInfo, jsonrpsee::types::ErrorObjectOwned> {
-        let pending = self.consensus.mempool().get_pending_for_shard(shard_id, usize::MAX).len();
+        let pending = self.consensus.ingress().pending_for_shard(shard_id);
         Ok(ShardInfo {
             shard_id,
             validator_count: 0,
@@ -947,6 +959,26 @@ impl QuantosRpcServer for QuantosRpcImpl {
         Ok(format!("QTS:{:x}", metrics.total_validators))
     }
 
+    async fn get_peers(&self) -> Result<Vec<PeerInfoResponse>, jsonrpsee::types::ErrorObjectOwned> {
+        let peer_ids = self.network.connected_peers();
+        let peers: Vec<PeerInfoResponse> = peer_ids.iter().map(|pid| {
+            let info = self.network.get_peer_info(pid);
+            PeerInfoResponse {
+                peer_id: pid.to_string(),
+                addr: info.as_ref().and_then(|i| i.addr.clone()).unwrap_or_default(),
+                protocol_version: info.as_ref().map(|i| i.protocol_version.clone()).unwrap_or_default(),
+                agent_version: info.as_ref().map(|i| i.agent_version.clone()).unwrap_or_default(),
+                connected_at: info.as_ref().map(|i| i.connected_at).unwrap_or(0),
+                last_seen: info.as_ref().map(|i| i.last_seen).unwrap_or(0),
+                latency_ms: info.as_ref().map(|i| i.latency_ms).unwrap_or(0),
+                messages_received: info.as_ref().map(|i| i.messages_received).unwrap_or(0),
+                messages_sent: info.as_ref().map(|i| i.messages_sent).unwrap_or(0),
+                reputation: info.as_ref().map(|i| i.reputation).unwrap_or(0),
+            }
+        }).collect();
+        Ok(peers)
+    }
+
     // ====================================================================
     // Production API — Validators
     // ====================================================================
@@ -954,8 +986,10 @@ impl QuantosRpcServer for QuantosRpcImpl {
     async fn get_validators(&self) -> Result<ValidatorsResponse, jsonrpsee::types::ErrorObjectOwned> {
         let metrics = self.consensus.get_metrics();
         let validator_set = self.consensus.committee_manager().get_validator_set();
+        let tracker = self.consensus.performance_tracker();
 
         let validators: Vec<ValidatorInfoResponse> = validator_set.validators.iter().map(|v| {
+            let perf = tracker.get_metrics(&v.address);
             ValidatorInfoResponse {
                 address: format!("QTS:{}", hex::encode(v.address)),
                 stake: format!("QTS:{:x}", v.stake.0),
@@ -964,6 +998,9 @@ impl QuantosRpcServer for QuantosRpcImpl {
                 jailed: v.jailed,
                 slash_count: v.slash_count,
                 last_active_slot: v.last_active_slot,
+                performance_score: perf.as_ref().map(|m| m.performance_score()),
+                uptime_pct: perf.as_ref().map(|m| m.uptime()),
+                blocks_proposed: perf.as_ref().map(|m| m.blocks_proposed),
             }
         }).collect();
 
@@ -980,8 +1017,10 @@ impl QuantosRpcServer for QuantosRpcImpl {
     async fn get_validator_by_address(&self, address: String) -> Result<Option<ValidatorInfoResponse>, jsonrpsee::types::ErrorObjectOwned> {
         let addr = parse_address(&address)?;
         let validator_set = self.consensus.committee_manager().get_validator_set();
+        let tracker = self.consensus.performance_tracker();
 
         Ok(validator_set.get_validator(&addr).map(|v| {
+            let perf = tracker.get_metrics(&v.address);
             ValidatorInfoResponse {
                 address: format!("QTS:{}", hex::encode(v.address)),
                 stake: format!("QTS:{:x}", v.stake.0),
@@ -990,22 +1029,175 @@ impl QuantosRpcServer for QuantosRpcImpl {
                 jailed: v.jailed,
                 slash_count: v.slash_count,
                 last_active_slot: v.last_active_slot,
+                performance_score: perf.as_ref().map(|m| m.performance_score()),
+                uptime_pct: perf.as_ref().map(|m| m.uptime()),
+                blocks_proposed: perf.as_ref().map(|m| m.blocks_proposed),
             }
         }))
     }
 
+    async fn get_validator_stats(&self, address: String) -> Result<Option<ValidatorStatsResponse>, jsonrpsee::types::ErrorObjectOwned> {
+        let addr = parse_address(&address)?;
+        let validator_set = self.consensus.committee_manager().get_validator_set();
+
+        let validator = match validator_set.get_validator(&addr) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+
+        let tracker = self.consensus.performance_tracker();
+        let current_epoch = tracker.current_epoch();
+
+        // Current epoch live metrics
+        let current = tracker.get_metrics(&addr).unwrap_or_default();
+
+        // Historical metrics from RocksDB
+        let history_raw = self.consensus.storage()
+            .get_validator_all_performances(&addr)
+            .map_err(|e| jsonrpsee::types::ErrorObjectOwned::owned(
+                -32000, format!("Storage error: {}", e), None::<()>,
+            ))?;
+
+        let mut history = Vec::with_capacity(history_raw.len());
+        let mut total_blocks = 0u64;
+        let mut total_votes = 0u64;
+        let mut total_checkpoint_sigs = 0u64;
+        let mut total_rewards = 0u128;
+        let mut perf_scores = Vec::new();
+        let mut uptimes = Vec::new();
+
+        for (epoch, raw) in &history_raw {
+            match bincode::deserialize::<crate::consensus::ValidatorPerformanceRecord>(raw) {
+                Ok(record) => {
+                    total_blocks += record.blocks_proposed;
+                    total_votes += record.votes_cast;
+                    total_checkpoint_sigs += record.checkpoint_signatures;
+                    total_rewards += record.epoch_reward;
+                    perf_scores.push(record.performance_score);
+                    uptimes.push(record.uptime);
+
+                    history.push(ValidatorEpochHistoryEntry {
+                        epoch: *epoch,
+                        blocks_proposed: record.blocks_proposed,
+                        votes_cast: record.votes_cast,
+                        votes_expected: record.votes_expected,
+                        avg_inclusion_latency_ms: record.avg_inclusion_latency_ms,
+                        total_cu_proposed: record.total_cu_proposed,
+                        checkpoint_signatures: record.checkpoint_signatures,
+                        performance_score: record.performance_score,
+                        uptime: record.uptime,
+                        epoch_reward: record.epoch_reward,
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to deserialize validator performance record for epoch {}: {}", epoch, e);
+                }
+            }
+        }
+
+        // Sort history most recent first
+        history.sort_by(|a, b| b.epoch.cmp(&a.epoch));
+
+        let avg_perf = if perf_scores.is_empty() { 0.0 } else {
+            perf_scores.iter().sum::<f64>() / perf_scores.len() as f64
+        };
+        let avg_uptime = if uptimes.is_empty() { 0.0 } else {
+            uptimes.iter().sum::<f64>() / uptimes.len() as f64
+        };
+
+        Ok(Some(ValidatorStatsResponse {
+            address: format!("QTS:{}", hex::encode(validator.address)),
+            current_epoch,
+            current_blocks_proposed: current.blocks_proposed,
+            current_votes_cast: current.votes_cast,
+            current_votes_expected: current.votes_expected,
+            current_checkpoint_signatures: current.checkpoint_signatures,
+            current_performance_score: current.performance_score(),
+            current_uptime: current.uptime(),
+            total_blocks_proposed: total_blocks,
+            total_votes_cast: total_votes,
+            total_checkpoint_signatures: total_checkpoint_sigs,
+            avg_performance_score: avg_perf,
+            avg_uptime: avg_uptime,
+            total_rewards_earned: total_rewards,
+            history,
+        }))
+    }
+
+    async fn get_epoch_rewards(&self, epoch: u64) -> Result<EpochRewardsResponse, jsonrpsee::types::ErrorObjectOwned> {
+        let records_raw = self.consensus.storage()
+            .get_epoch_validator_performances(epoch)
+            .map_err(|e| jsonrpsee::types::ErrorObjectOwned::owned(
+                -32000, format!("Storage error: {}", e), None::<()>,
+            ))?;
+
+        let validator_set = self.consensus.committee_manager().get_validator_set();
+        let total_stake: u128 = validator_set.validators.iter()
+            .map(|v| v.effective_stake()).sum();
+
+        let mut rewards = Vec::with_capacity(records_raw.len());
+        let mut total_distributed = 0u128;
+
+        for (addr, raw) in &records_raw {
+            match bincode::deserialize::<crate::consensus::ValidatorPerformanceRecord>(raw) {
+                Ok(record) => {
+                    total_distributed += record.epoch_reward;
+                    let stake = validator_set.validators.iter()
+                        .find(|v| v.address == *addr)
+                        .map(|v| v.effective_stake())
+                        .unwrap_or(0);
+                    let stake_weight = if total_stake == 0 { 0.0 } else { stake as f64 / total_stake as f64 };
+
+                    rewards.push(EpochRewardEntry {
+                        address: format!("QTS:{}", hex::encode(addr)),
+                        stake_weight,
+                        performance_score: record.performance_score,
+                        uptime: record.uptime,
+                        blocks_proposed: record.blocks_proposed,
+                        votes_cast: record.votes_cast,
+                        epoch_reward: record.epoch_reward,
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to deserialize epoch reward for {:?}: {}", addr, e);
+                }
+            }
+        }
+
+        // Sort by reward descending (highest reward first)
+        rewards.sort_by(|a, b| b.epoch_reward.cmp(&a.epoch_reward));
+
+        Ok(EpochRewardsResponse {
+            epoch,
+            total_reward_distributed: total_distributed,
+            validator_count: rewards.len(),
+            rewards,
+        })
+    }
+
     // ====================================================================
-    // Production API — Mempool
+    // Production API — Ingress Buffer (replaces Mempool)
     // ====================================================================
 
     async fn pending_transactions(&self, limit: Option<usize>) -> Result<Vec<TransactionInfo>, jsonrpsee::types::ErrorObjectOwned> {
         self.check_rate_limit()?;
         let max = limit.unwrap_or(100).min(1000);
+        // In DAG-native mode, the ingress buffer is a bounded channel, not a
+        // queryable pool. We report per-shard pending counts as summary entries.
         let mut all_txs = Vec::new();
-
         for shard_id in 0..self.num_shards as u16 {
-            let txs = self.consensus.mempool().get_pending_for_shard(shard_id, max.saturating_sub(all_txs.len()));
-            all_txs.extend(txs.into_iter().map(|tx| TransactionInfo::from_signed_tx(&tx)));
+            let pending = self.consensus.ingress().pending_for_shard(shard_id);
+            if pending > 0 {
+                all_txs.push(TransactionInfo {
+                    hash: format!("shard:{}:pending:{}", shard_id, pending),
+                    from: String::new(),
+                    to: String::new(),
+                    value: "0x0".to_string(),
+                    nonce: "0x0".to_string(),
+                    gas: "0x0".to_string(),
+                    input: String::new(),
+                });
+            }
             if all_txs.len() >= max {
                 break;
             }
@@ -1015,12 +1207,12 @@ impl QuantosRpcServer for QuantosRpcImpl {
     }
 
     async fn tx_pool_status(&self) -> Result<TxPoolStatusResponse, jsonrpsee::types::ErrorObjectOwned> {
-        let total = self.consensus.mempool().total_pending();
+        let total = self.consensus.ingress().total_pending();
         let mut shards = Vec::new();
 
         // Only report shards with pending txs (avoid flooding with 1000 empty entries)
         for shard_id in 0..self.num_shards as u16 {
-            let pending = self.consensus.mempool().get_pending_for_shard(shard_id, 1).len();
+            let pending = self.consensus.ingress().pending_for_shard(shard_id);
             if pending > 0 {
                 shards.push(ShardPoolInfo { shard_id, pending });
             }
@@ -1098,8 +1290,8 @@ impl QuantosRpcServer for QuantosRpcImpl {
             })
             .collect();
 
-        // Phase 2: Submit as one batch so the mempool can verify all ML-DSA-65
-        // signatures in parallel (rayon) and insert atomically per shard.
+        // Phase 2: Submit as one batch so the ingress buffer can validate
+        // all ML-DSA-65 signatures and route to shard channels.
         let mut results = Vec::with_capacity(decoded.len());
         let mut batch = Vec::with_capacity(decoded.len());
         for (i, tx_result) in decoded.into_iter().enumerate() {
@@ -2069,6 +2261,20 @@ pub struct SyncStatus {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct PeerInfoResponse {
+    pub peer_id: String,
+    pub addr: String,
+    pub protocol_version: String,
+    pub agent_version: String,
+    pub connected_at: u64,
+    pub last_seen: u64,
+    pub latency_ms: u64,
+    pub messages_received: u64,
+    pub messages_sent: u64,
+    pub reputation: i32,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct NFTInfo {
     pub token_id: u64,
     pub collection_address: String,
@@ -2105,6 +2311,67 @@ pub struct ValidatorInfoResponse {
     pub jailed: bool,
     pub slash_count: u32,
     pub last_active_slot: u64,
+    #[serde(default)]
+    pub performance_score: Option<f64>,
+    #[serde(default)]
+    pub uptime_pct: Option<f64>,
+    #[serde(default)]
+    pub blocks_proposed: Option<u64>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ValidatorStatsResponse {
+    pub address: String,
+    pub current_epoch: u64,
+    /// Current epoch metrics (live, from RAM)
+    pub current_blocks_proposed: u64,
+    pub current_votes_cast: u64,
+    pub current_votes_expected: u64,
+    pub current_checkpoint_signatures: u64,
+    pub current_performance_score: f64,
+    pub current_uptime: f64,
+    /// Historical aggregates (from RocksDB)
+    pub total_blocks_proposed: u64,
+    pub total_votes_cast: u64,
+    pub total_checkpoint_signatures: u64,
+    pub avg_performance_score: f64,
+    pub avg_uptime: f64,
+    pub total_rewards_earned: u128,
+    /// Per-epoch history (most recent first)
+    pub history: Vec<ValidatorEpochHistoryEntry>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ValidatorEpochHistoryEntry {
+    pub epoch: u64,
+    pub blocks_proposed: u64,
+    pub votes_cast: u64,
+    pub votes_expected: u64,
+    pub avg_inclusion_latency_ms: f64,
+    pub total_cu_proposed: u64,
+    pub checkpoint_signatures: u64,
+    pub performance_score: f64,
+    pub uptime: f64,
+    pub epoch_reward: u128,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct EpochRewardsResponse {
+    pub epoch: u64,
+    pub total_reward_distributed: u128,
+    pub validator_count: usize,
+    pub rewards: Vec<EpochRewardEntry>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct EpochRewardEntry {
+    pub address: String,
+    pub stake_weight: f64,
+    pub performance_score: f64,
+    pub uptime: f64,
+    pub blocks_proposed: u64,
+    pub votes_cast: u64,
+    pub epoch_reward: u128,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

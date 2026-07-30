@@ -45,6 +45,7 @@ pub mod pipelining;
 pub mod optimistic_responsiveness;
 pub mod view_change;
 pub mod safety_model;
+pub mod validator_performance;
 
 #[cfg(test)]
 mod adversarial_tests;
@@ -59,6 +60,7 @@ pub use dynamic_committee::*;
 pub use pipelining::*;
 pub use optimistic_responsiveness::*;
 pub use view_change::*;
+pub use validator_performance::*;
 
 use thiserror::Error;
 

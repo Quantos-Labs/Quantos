@@ -93,6 +93,7 @@ impl Storage {
             ColumnFamilyDescriptor::new(CF_QN8_OWNER_TOKENS, Options::default()),
             ColumnFamilyDescriptor::new(CF_QN4_TOKENS, Options::default()),
             ColumnFamilyDescriptor::new(CF_QN4_OWNER_BALANCES, Options::default()),
+            ColumnFamilyDescriptor::new(CF_VALIDATOR_PERFORMANCE, Options::default()),
         ];
 
         let db_path = path.as_ref().to_path_buf();
@@ -1386,6 +1387,74 @@ impl Storage {
         }
         Ok(results)
     }
+
+    // ========================================================================
+    // Validator Performance Storage
+    // ========================================================================
+
+    /// Persist a validator performance record (raw bytes, caller serializes).
+    pub fn put_validator_performance(&self, key: &[u8], value: &[u8]) -> StorageResult<()> {
+        let cf = self.db.cf_handle(CF_VALIDATOR_PERFORMANCE)
+            .ok_or_else(|| StorageError::DatabaseError("CF not found".to_string()))?;
+        self.db.put_cf(&cf, key, value)
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))
+    }
+
+    /// Get a single validator performance record by epoch + address.
+    pub fn get_validator_performance(&self, epoch: u64, validator: &Address) -> StorageResult<Option<Vec<u8>>> {
+        let cf = self.db.cf_handle(CF_VALIDATOR_PERFORMANCE)
+            .ok_or_else(|| StorageError::DatabaseError("CF not found".to_string()))?;
+        let key = validator_performance_key(epoch, validator);
+        match self.db.get_cf(&cf, &key) {
+            Ok(data) => Ok(data),
+            Err(e) => Err(StorageError::DatabaseError(e.to_string())),
+        }
+    }
+
+    /// Get all validator performance records for a given epoch.
+    /// Returns raw bytes; caller deserializes into ValidatorPerformanceRecord.
+    pub fn get_epoch_validator_performances(&self, epoch: u64) -> StorageResult<Vec<(Address, Vec<u8>)>> {
+        let cf = self.db.cf_handle(CF_VALIDATOR_PERFORMANCE)
+            .ok_or_else(|| StorageError::DatabaseError("CF not found".to_string()))?;
+        let prefix = validator_performance_epoch_prefix(epoch);
+        let iter = self.db.iterator_cf(&cf, IteratorMode::From(&prefix, rocksdb::Direction::Forward));
+        let mut results = Vec::new();
+        for item in iter {
+            let (key, value) = item.map_err(|e| StorageError::DatabaseError(e.to_string()))?;
+            if !key.starts_with(&prefix) { break; }
+            // Key format: 0x19 || 0xFF || epoch_be(8) || address(32)
+            if key.len() >= prefix.len() + 32 {
+                let mut addr = [0u8; 32];
+                addr.copy_from_slice(&key[prefix.len()..prefix.len() + 32]);
+                results.push((addr, value.to_vec()));
+            }
+        }
+        Ok(results)
+    }
+
+    /// Get all validator performance records for a specific validator across all epochs.
+    /// Returns (epoch, raw_bytes) pairs.
+    pub fn get_validator_all_performances(&self, validator: &Address) -> StorageResult<Vec<(u64, Vec<u8>)>> {
+        let cf = self.db.cf_handle(CF_VALIDATOR_PERFORMANCE)
+            .ok_or_else(|| StorageError::DatabaseError("CF not found".to_string()))?;
+        let prefix = validator_performance_validator_prefix(validator);
+        let iter = self.db.iterator_cf(&cf, IteratorMode::From(&prefix, rocksdb::Direction::Forward));
+        let mut results = Vec::new();
+        for item in iter {
+            let (key, value) = item.map_err(|e| StorageError::DatabaseError(e.to_string()))?;
+            if !key.starts_with(&prefix) { break; }
+            // Key format: 0x19 || 0xFF || epoch_be(8) || address(32)
+            if key.len() >= 2 + 8 + 32 {
+                let epoch_bytes: [u8; 8] = key[2..10].try_into().unwrap_or([0u8; 8]);
+                let epoch = u64::from_be_bytes(epoch_bytes);
+                let addr_bytes: &[u8] = &key[10..42];
+                if addr_bytes == validator.as_slice() {
+                    results.push((epoch, value.to_vec()));
+                }
+            }
+        }
+        Ok(results)
+    }
 }
 
 impl Default for PruningConfig {
@@ -1429,5 +1498,90 @@ mod tests {
         
         let loaded = storage.get_latest_checkpoint().unwrap().unwrap();
         assert_eq!(loaded.epoch, 0);
+    }
+
+    #[test]
+    fn test_validator_performance_storage() {
+        let dir = tempdir().unwrap();
+        let storage = Storage::new(dir.path()).unwrap();
+
+        let validator = [0xAB; 32];
+        let epoch = 42u64;
+
+        // Write a record
+        let key = validator_performance_key(epoch, &validator);
+        let record = crate::consensus::ValidatorPerformanceRecord {
+            epoch,
+            validator,
+            blocks_proposed: 10,
+            votes_cast: 30,
+            votes_expected: 32,
+            avg_inclusion_latency_ms: 150.0,
+            total_cu_proposed: 100_000,
+            checkpoint_signatures: 1,
+            performance_score: 0.85,
+            uptime: 0.9375,
+            epoch_reward: 5_000_000,
+        };
+        let value = bincode::serialize(&record).unwrap();
+        storage.put_validator_performance(&key, &value).unwrap();
+
+        // Read it back
+        let loaded = storage.get_validator_performance(epoch, &validator).unwrap().unwrap();
+        let loaded_record: crate::consensus::ValidatorPerformanceRecord =
+            bincode::deserialize(&loaded).unwrap();
+        assert_eq!(loaded_record.epoch, epoch);
+        assert_eq!(loaded_record.validator, validator);
+        assert_eq!(loaded_record.blocks_proposed, 10);
+        assert_eq!(loaded_record.votes_cast, 30);
+        assert_eq!(loaded_record.votes_expected, 32);
+        assert!((loaded_record.performance_score - 0.85).abs() < 0.001);
+        assert!((loaded_record.uptime - 0.9375).abs() < 0.001);
+        assert_eq!(loaded_record.epoch_reward, 5_000_000);
+
+        // Query by epoch — should find the record
+        let epoch_records = storage.get_epoch_validator_performances(epoch).unwrap();
+        assert_eq!(epoch_records.len(), 1);
+        assert_eq!(epoch_records[0].0, validator);
+
+        // Query all epochs for a validator
+        let all_records = storage.get_validator_all_performances(&validator).unwrap();
+        assert_eq!(all_records.len(), 1);
+        assert_eq!(all_records[0].0, epoch);
+    }
+
+    #[test]
+    fn test_validator_performance_multiple_epochs() {
+        let dir = tempdir().unwrap();
+        let storage = Storage::new(dir.path()).unwrap();
+
+        let validator = [0xCD; 32];
+
+        for epoch in 0..5u64 {
+            let key = validator_performance_key(epoch, &validator);
+            let record = crate::consensus::ValidatorPerformanceRecord {
+                epoch,
+                validator,
+                blocks_proposed: epoch + 1,
+                votes_cast: 32,
+                votes_expected: 32,
+                avg_inclusion_latency_ms: 100.0,
+                total_cu_proposed: 50_000,
+                checkpoint_signatures: 1,
+                performance_score: 1.0,
+                uptime: 1.0,
+                epoch_reward: 1_000_000 * (epoch + 1) as u128,
+            };
+            let value = bincode::serialize(&record).unwrap();
+            storage.put_validator_performance(&key, &value).unwrap();
+        }
+
+        // Query all epochs for this validator
+        let all = storage.get_validator_all_performances(&validator).unwrap();
+        assert_eq!(all.len(), 5);
+
+        // Query epoch 3 — should find 1 record
+        let epoch3 = storage.get_epoch_validator_performances(3).unwrap();
+        assert_eq!(epoch3.len(), 1);
     }
 }

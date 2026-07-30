@@ -58,7 +58,6 @@ pub mod vm;
 pub mod standards;
 pub mod security;
 pub mod zk;
-pub mod performance;
 pub mod genesis;
 pub mod stacc;
 pub mod l0;
