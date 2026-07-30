@@ -24,7 +24,7 @@ use crate::stacc::{ActivationLedger, QuotaManager, StaccAdmission};
 use crate::storage::Storage;
 use crate::types::{
     Address, Checkpoint, CommitteeVote, DAGVertex, Hash,
-    ShardId, SignedTransaction, Validator,
+    ShardId, SignedTransaction, TransactionReceipt, Validator,
 };
 use crate::NodeConfig;
 
@@ -530,7 +530,14 @@ impl QuantosConsensus {
             for (vertex, (_state_root, receipts, txs)) in successful_vertices.iter().zip(batch_results.iter()) {
                 let tx_count = vertex.tx_count();
                 let shard_id = vertex.shard_id;
-                all_receipts.extend(receipts.clone());
+                let vhash = vertex.hash;
+                let mut fixed_receipts: Vec<TransactionReceipt> = receipts.iter().map(|r| {
+                    let mut r = r.clone();
+                    r.slot = slot;
+                    r.vertex_hash = vhash;
+                    r
+                }).collect();
+                all_receipts.append(&mut fixed_receipts);
                 all_txs.extend(txs.clone());
                 committed_count += 1;
 
@@ -559,7 +566,13 @@ impl QuantosConsensus {
                         let confirm_result = fast_path.receive_vote(vote).await?;
 
                         if let Some((_state_root, receipts)) = confirm_result {
-                            all_receipts.extend(receipts);
+                            let vhash = vertex.hash;
+                            let mut fixed_receipts: Vec<TransactionReceipt> = receipts.into_iter().map(|mut r| {
+                                r.slot = slot;
+                                r.vertex_hash = vhash;
+                                r
+                            }).collect();
+                            all_receipts.append(&mut fixed_receipts);
                             all_txs.extend(vertex.transactions);
                             committed_count += 1;
 
