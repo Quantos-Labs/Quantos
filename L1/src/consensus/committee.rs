@@ -77,11 +77,24 @@ impl CommitteeManager {
         num_committees: u16,
         validators_per_committee: usize,
     ) -> Self {
+        // Load persisted validator set from RocksDB (epoch 0 = current active set)
+        let validator_set = match storage.get_validator_set(0) {
+            Ok(Some(set)) if !set.validators.is_empty() => {
+                tracing::info!(
+                    "Loaded {} validators from storage (total_stake={})",
+                    set.validators.len(),
+                    set.total_stake.0
+                );
+                set
+            }
+            _ => ValidatorSet::new(),
+        };
+
         Self {
             storage,
             current_epoch: Arc::new(RwLock::new(0)),
             committees: Arc::new(DashMap::new()),
-            validator_set: Arc::new(RwLock::new(ValidatorSet::new())),
+            validator_set: Arc::new(RwLock::new(validator_set)),
             num_committees,
             validators_per_committee,
         }
@@ -257,25 +270,64 @@ impl CommitteeManager {
         if validator.stake.0 > u128::MAX / 2 {
             return Err(format!("Validator stake {} exceeds safe maximum", validator.stake.0));
         }
-        self.validator_set.write().add_validator(validator)
+        let mut set = self.validator_set.write();
+        set.add_validator(validator.clone())?;
+        // Persist to RocksDB
+        if let Err(e) = self.storage.put_validator(&validator) {
+            tracing::error!("Failed to persist validator {}: {}", hex::encode(&validator.address[..8]), e);
+        }
+        if let Err(e) = self.storage.put_validator_set(0, &set) {
+            tracing::error!("Failed to persist validator set: {}", e);
+        }
+        tracing::info!(
+            "Validator {} added and persisted (stake={})",
+            hex::encode(&validator.address[..8]),
+            validator.stake.0
+        );
+        Ok(())
     }
 
     pub fn remove_validator(&self, address: &Address) {
         let mut set = self.validator_set.write();
         set.validators.retain(|v| &v.address != address);
+        // Recompute total_stake after removal
+        set.total_stake = crate::types::Amount(
+            set.validators.iter().map(|v| v.stake.0).sum()
+        );
+        // Persist updated validator set to RocksDB
+        if let Err(e) = self.storage.put_validator_set(0, &set) {
+            tracing::error!("Failed to persist validator set after removal: {}", e);
+        }
+        tracing::info!("Validator {} removed and persisted", hex::encode(&address[..8]));
     }
 
     pub fn update_validator_vrf(&self, address: &Address, vrf_public_key: Vec<u8>) {
         let mut set = self.validator_set.write();
         if let Some(v) = set.get_validator_mut(address) {
-            v.vrf_public_key = vrf_public_key;
+            v.vrf_public_key = vrf_public_key.clone();
+            // Persist updated validator
+            if let Err(e) = self.storage.put_validator(v) {
+                tracing::error!("Failed to persist VRF key for validator {}: {}", hex::encode(&address[..8]), e);
+            }
+        }
+        // Persist validator set
+        if let Err(e) = self.storage.put_validator_set(0, &set) {
+            tracing::error!("Failed to persist validator set after VRF update: {}", e);
         }
     }
 
     pub fn update_validator_finality_key(&self, address: &Address, finality_public_key: Vec<u8>) {
         let mut set = self.validator_set.write();
         if let Some(v) = set.get_validator_mut(address) {
-            v.finality_public_key = finality_public_key;
+            v.finality_public_key = finality_public_key.clone();
+            // Persist updated validator
+            if let Err(e) = self.storage.put_validator(v) {
+                tracing::error!("Failed to persist finality key for validator {}: {}", hex::encode(&address[..8]), e);
+            }
+        }
+        // Persist validator set
+        if let Err(e) = self.storage.put_validator_set(0, &set) {
+            tracing::error!("Failed to persist validator set after finality key update: {}", e);
         }
     }
 

@@ -93,6 +93,11 @@ impl QuantosConsensus {
             config.num_committees as u16,
             config.validators_per_committee,
         ));
+
+        // Connect CommitteeManager to StateManager so that ValidatorRegister/
+        // ValidatorExit transactions can add/remove validators dynamically.
+        state_manager.set_committee_manager(committee_manager.clone());
+
         let (vertex_tx, _vertex_rx) = mpsc::channel(10000);
 
         // Build the DAG-native VertexBuilder with STACC admission.

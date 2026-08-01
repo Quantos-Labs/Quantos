@@ -17,6 +17,7 @@ use crate::state::{StateError, StateResult, QuantumStateCompressor};
 use crate::storage::Storage;
 use crate::types::{
     Account, Address, Amount, Hash, Log, SignedTransaction, TransactionReceipt, TransactionStatus, TransactionType,
+    Validator,
 };
 use crate::vm::{decode_contract_deploy_payload, ContractManager};
 use crate::vm::evm::EvmEngine;
@@ -139,6 +140,8 @@ pub struct StateManager {
     /// Contract manager for executing ContractDeploy and ContractCall transactions
     contract_manager: Arc<RwLock<Option<Arc<ContractManager>>>>,
     evm_engine: Arc<RwLock<Option<Arc<EvmEngine>>>>,
+    /// Committee manager for validator registration/removal (set after init to avoid circular deps)
+    committee_manager: Arc<RwLock<Option<Arc<crate::consensus::CommitteeManager>>>>,
 }
 
 /// Result of deterministic state execution.
@@ -242,6 +245,7 @@ impl StateManager {
             state_compressor: Arc::new(QuantumStateCompressor::new()),
             contract_manager: Arc::new(RwLock::new(None)),
             evm_engine: Arc::new(RwLock::new(None)),
+            committee_manager: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -267,6 +271,11 @@ impl StateManager {
     /// Sets the EVM engine after initialization.
     pub fn set_evm_engine(&self, evm: Arc<EvmEngine>) {
         *self.evm_engine.write() = Some(evm);
+    }
+
+    /// Sets the committee manager after initialization (avoids circular deps).
+    pub fn set_committee_manager(&self, cm: Arc<crate::consensus::CommitteeManager>) {
+        *self.committee_manager.write() = Some(cm);
     }
     
     /// Get QRSC compressor for state compression operations
@@ -572,6 +581,38 @@ impl StateManager {
                             data: log.data,
                         }).collect();
                     }
+                }
+            }
+            TransactionType::ValidatorRegister => {
+                let data = &tx.transaction.data;
+                if data.len() < 32 {
+                    return Err(StateError::ExecutionError("ValidatorRegister: need VRF key".into()));
+                }
+                let vrf_pub = data[..data.len().min(256)].to_vec();
+                let comm = if data.len() >= 258 { u16::from_le_bytes([data[256], data[257]]) } else { 500 };
+                if !sender.add_stake(&tx.transaction.amount) {
+                    return Err(StateError::InsufficientBalance);
+                }
+                sender.is_validator = true;
+                if let Some(cm) = self.committee_manager.read().as_ref() {
+                    let mut v = Validator::new(
+                        tx.transaction.from,
+                        tx.transaction.public_key.clone(),
+                        tx.transaction.amount,
+                        vrf_pub,
+                    ).map_err(StateError::ExecutionError)?;
+                    v.commission_rate = comm;
+                    cm.add_validator(v).map_err(StateError::ExecutionError)?;
+                }
+            }
+            TransactionType::ValidatorExit => {
+                let stake = sender.stake;
+                if !sender.remove_stake(&stake) {
+                    return Err(StateError::ExecutionError("No stake to remove".into()));
+                }
+                sender.is_validator = false;
+                if let Some(cm) = self.committee_manager.read().as_ref() {
+                    cm.remove_validator(&tx.transaction.from);
                 }
             }
             _ => {}
@@ -949,6 +990,27 @@ impl StateManager {
                     topics: log.topics,
                     data: log.data,
                 }).collect();
+            }
+            TransactionType::ValidatorRegister => {
+                let data = &tx.transaction.data;
+                if data.len() < 32 { return Err(StateError::ExecutionError("ValidatorRegister: need VRF key".into())); }
+                let vrf_pub = data[..data.len().min(256)].to_vec();
+                let comm = if data.len() >= 258 { u16::from_le_bytes([data[256], data[257]]) } else { 500 };
+                if !sender.add_stake(&tx.transaction.amount) { return Err(StateError::InsufficientBalance); }
+                sender.is_validator = true;
+                if let Some(cm) = self.committee_manager.read().as_ref() {
+                    let mut v = Validator::new(tx.transaction.from, tx.transaction.public_key.clone(), tx.transaction.amount, vrf_pub).map_err(StateError::ExecutionError)?;
+                    v.commission_rate = comm;
+                    cm.add_validator(v).map_err(StateError::ExecutionError)?;
+                }
+            }
+            TransactionType::ValidatorExit => {
+                let stake = sender.stake;
+                if !sender.remove_stake(&stake) { return Err(StateError::ExecutionError("No stake to remove".into())); }
+                sender.is_validator = false;
+                if let Some(cm) = self.committee_manager.read().as_ref() {
+                    cm.remove_validator(&tx.transaction.from);
+                }
             }
             _ => {}
         }

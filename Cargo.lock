@@ -4305,6 +4305,7 @@ dependencies = [
  "dotenvy",
  "hex",
  "hmac",
+ "http 1.4.2",
  "once_cell",
  "parking_lot",
  "pbkdf2",
