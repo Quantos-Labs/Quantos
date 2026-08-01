@@ -98,7 +98,7 @@ prometheus = "0.13"
 rs_merkle = "1.4"
 
 # WASM Runtime
-wasmer = "4.2"
+wasmer = "7.2"
 wasmer-compiler-cranelift = "4.2"
 wasmer-middlewares = "4.2"
 # EVM runtime (no ECDSA signing in Quantos core; keep features minimal).
