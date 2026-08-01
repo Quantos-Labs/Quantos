@@ -181,8 +181,8 @@ services:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
-      # Quantos node RPC (internal Docker network)
-      - QUANTOS_RPC_URL=http://quantos-node:8545
+      # Quantos node RPC — defaults to Docker network, override in .env for host
+      - QUANTOS_RPC_URL=${QUANTOS_RPC_URL:-http://quantos-node:8545}
       # Indexer
       - POLL_INTERVAL_MS=${INDEXER_POLL_INTERVAL_MS:-2000}
       # API server
@@ -194,9 +194,8 @@ services:
       - API_CORS_ORIGIN=${API_CORS_ORIGIN:-*}
     networks:
       - quantos-net
-    depends_on:
-      quantos-node:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

@@ -34,9 +34,8 @@ app.use('*', authMiddleware)
 app.use('*', rateLimitMiddleware)
 
 // ── API versioning ───────────────────────────────────────────────────────────
-app.route('/v1/health', healthRoutes)
-app.route('/v1/info', healthRoutes) // alias
-app.route('/v1/metrics', healthRoutes) // alias
+// healthRoutes has /health, /info, /metrics internally — mount under /v1
+app.route('/v1', healthRoutes)
 app.route('/v1/accounts', accountRoutes)
 app.route('/v1/transactions', txRoutes)
 app.route('/v1/blocks', blockRoutes)
