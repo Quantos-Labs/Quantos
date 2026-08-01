@@ -27,7 +27,7 @@ winter-verifier = "0.13"
 winter-utils = "0.13"
 
 # Hashing
-sha3 = "0.10"
+sha3 = "0.11"
 sha2 = "0.10"
 blake3 = "1.5"
 
