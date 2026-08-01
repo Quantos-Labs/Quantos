@@ -132,7 +132,7 @@ Quantos/
 
 ### Prerequisites
 
-- Rust 1.75+ (with `cargo`)
+- Rust 1.82+ (with `cargo`)
 - RocksDB dependencies (`librocksdb-dev` on Linux, `rocksdb` via Homebrew on macOS)
 - Node.js 18+ (for TypeScript components)
 - Docker & Docker Compose (optional, for containerized deployment)
@@ -150,7 +150,11 @@ cargo build --release -p quantos
 ### Run Node
 
 ```bash
+# Run a full node
 cargo run --release -p quantos
+
+# Run with a custom config file
+cargo run --release -p quantos -- --config config/testnet.toml
 ```
 
 ### Configuration
@@ -162,48 +166,232 @@ NodeConfig {
     db_path: "./data/quantos",
     p2p_port: 30303,
     rpc_port: 8545,
+    metrics_port: 9615,
     num_committees: 1000,
     validators_per_committee: 21,
     num_shards: 1000,
     committee_rotation_ms: 100,
     checkpoint_interval: 1000,
     max_dag_parents: 8,
-    min_dag_parents: 2,
+    min_dag_parents: 1,
+    dynamic_sharding: true,
+    min_shards: 100,
+    max_shards: 10000,
+    execution_threads: num_cpus::get(),
+    sidechains_enabled: true,
+    max_sidechains: 1000,
+    stacc_require_activation: true,
+    network_name: "testnet",
 }
 ```
 
 ## RPC API
 
-### Endpoints
+All methods use the `qnt_` prefix. The RPC server listens on port 8545 by default and supports both HTTP and WebSocket (for subscriptions).
+
+### Account & State
 
 | Method | Description |
 |--------|-------------|
-| `qdag_getBalance` | Get account balance |
-| `qdag_getNonce` | Get account nonce |
-| `qdag_sendTransaction` | Submit transaction |
-| `qdag_getTransaction` | Get transaction by hash |
-| `qdag_getVertex` | Get DAG vertex by hash |
-| `qdag_getSlot` | Get current slot |
-| `qdag_getEpoch` | Get current epoch |
-| `qdag_getFinalizedSlot` | Get latest finalized slot |
-| `qdag_getMetrics` | Get node metrics |
-| `qdag_getDagTips` | Get DAG tips for shard |
-| `qdag_getAccount` | Get full account info |
-| `qdag_chainId` | Get chain ID |
+| `qnt_getBalance` | Get account balance (hex) |
+| `qnt_getTransactionCount` | Get account nonce (hex) |
+| `qnt_getAccount` | Get full account info (balance, nonce, stake, code) |
+| `qnt_getCode` | Get contract bytecode at address |
+| `qnt_getStorageAt` | Get storage slot at address |
+| `qnt_getStateRoot` | Get current state root |
+
+### Transactions
+
+| Method | Description |
+|--------|-------------|
+| `qnt_sendRawTransaction` | Submit a pre-signed transaction (hex) |
+| `qnt_sendRawTransactionBatch` | Submit a batch of signed transactions |
+| `qnt_sendTransaction` | Server-side signing (private key in request) |
+| `qnt_getTransactionByHash` | Get transaction by hash |
+| `qnt_getTransactionReceipt` | Get transaction receipt |
+| `qnt_pendingTransactions` | List pending transactions (optional limit) |
+| `qnt_txPoolStatus` | Get mempool/ingress buffer status |
+| `qnt_getRecentTransactions` | Get recent confirmed transactions |
+| `qnt_getReceiptsSinceSlot` | Get receipts since a given slot |
+| `qnt_estimateGas` | Estimate compute units for a call |
+
+### Block & DAG
+
+| Method | Description |
+|--------|-------------|
+| `qnt_blockNumber` | Get current slot (block height) |
+| `qnt_chainId` | Get chain ID |
+| `qnt_getSlot` | Get current slot |
+| `qnt_getFinalizedSlot` | Get latest finalized slot |
+| `qnt_getVertexByHash` | Get DAG vertex by hash |
+| `qnt_getDagTips` | Get DAG tips for a shard |
+| `qnt_getShardInfo` | Get shard info (vertices, tx count) |
+
+### Network & Node
+
+| Method | Description |
+|--------|-------------|
+| `qnt_nodeInfo` | Get node info (version, peer_id, p2p_multiaddrs, slot, state root) |
+| `qnt_health` | Health check (slot lag, pending txs, active validators) |
+| `qnt_syncing` | Get sync status |
+| `qnt_peerCount` | Get connected peer count |
+| `qnt_getPeers` | List connected peers with latency, reputation |
+| `qnt_getMetrics` | Get consensus & network metrics |
+
+### Validators
+
+| Method | Description |
+|--------|-------------|
+| `qnt_getValidators` | List all active validators |
+| `qnt_getValidatorByAddress` | Get validator info by address |
+| `qnt_getValidatorStats` | Get validator statistics |
+| `qnt_getEpochRewards` | Get epoch rewards distribution |
+
+### Contracts
+
+| Method | Description |
+|--------|-------------|
+| `qnt_call` | Read-only contract call |
+| `qnt_deployContract` | Deploy a contract (WASM or EVM bytecode) |
+| `qnt_getContractMetadata` | Get contract metadata |
+| `qnt_verifyContract` | Verify contract bytecode |
+
+### Tokens
+
+| Method | Description |
+|--------|-------------|
+| `qnt_getNFTs` | Get NFTs owned by an address (QN-8) |
+| `qnt_getTokenBalances` | Get fungible token balances (QN-4) |
+
+### Layer-0
+
+| Method | Description |
+|--------|-------------|
+| `qnt_submitExternalCheckpoint` | Submit external chain checkpoint |
+| `qnt_getL0Proof` | Get L0 proof by hash |
+| `qnt_getLatestL0Proof` | Get latest L0 proof |
+| `qnt_getL0Metrics` | Get L0 hub metrics |
+| `qnt_registerSubnet` | Register a subnet |
+| `qnt_getSubnet` | Get subnet info by ID |
+
+### Key Management
+
+| Method | Description |
+|--------|-------------|
+| `qnt_generateKeyPair` | Generate a new ML-DSA-65 keypair |
+
+### WebSocket Subscriptions
+
+| Method | Description |
+|--------|-------------|
+| `qnt_subscribe` | Subscribe to events (newSlots, newTransactions, validatorChanges) |
+| `qnt_unsubscribe` | Unsubscribe from a subscription |
 
 ### Example
 
 ```bash
+# Get node info (including peer_id and multiaddrs)
+curl -X POST http://localhost:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"qnt_nodeInfo","params":[],"id":1}'
+
 # Get balance
 curl -X POST http://localhost:8545 \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"qdag_getBalance","params":["0x..."],"id":1}'
+  -d '{"jsonrpc":"2.0","method":"qnt_getBalance","params":["QTS:ab12...ff",null],"id":1}'
 
 # Get metrics
 curl -X POST http://localhost:8545 \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"qdag_getMetrics","params":[],"id":1}'
+  -d '{"jsonrpc":"2.0","method":"qnt_getMetrics","params":[],"id":1}'
+
+# Server-side signed transfer
+curl -X POST http://localhost:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"qnt_sendTransaction","params":[{"from_private_key":"QTS:...","to":"QTS:...","amount":"QTS:de0b6b3a7640000","tx_type":"transfer"}],"id":1}'
 ```
+
+## CLI
+
+The `quantos-cli` binary provides a convenient interface to the RPC API.
+
+```bash
+# Build the CLI
+cargo build --release -p quantos
+
+# Node info (shows peer_id, multiaddrs, slot, state root)
+./target/release/quantos-cli node info
+
+# Health check
+./target/release/quantos-cli node health
+
+# Account balance
+./target/release/quantos-cli account balance QTS:ab12...ff
+
+# Generate a new keypair
+./target/release/quantos-cli keygen
+
+# Transfer tokens (server-side signing)
+./target/release/quantos-cli tx transfer \
+  --privkey QTS:... --to QTS:... --amount QTS:de0b6b3a7640000
+
+# Stake tokens
+./target/release/quantos-cli tx stake --privkey QTS:... --amount QTS:...
+
+# Register as a validator
+./target/release/quantos-cli tx register-validator \
+  --privkey QTS:... \
+  --amount QTS:de0b6b3a7640000 \
+  --vrf-pubkey QTS:... \
+  --commission-bps 500
+
+# Exit as a validator
+./target/release/quantos-cli tx validator-exit --privkey QTS:...
+
+# List validators
+./target/release/quantos-cli validator list
+
+# Get transaction receipt
+./target/release/quantos-cli tx receipt QTS:...
+
+# DAG tips for shard 0
+./target/release/quantos-cli dag tips 0
+
+# Mempool status
+./target/release/quantos-cli mempool status
+
+# Deploy a contract
+./target/release/quantos-cli contract deploy --bytecode contract.wasm --deployer QTS:...
+
+# JSON output
+./target/release/quantos-cli --output json node info
+
+# Connect to a remote node
+./target/release/quantos-cli --rpc http://164.132.99.87:8545 node info
+```
+
+### Validator Setup
+
+1. Generate a keypair:
+   ```bash
+   ./target/release/quantos-cli keygen
+   ```
+2. Get the bootstrap node's peer ID and multiaddr:
+   ```bash
+   ./target/release/quantos-cli --rpc http://<bootstrap-ip>:8545 node info
+   ```
+3. Start your node with the bootstrap peer:
+   ```bash
+   QUANTOS_BOOTSTRAP_PEERS="/ip4/<bootstrap-ip>/tcp/30303/p2p/<peer-id>" \
+     cargo run --release -p quantos -- --validator
+   ```
+4. Register as a validator:
+   ```bash
+   ./target/release/quantos-cli tx register-validator \
+     --privkey QTS:... \
+     --amount QTS:de0b6b3a7640000 \
+     --vrf-pubkey QTS:...
+   ```
 
 ## Docker Deployment
 
