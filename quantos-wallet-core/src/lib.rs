@@ -91,10 +91,29 @@ pub enum TransactionType {
     Transfer,
     Stake,
     Unstake,
+    StakeTransfer,
     ValidatorRegister,
     ValidatorExit,
     ContractCall,
     ContractDeploy,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum VmKind {
+    Qvm,
+    Evm,
+}
+
+impl Default for VmKind {
+    fn default() -> Self {
+        Self::Qvm
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PriorityBoost {
+    pub locked_tokens: u64,
+    pub lock_duration_blocks: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -104,8 +123,9 @@ pub struct Transaction {
     pub to: Address,
     pub amount: Amount,
     pub nonce: u64,
-    pub gas_limit: u64,
-    pub gas_price: u64,
+    pub max_compute_units: u64,
+    pub boost: Option<PriorityBoost>,
+    pub vm_kind: VmKind,
     pub data: Vec<u8>,
     pub shard_id: ShardId,
     pub timestamp: u64,
@@ -129,8 +149,15 @@ impl Transaction {
         msg.extend_from_slice(&self.to);
         msg.extend_from_slice(&self.amount.0.to_le_bytes());
         msg.extend_from_slice(&self.nonce.to_le_bytes());
-        msg.extend_from_slice(&self.gas_limit.to_le_bytes());
-        msg.extend_from_slice(&self.gas_price.to_le_bytes());
+        msg.extend_from_slice(&self.max_compute_units.to_le_bytes());
+        if let Some(boost) = &self.boost {
+            msg.extend_from_slice(&boost.locked_tokens.to_le_bytes());
+            msg.extend_from_slice(&boost.lock_duration_blocks.to_le_bytes());
+        } else {
+            msg.extend_from_slice(&0u64.to_le_bytes());
+            msg.extend_from_slice(&0u64.to_le_bytes());
+        }
+        msg.extend_from_slice(&[self.vm_kind as u8]);
         msg.extend_from_slice(&self.data);
         msg.extend_from_slice(&self.shard_id.to_le_bytes());
         msg.extend_from_slice(&self.timestamp.to_le_bytes());
@@ -227,15 +254,15 @@ pub fn build_signed_transfer(
     // Timestamp
     let timestamp = chrono::Utc::now().timestamp_millis() as u64;
 
-    // Build transaction (gasless: gas_limit=21000, gas_price=0)
     let mut tx = Transaction {
         tx_type: TransactionType::Transfer,
         from,
         to,
         amount: Amount(amount),
         nonce,
-        gas_limit: 21000,
-        gas_price: 0,
+        max_compute_units: 21000,
+        boost: None,
+        vm_kind: VmKind::Qvm,
         data: Vec::new(),
         shard_id,
         timestamp,
@@ -295,8 +322,9 @@ pub fn build_signed_stake(
         to: from, // Stake goes to self
         amount: Amount(amount),
         nonce,
-        gas_limit: 21000,
-        gas_price: 0,
+        max_compute_units: 21000,
+        boost: None,
+        vm_kind: VmKind::Qvm,
         data: Vec::new(),
         shard_id,
         timestamp,
@@ -345,8 +373,171 @@ pub fn build_signed_unstake(
         to: from,
         amount: Amount(amount),
         nonce,
-        gas_limit: 21000,
-        gas_price: 0,
+        max_compute_units: 21000,
+        boost: None,
+        vm_kind: VmKind::Qvm,
+        data: Vec::new(),
+        shard_id,
+        timestamp,
+        signature: Vec::new(),
+        public_key: Vec::new(),
+        chain_id,
+    };
+
+    let signing_data = tx.signing_data();
+    let (sig, pk) = sign_with_seed(&sk_bytes, &signing_data)?;
+    tx.signature = sig;
+    tx.public_key = pk;
+
+    let signed_tx = SignedTransaction::new(tx);
+    let tx_hash = hex::encode(signed_tx.hash);
+    let tx_bytes = bincode::serialize(&signed_tx)
+        .map_err(|e| JsValue::from_str(&format!("Bincode: {}", e)))?;
+
+    let result = serde_json::json!({ "txHex": hex::encode(&tx_bytes), "txHash": tx_hash });
+    serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Build, sign, and serialize a stake transfer transaction.
+/// Atomically transfers stake from sender to recipient without affecting balance.
+#[wasm_bindgen(js_name = "buildSignedStakeTransfer")]
+pub fn build_signed_stake_transfer(
+    secret_key_hex: &str,
+    to_hex: &str,
+    amount_str: &str,
+    nonce: u64,
+    chain_id: u64,
+    num_shards: u16,
+) -> Result<String, JsValue> {
+    let sk_bytes = hex::decode(secret_key_hex)
+        .map_err(|e| JsValue::from_str(&format!("Invalid secret key hex: {}", e)))?;
+    let to = parse_address_hex(to_hex)?;
+    let amount: u128 = amount_str.parse()
+        .map_err(|e| JsValue::from_str(&format!("Invalid amount: {}", e)))?;
+
+    let pk_bytes = derive_public_key(&sk_bytes)?;
+    let from = hash_data(&pk_bytes);
+    let num_shards = if num_shards == 0 { 1 } else { num_shards };
+    let shard_id = Transaction::target_shard(&from, num_shards);
+    let timestamp = chrono::Utc::now().timestamp_millis() as u64;
+
+    let mut tx = Transaction {
+        tx_type: TransactionType::StakeTransfer,
+        from,
+        to,
+        amount: Amount(amount),
+        nonce,
+        max_compute_units: 21000,
+        boost: None,
+        vm_kind: VmKind::Qvm,
+        data: Vec::new(),
+        shard_id,
+        timestamp,
+        signature: Vec::new(),
+        public_key: Vec::new(),
+        chain_id,
+    };
+
+    let signing_data = tx.signing_data();
+    let (sig, pk) = sign_with_seed(&sk_bytes, &signing_data)?;
+    tx.signature = sig;
+    tx.public_key = pk;
+
+    let signed_tx = SignedTransaction::new(tx);
+    let tx_hash = hex::encode(signed_tx.hash);
+    let tx_bytes = bincode::serialize(&signed_tx)
+        .map_err(|e| JsValue::from_str(&format!("Bincode: {}", e)))?;
+
+    let result = serde_json::json!({ "txHex": hex::encode(&tx_bytes), "txHash": tx_hash });
+    serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Build, sign, and serialize a validator register transaction.
+/// `validator_data_hex` is the ABI-encoded validator config (public key, endpoint, etc.).
+#[wasm_bindgen(js_name = "buildSignedValidatorRegister")]
+pub fn build_signed_validator_register(
+    secret_key_hex: &str,
+    validator_data_hex: &str,
+    amount_str: &str,
+    nonce: u64,
+    chain_id: u64,
+    num_shards: u16,
+) -> Result<String, JsValue> {
+    let sk_bytes = hex::decode(secret_key_hex)
+        .map_err(|e| JsValue::from_str(&format!("Invalid secret key hex: {}", e)))?;
+    let amount: u128 = amount_str.parse()
+        .map_err(|e| JsValue::from_str(&format!("Invalid amount: {}", e)))?;
+
+    let data = if validator_data_hex.is_empty() {
+        Vec::new()
+    } else {
+        hex::decode(validator_data_hex.strip_prefix("0x").unwrap_or(validator_data_hex))
+            .map_err(|e| JsValue::from_str(&format!("Invalid validator data hex: {}", e)))?
+    };
+
+    let pk_bytes = derive_public_key(&sk_bytes)?;
+    let from = hash_data(&pk_bytes);
+    let num_shards = if num_shards == 0 { 1 } else { num_shards };
+    let shard_id = Transaction::target_shard(&from, num_shards);
+    let timestamp = chrono::Utc::now().timestamp_millis() as u64;
+
+    let mut tx = Transaction {
+        tx_type: TransactionType::ValidatorRegister,
+        from,
+        to: from,
+        amount: Amount(amount),
+        nonce,
+        max_compute_units: 21000,
+        boost: None,
+        vm_kind: VmKind::Qvm,
+        data,
+        shard_id,
+        timestamp,
+        signature: Vec::new(),
+        public_key: Vec::new(),
+        chain_id,
+    };
+
+    let signing_data = tx.signing_data();
+    let (sig, pk) = sign_with_seed(&sk_bytes, &signing_data)?;
+    tx.signature = sig;
+    tx.public_key = pk;
+
+    let signed_tx = SignedTransaction::new(tx);
+    let tx_hash = hex::encode(signed_tx.hash);
+    let tx_bytes = bincode::serialize(&signed_tx)
+        .map_err(|e| JsValue::from_str(&format!("Bincode: {}", e)))?;
+
+    let result = serde_json::json!({ "txHex": hex::encode(&tx_bytes), "txHash": tx_hash });
+    serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Build, sign, and serialize a validator exit transaction.
+#[wasm_bindgen(js_name = "buildSignedValidatorExit")]
+pub fn build_signed_validator_exit(
+    secret_key_hex: &str,
+    nonce: u64,
+    chain_id: u64,
+    num_shards: u16,
+) -> Result<String, JsValue> {
+    let sk_bytes = hex::decode(secret_key_hex)
+        .map_err(|e| JsValue::from_str(&format!("Invalid secret key hex: {}", e)))?;
+
+    let pk_bytes = derive_public_key(&sk_bytes)?;
+    let from = hash_data(&pk_bytes);
+    let num_shards = if num_shards == 0 { 1 } else { num_shards };
+    let shard_id = Transaction::target_shard(&from, num_shards);
+    let timestamp = chrono::Utc::now().timestamp_millis() as u64;
+
+    let mut tx = Transaction {
+        tx_type: TransactionType::ValidatorExit,
+        from,
+        to: from,
+        amount: Amount(0),
+        nonce,
+        max_compute_units: 21000,
+        boost: None,
+        vm_kind: VmKind::Qvm,
         data: Vec::new(),
         shard_id,
         timestamp,
@@ -416,8 +607,9 @@ pub fn build_signed_deploy(
         to: [0u8; 32], // zero address for deploy
         amount: Amount(0),
         nonce,
-        gas_limit: 10_000_000,
-        gas_price: 0,
+        max_compute_units: 10_000_000,
+        boost: None,
+        vm_kind: VmKind::Qvm,
         data: deploy_data,
         shard_id,
         timestamp,
@@ -479,8 +671,9 @@ pub fn build_signed_contract_call(
         to,
         amount: Amount(amount),
         nonce,
-        gas_limit: 1_000_000,
-        gas_price: 0,
+        max_compute_units: 1_000_000,
+        boost: None,
+        vm_kind: VmKind::Qvm,
         data: calldata,
         shard_id,
         timestamp,

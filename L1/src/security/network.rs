@@ -507,8 +507,7 @@ impl MitmProtection {
     pub fn create_session(&self, peer_id: String) -> [u8; 32] {
         let mut key = [0u8; 32];
         // CRITICAL: Use cryptographically secure random number generator
-        let mut rng = rand::thread_rng();
-        rng.fill_bytes(&mut key);
+        OsRng.fill_bytes(&mut key);
 
         let session = SessionKey {
             peer_id: peer_id.clone(),

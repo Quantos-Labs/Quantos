@@ -15,6 +15,7 @@ path = "src/main.rs"
 axum = { version = "0.7", features = ["json", "macros"] }
 tower = { version = "0.4" }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
+http = "1.0"
 tokio = { version = "1.35", features = ["full"] }
 
 # Serialization
@@ -28,6 +29,11 @@ pqcrypto-traits = "0.3"
 
 # Hashing (same as quantos node)
 sha3 = "0.10"
+sha2 = "0.10"
+
+# Key derivation (PBKDF2 — must match wallet extension's Web Crypto API)
+pbkdf2 = "0.12"
+hmac = "0.12"
 
 # Encryption (AES-256-GCM for PIN-encrypted keys)
 aes-gcm = "0.10"

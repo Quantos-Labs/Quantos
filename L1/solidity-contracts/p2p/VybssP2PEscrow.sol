@@ -12,6 +12,15 @@ interface IERC20P2P {
 ///         Seller releases tokens to buyer, or funds are refunded after timeout.
 contract VybssP2PEscrow {
 
+    // ── Reentrancy guard ────────────────────────────────────────
+    uint256 private _locked = 1;
+    modifier nonReentrant() {
+        require(_locked == 1, "Reentrant");
+        _locked = 2;
+        _;
+        _locked = 1;
+    }
+
     // ── Solang 0.3.3 workaround ────────────────────────────────
     function _mul(uint256 a, uint256 b) internal pure returns (uint256) { return a * b; }
     function _div(uint256 a, uint256 b) internal pure returns (uint256) { return a / b; }
@@ -97,7 +106,7 @@ contract VybssP2PEscrow {
 
     // ── Release Escrow (seller confirms payment received) ───────
     /// @notice Seller releases escrowed tokens to buyer after confirming quote token received
-    function releaseEscrow(uint256 _escrowId) external {
+    function releaseEscrow(uint256 _escrowId) external nonReentrant {
         Escrow storage esc = escrows[_escrowId];
         require(esc.seller == msg.sender, "not seller");
         require(esc.status == STATUS_LOCKED, "not locked");
@@ -111,7 +120,7 @@ contract VybssP2PEscrow {
 
     // ── Refund Escrow (after timeout) ───────────────────────────
     /// @notice Seller can reclaim tokens after the timeout has passed
-    function refundEscrow(uint256 _escrowId) external {
+    function refundEscrow(uint256 _escrowId) external nonReentrant {
         Escrow storage esc = escrows[_escrowId];
         require(esc.seller == msg.sender, "not seller");
         require(esc.status == STATUS_LOCKED, "not locked");

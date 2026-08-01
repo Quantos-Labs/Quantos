@@ -19,6 +19,12 @@ interface QuantosProvider {
 
 const listeners: Record<string, Array<(...args: unknown[]) => void>> = {}
 
+function secureRandomId(len = 8): string {
+  const arr = new Uint8Array(len)
+  crypto.getRandomValues(arr)
+  return Array.from(arr, b => b.toString(36).padStart(2, '0')).join('')
+}
+
 let _isConnected = false
 let _selectedAddress: string | null = null
 let _chainId = 'quantos:mainnet'
@@ -33,7 +39,7 @@ const quantosProvider: QuantosProvider = {
 
   request: async ({ method, params = {} }) => {
     return new Promise((resolve, reject) => {
-      const id = `qnt_${Date.now()}_${Math.random().toString(36).slice(2)}`
+      const id = `qnt_${Date.now()}_${secureRandomId()}`
 
       const handler = (event: MessageEvent) => {
         if (event.data?.type !== 'QUANTOS_RESPONSE' || event.data?.id !== id) return

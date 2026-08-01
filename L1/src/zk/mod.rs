@@ -1861,7 +1861,7 @@ fn hash_to_field_elements(hash: &Hash) -> [BaseElement; 4] {
         let start = i * 8;
         let bytes: [u8; 8] = hash[start..start + 8]
             .try_into()
-            .expect("hash is [u8;32], window [i*8..i*8+8] is always 8 bytes for i in 0..4");
+            .unwrap_or([0u8; 8]);
         elements[i] = BaseElement::from(u64::from_le_bytes(bytes));
     }
     elements

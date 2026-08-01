@@ -41,7 +41,7 @@ use crate::{
     types::{
         CreateWalletRequest, ImportWalletRequest, SendTransferRequest,
         DeployContractRequest, CallContractRequest, ReadContractRequest, FaucetClaimRequest, TransferTokenRequest,
-        BatchCallContractRequest,
+        BatchCallContractRequest, StakeTransferRequest,
         BridgeApproveRequest, BridgeDepositRequest, BridgeReleaseRequest,
         SessionTokenResponse, SignMessageRequest, WalletBalanceResponse, WalletInfoResponse,
         TransactionType, DecryptKeyRequest,
@@ -63,6 +63,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/wallet/:address/tokens", get(get_token_balances))
         // Transactions (session required)
         .route("/wallet/send", post(send_transfer))
+        .route("/wallet/stake-transfer", post(stake_transfer))
         .route("/wallet/transfer-token", post(transfer_token))
         .route("/wallet/deploy", post(deploy_contract))
         .route("/wallet/call", post(call_contract))
@@ -177,7 +178,7 @@ struct UnlockBody {
 }
 
 const MAX_PIN_ATTEMPTS: u32 = 3;
-const PIN_LOCKOUT_SECS: u64 = 60;
+const PIN_LOCKOUT_SECS: u64 = 900; // 15 minutes
 
 async fn unlock_wallet(
     State(state): State<Arc<AppState>>,
@@ -459,6 +460,48 @@ async fn send_transfer(
     let (tx_hex, tx_hash) = build_signed_transaction(
         &keypair,
         TransactionType::Transfer,
+        to,
+        amount,
+        nonce,
+        chain_id,
+        num_shards,
+    )?;
+
+    let _response = state.node_client.send_raw_transaction(&tx_hex).await?;
+
+    Ok(Json(json!({
+        "tx_hash": tx_hash,
+        "status": "sent"
+    })))
+}
+
+// ── POST /wallet/stake-transfer ───────────────────────────────────────────────
+
+async fn stake_transfer(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<StakeTransferRequest>,
+) -> Result<impl IntoResponse, WalletError> {
+    let session = state.sessions.get_session(&req.session_token)?;
+    let keypair = MlDsa65Keypair::from_sk_and_pk_hex(&session.secret_key_hex, &session.public_key_hex)?;
+
+    let to = match resolve_qts_name_if_needed(&state, &req.to).await? {
+        Some(addr) => addr,
+        None => parse_address(&req.to)?,
+    };
+    let amount: u128 = req
+        .amount
+        .parse()
+        .map_err(|_| WalletError::InvalidAmount("Must be a decimal integer".to_string()))?;
+
+    let rpc_address = format!("QTS:{}", hex::encode(keypair.address));
+    let nonce = state.node_client.get_nonce(&rpc_address).await?;
+    let chain_id = state.node_client.get_chain_id().await?;
+    let node_info = state.node_client.node_info().await?;
+    let num_shards = node_info["num_shards"].as_u64().unwrap_or(1000) as u16;
+
+    let (tx_hex, tx_hash) = build_signed_transaction(
+        &keypair,
+        TransactionType::StakeTransfer,
         to,
         amount,
         nonce,
@@ -1348,7 +1391,10 @@ fn validate_domain_name(name: &str) -> WalletResult<String> {
     if !name.ends_with(".qts") {
         return Err(WalletError::InvalidAddress("Domain must end with .qts".into()));
     }
-    let label = name.strip_suffix(".qts").unwrap();
+    let label = match name.strip_suffix(".qts") {
+        Some(l) => l,
+        None => return Err(WalletError::InvalidAddress("Domain must end with .qts".into())),
+    };
     if label.is_empty() || label.len() < 3 {
         return Err(WalletError::InvalidAddress("Domain label must be at least 3 characters".into()));
     }

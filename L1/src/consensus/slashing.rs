@@ -754,7 +754,7 @@ impl SlashingManager {
             DutyType::BlockProposal => {
                 // Block proposer: one per slot, selected by seed mod total_validators
                 // Use first 8 bytes of seed as selection index
-                let selection_idx = u64::from_le_bytes(assignment_seed[0..8].try_into().unwrap());
+                let selection_idx = u64::from_le_bytes(assignment_seed[0..8].try_into().unwrap_or([0u8; 8]));
                 let total_validators = self.validator_stakes.len() as u64;
                 if total_validators == 0 {
                     return false;
@@ -767,7 +767,7 @@ impl SlashingManager {
             DutyType::Attestation => {
                 // Attestation: validators assigned to committees based on epoch
                 // Each validator attests once per epoch
-                let committee_idx = u64::from_le_bytes(assignment_seed[8..16].try_into().unwrap()) % 32;
+                let committee_idx = u64::from_le_bytes(assignment_seed[8..16].try_into().unwrap_or([0u8; 8])) % 32;
                 let slot_in_epoch = slot % 32;
                 committee_idx == slot_in_epoch
             }
@@ -781,7 +781,7 @@ impl SlashingManager {
                 let sync_hash = crate::types::hash_data(&sync_seed);
                 
                 // Top 512 validators by deterministic score are in sync committee
-                let score = u64::from_le_bytes(sync_hash[0..8].try_into().unwrap());
+                let score = u64::from_le_bytes(sync_hash[0..8].try_into().unwrap_or([0u8; 8]));
                 let threshold = u64::MAX / 512; // Approximately 1/512 chance
                 score < threshold * (stake / 1000).min(10) // Stake-weighted
             }

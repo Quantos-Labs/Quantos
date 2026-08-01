@@ -123,7 +123,7 @@ impl StunMessage {
     pub fn binding_request() -> Self {
         use rand::RngCore;
         let mut transaction_id = [0u8; 12];
-        rand::thread_rng().fill_bytes(&mut transaction_id);
+        rand::rngs::OsRng.fill_bytes(&mut transaction_id);
         
         Self {
             msg_type: StunMessageType::BindingRequest,
@@ -402,7 +402,7 @@ impl TurnClient {
         let txn_id: [u8; 12] = {
             let mut id = [0u8; 12];
             use rand::RngCore;
-            rand::thread_rng().fill_bytes(&mut id);
+            rand::rngs::OsRng.fill_bytes(&mut id);
             id
         };
         
@@ -653,7 +653,7 @@ impl TurnClient {
         // Build Refresh request (method 0x0004)
         let mut txn_id = [0u8; 12];
         use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut txn_id);
+        rand::rngs::OsRng.fill_bytes(&mut txn_id);
         
         let mut request = Vec::new();
         request.extend_from_slice(&[0x00, 0x04]); // Refresh method

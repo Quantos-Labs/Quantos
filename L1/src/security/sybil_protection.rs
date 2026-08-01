@@ -99,10 +99,9 @@ struct IdentityChallenge {
 
 impl IdentityChallenge {
     fn new() -> Self {
-        let mut rng = rand::thread_rng();
         use rand::RngCore;
         let mut challenge = [0u8; 32];
-        rng.fill_bytes(&mut challenge);
+        rand::rngs::OsRng.fill_bytes(&mut challenge);
         
         Self {
             challenge,

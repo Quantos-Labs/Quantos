@@ -187,6 +187,7 @@ contract QuantosAttestorOracle is IAttestorSetOracle {
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "Zero address");
         emit OwnerUpdated(owner, newOwner);
         owner = newOwner;
     }

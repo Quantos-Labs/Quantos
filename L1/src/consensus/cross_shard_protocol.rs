@@ -339,8 +339,10 @@ impl CrossShardAtomicCoordinator {
                 .or_insert_with(ConflictTracker::new);
             
             for (key, _value) in &lock.write_set {
-                let version = self.get_current_version(&Self::key_to_address(key).unwrap());
-                tracker.write_map.insert(key.clone(), (tx_id, version));
+                if let Some(addr) = Self::key_to_address(key) {
+                    let version = self.get_current_version(&addr);
+                    tracker.write_map.insert(key.clone(), (tx_id, version));
+                }
             }
         }
         
@@ -349,7 +351,10 @@ impl CrossShardAtomicCoordinator {
             tx_id,
             shards: lock.shards.clone(),
             timestamp: chrono::Utc::now().timestamp() as u64,
-            version: self.get_current_version(&lock.accounts.iter().next().unwrap()),
+            version: lock.accounts.iter().next()
+                .and_then(|a| Self::key_to_address(a))
+                .map(|a| self.get_current_version(&a))
+                .unwrap_or(0),
         };
         
         // Update status

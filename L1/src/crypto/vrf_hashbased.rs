@@ -126,7 +126,7 @@ impl HashVrfKeypair {
     pub fn generate() -> CryptoResult<Self> {
         use rand::RngCore;
         let mut sk = [0u8; VRF_SK_SIZE];
-        rand::thread_rng().fill_bytes(&mut sk);
+        rand::rngs::OsRng.fill_bytes(&mut sk);
         let pk = Self::hash_sk(&sk);
         Ok(Self { secret_key: sk, public_key: pk })
     }

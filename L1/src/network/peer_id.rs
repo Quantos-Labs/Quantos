@@ -66,7 +66,7 @@ impl PeerId {
     pub fn random() -> Self {
         use rand::RngCore;
         let mut raw = [0u8; PEER_ID_RAW_LEN];
-        rand::thread_rng().fill_bytes(&mut raw);
+        rand::rngs::OsRng.fill_bytes(&mut raw);
         Self(raw)
     }
 }

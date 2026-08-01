@@ -377,6 +377,7 @@ contract MemecoinLaunchpad {
 
     function transferOwnership(address _newOwner) external {
         require(msg.sender == owner, "not owner");
+        require(_newOwner != address(0), "Zero address");
         owner = _newOwner;
     }
 }

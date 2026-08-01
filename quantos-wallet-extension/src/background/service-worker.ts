@@ -35,6 +35,12 @@ interface PendingRequest {
 
 // ── State ─────────────────────────────────────────────────────
 
+function secureRandomId(len = 8): string {
+  const arr = new Uint8Array(len)
+  crypto.getRandomValues(arr)
+  return Array.from(arr, b => b.toString(36).padStart(2, '0')).join('')
+}
+
 let walletState: WalletState = {
   isUnlocked: false,
   activeAddress: null,
@@ -89,7 +95,7 @@ const SENSITIVE_METHODS = new Set([
 ])
 
 function generateRequestId(): string {
-  return `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+  return `req_${Date.now()}_${secureRandomId(8)}`
 }
 
 async function openApprovalPopup(requestId: string): Promise<void> {

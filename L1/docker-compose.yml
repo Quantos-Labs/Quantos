@@ -161,6 +161,54 @@ services:
     depends_on:
       - prometheus
 
+  # --------------------------------------------------------------------------
+  # Explorer API — Enhanced REST API + Indexer
+  # --------------------------------------------------------------------------
+  # Provides paginated historical queries (from Supabase) and live state
+  # proxying (from the Quantos node), behind API key auth + rate limiting.
+  # Uses Supabase Cloud (SaaS) — no local Postgres needed.
+  # --------------------------------------------------------------------------
+  explorer-api:
+    build:
+      context: ../explorer-api
+      dockerfile: Dockerfile
+    container_name: quantos-explorer-api
+    restart: unless-stopped
+    ports:
+      - "${EXPLORER_API_PORT:-3001}:3001"
+    environment:
+      # Supabase Cloud credentials
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      # Quantos node RPC (internal Docker network)
+      - QUANTOS_RPC_URL=http://quantos-node:8545
+      # Indexer
+      - POLL_INTERVAL_MS=${INDEXER_POLL_INTERVAL_MS:-2000}
+      # API server
+      - API_PORT=3001
+      - QUANTOS_API_KEYS=${QUANTOS_API_KEYS:-}
+      - QUANTOS_MASTER_KEY=${QUANTOS_MASTER_KEY:-}
+      - API_RATE_LIMIT_PER_MINUTE=${API_RATE_LIMIT_PER_MINUTE:-600}
+      - API_RATE_LIMIT_BURST=${API_RATE_LIMIT_BURST:-100}
+      - API_CORS_ORIGIN=${API_CORS_ORIGIN:-*}
+    networks:
+      - quantos-net
+    depends_on:
+      quantos-node:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
 # --------------------------------------------------------------------------
 # Networks
 # --------------------------------------------------------------------------

@@ -12,6 +12,15 @@ interface IERC20Pred {
 ///         Resolution: creator proposes → dispute → community Schelling-point vote.
 contract VybssPrediction {
 
+    // ── Reentrancy guard ────────────────────────────────────────
+    uint256 private _locked = 1;
+    modifier nonReentrant() {
+        require(_locked == 1, "Reentrant");
+        _locked = 2;
+        _;
+        _locked = 1;
+    }
+
     // ── Solang 0.3.3 workaround: force full 256-bit arithmetic ──
     function _mul(uint256 a, uint256 b) internal pure returns (uint256) { return a * b; }
     function _div(uint256 a, uint256 b) internal pure returns (uint256) { return a / b; }
@@ -177,7 +186,7 @@ contract VybssPrediction {
     // ═════════════════════════════════════════════════════════════
 
     /// @notice Buy outcome shares. Caller pays `amount` collateral, receives shares.
-    function buyShares(uint256 marketId, uint8 outcomeIndex, uint256 amount) external {
+    function buyShares(uint256 marketId, uint8 outcomeIndex, uint256 amount) external nonReentrant {
         Market storage m = markets[marketId];
         require(m.status == STATUS_ACTIVE, "Not active");
         require(block.timestamp < m.endDate, "Ended");
@@ -213,7 +222,7 @@ contract VybssPrediction {
     }
 
     /// @notice Sell outcome shares back to the pool.
-    function sellShares(uint256 marketId, uint8 outcomeIndex, uint256 sharesIn) external {
+    function sellShares(uint256 marketId, uint8 outcomeIndex, uint256 sharesIn) external nonReentrant {
         Market storage m = markets[marketId];
         require(m.status == STATUS_ACTIVE, "Not active");
         require(block.timestamp < m.endDate, "Ended");
@@ -512,7 +521,7 @@ contract VybssPrediction {
     }
 
     /// @notice Claim vote reward (majority voters get minority stakes).
-    function claimVoteReward(uint256 marketId) external {
+    function claimVoteReward(uint256 marketId) external nonReentrant {
         Market storage m = markets[marketId];
         require(m.resolved, "Not resolved");
         require(hasVoted[marketId][msg.sender], "Not voter");
@@ -554,7 +563,7 @@ contract VybssPrediction {
     // ═════════════════════════════════════════════════════════════
 
     /// @notice Claim winnings after market is resolved.
-    function claimWinnings(uint256 marketId) external {
+    function claimWinnings(uint256 marketId) external nonReentrant {
         Market storage m = markets[marketId];
         require(m.resolved, "Not resolved");
         require(!claimed[marketId][msg.sender], "Already claimed");
@@ -592,7 +601,7 @@ contract VybssPrediction {
     }
 
     /// @notice Creator claims accumulated trading fees.
-    function claimFees(uint256 marketId) external {
+    function claimFees(uint256 marketId) external nonReentrant {
         Market storage m = markets[marketId];
         require(msg.sender == m.creator, "Not creator");
         require(m.accumulatedFees > 0, "No fees");

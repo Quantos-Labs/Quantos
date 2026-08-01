@@ -251,7 +251,7 @@ contract VybssInsurancePool {
     function pause() external onlyGuardianOrOwner { paused = true; }
     function unpause() external onlyOwner { paused = false; }
     function setGuardian(address g) external onlyOwner { guardian = g; }
-    function transferOwnership(address newOwner) external onlyOwner { owner = newOwner; }
+    function transferOwnership(address newOwner) external onlyOwner { require(newOwner != address(0), "Zero address"); owner = newOwner; }
 
     // -------------------------------------------------------------------------
     // View helpers

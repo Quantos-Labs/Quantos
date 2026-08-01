@@ -8,6 +8,12 @@ use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng as AesOsRng},
     Aes256Gcm, Nonce,
 };
+use pbkdf2::pbkdf2_hmac;
+use sha2::Sha256;
+
+const PBKDF2_ITERATIONS: u32 = 100_000;
+const SALT_LENGTH: usize = 16;
+const IV_LENGTH: usize = 12;
 use pqcrypto_mldsa::mldsa65;
 use pqcrypto_traits::sign::{DetachedSignature, PublicKey, SecretKey, SignedMessage};
 use sha3::{Digest, Sha3_256};
@@ -217,14 +223,24 @@ fn decode_qts_address(qts_addr: &str) -> WalletResult<[u8; 32]> {
 // ── AES-256-GCM PIN encryption ────────────────────────────────────────────────
 
 pub fn encrypt_with_pin(secret_key_hex: &str, pin: &str) -> WalletResult<String> {
-    let key_bytes = pin_to_key(pin);
+    let salt = {
+        let mut s = [0u8; SALT_LENGTH];
+        use rand::RngCore;
+        rand::rngs::OsRng.fill_bytes(&mut s);
+        s
+    };
+    let key_bytes = pin_to_key(pin, &salt);
     let cipher = Aes256Gcm::new_from_slice(&key_bytes)
         .map_err(|e| WalletError::EncryptionError(e.to_string()))?;
     let nonce = Aes256Gcm::generate_nonce(&mut AesOsRng);
     let ciphertext = cipher
         .encrypt(&nonce, secret_key_hex.as_bytes())
         .map_err(|e| WalletError::EncryptionError(e.to_string()))?;
-    let mut combined = nonce.to_vec();
+
+    // Format: [salt(16)][IV(12)][ciphertext] — matches wallet extension
+    let mut combined = Vec::with_capacity(SALT_LENGTH + IV_LENGTH + ciphertext.len());
+    combined.extend_from_slice(&salt);
+    combined.extend_from_slice(&nonce);
     combined.extend_from_slice(&ciphertext);
     Ok(base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
@@ -239,12 +255,15 @@ pub fn decrypt_with_pin(encrypted_b64: &str, pin: &str) -> WalletResult<String> 
     )
     .map_err(|_| WalletError::DecryptionFailed)?;
 
-    if combined.len() < 12 {
+    // Format: [salt(16)][IV(12)][ciphertext] — matches wallet extension
+    if combined.len() < SALT_LENGTH + IV_LENGTH {
         return Err(WalletError::DecryptionFailed);
     }
-    let (nonce_bytes, ciphertext) = combined.split_at(12);
+    let salt = &combined[..SALT_LENGTH];
+    let nonce_bytes = &combined[SALT_LENGTH..SALT_LENGTH + IV_LENGTH];
+    let ciphertext = &combined[SALT_LENGTH + IV_LENGTH..];
     let nonce = Nonce::from_slice(nonce_bytes);
-    let key_bytes = pin_to_key(pin);
+    let key_bytes = pin_to_key(pin, salt);
     let cipher = Aes256Gcm::new_from_slice(&key_bytes)
         .map_err(|_| WalletError::DecryptionFailed)?;
     let plaintext = cipher
@@ -253,13 +272,9 @@ pub fn decrypt_with_pin(encrypted_b64: &str, pin: &str) -> WalletResult<String> 
     String::from_utf8(plaintext).map_err(|_| WalletError::DecryptionFailed)
 }
 
-fn pin_to_key(pin: &str) -> [u8; 32] {
-    let mut hasher = Sha3_256::new();
-    hasher.update(b"quantos-wallet-pin-v1:");
-    hasher.update(pin.as_bytes());
-    let result = hasher.finalize();
+fn pin_to_key(pin: &str, salt: &[u8]) -> [u8; 32] {
     let mut key = [0u8; 32];
-    key.copy_from_slice(&result);
+    pbkdf2_hmac::<Sha256>(pin.as_bytes(), salt, PBKDF2_ITERATIONS, &mut key);
     key
 }
 
@@ -386,10 +401,11 @@ fn transaction_signing_data(tx: &Transaction) -> Vec<u8> {
         TransactionType::Transfer => 0u8,
         TransactionType::Stake => 1u8,
         TransactionType::Unstake => 2u8,
-        TransactionType::ValidatorRegister => 3u8,
-        TransactionType::ValidatorExit => 4u8,
-        TransactionType::ContractCall => 5u8,
-        TransactionType::ContractDeploy => 6u8,
+        TransactionType::StakeTransfer => 3u8,
+        TransactionType::ValidatorRegister => 4u8,
+        TransactionType::ValidatorExit => 5u8,
+        TransactionType::ContractCall => 6u8,
+        TransactionType::ContractDeploy => 7u8,
     });
     data.extend_from_slice(&tx.from);
     data.extend_from_slice(&tx.to);

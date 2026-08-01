@@ -1,0 +1,20 @@
+{
+  "name": "@quantos/sdk",
+  "version": "0.1.0",
+  "description": "Quantos L1 SDK — PQC-native RPC client, types, and WebSocket subscriptions",
+  "license": "BUSL-1.1",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["quantos", "pqc", "post-quantum", "ml-dsa", "blockchain", "l1", "rpc", "sdk"],
+  "engines": { "node": ">=18" },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^22.0.0"
+  }
+}

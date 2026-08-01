@@ -15,7 +15,8 @@ mod types;
 use anyhow::Result;
 use axum::Router;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{Any, CorsLayer, AllowOrigin};
+use http::HeaderValue;
 use tower_http::trace::TraceLayer;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -35,6 +36,7 @@ pub struct Config {
     pub bridge_vault_contract_address: Option<String>,
     pub base_bridge_chain_id: Option<u64>,
     pub qns_contract_address: Option<String>,
+    pub cors_allowed_origins: Vec<String>,
 }
 
 impl Config {
@@ -42,7 +44,7 @@ impl Config {
         dotenvy::dotenv().ok();
         Self {
             listen_addr: std::env::var("WALLET_LISTEN_ADDR")
-                .unwrap_or_else(|_| "0.0.0.0:3001".to_string()),
+                .unwrap_or_else(|_| "127.0.0.1:3001".to_string()),
             node_rpc_url: std::env::var("NODE_RPC_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8545".to_string()),
             session_ttl_secs: std::env::var("SESSION_TTL_SECS")
@@ -55,6 +57,11 @@ impl Config {
             bridge_vault_contract_address: std::env::var("BRIDGE_VAULT_CONTRACT_ADDRESS").ok(),
             base_bridge_chain_id: std::env::var("BASE_BRIDGE_CHAIN_ID").ok().and_then(|s| s.parse().ok()),
             qns_contract_address: std::env::var("QNS_CONTRACT_ADDRESS").ok(),
+            cors_allowed_origins: std::env::var("CORS_ALLOWED_ORIGINS")
+                .unwrap_or_else(|_| "http://localhost:3000".to_string())
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect(),
         }
     }
 }
@@ -107,13 +114,24 @@ async fn main() -> Result<()> {
         auth_challenges: dashmap::DashMap::new(),
     });
 
+    let cors = if config.cors_allowed_origins.iter().any(|o| o == "*") {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        let origins: Vec<HeaderValue> = config.cors_allowed_origins
+            .iter()
+            .filter_map(|o| o.parse::<HeaderValue>().ok())
+            .collect();
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods(Any)
+            .allow_headers(Any)
+    };
+
     let app = routes::build_router(state)
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
+        .layer(cors)
         .layer(TraceLayer::new_for_http());
 
     info!("🚀 Listening on {}", config.listen_addr);

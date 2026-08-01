@@ -14,6 +14,7 @@ pub enum TransactionType {
     Transfer,
     Stake,
     Unstake,
+    StakeTransfer,
     ValidatorRegister,
     ValidatorExit,
     ContractCall,
@@ -151,6 +152,13 @@ pub struct TransferTokenRequest {
     pub session_token: String,
     pub to: String,
     pub amount: String, // human-readable e.g. "100"
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StakeTransferRequest {
+    pub session_token: String,
+    pub to: String,
+    pub amount: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

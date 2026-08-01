@@ -331,8 +331,8 @@ impl TimeSync {
         // This ensures the response is actually for our request, not a replayed packet
         let origin_secs = u32::from_be_bytes([response[24], response[25], response[26], response[27]]);
         let origin_frac = u32::from_be_bytes([response[28], response[29], response[30], response[31]]);
-        let expected_secs = u32::from_be_bytes(request[40..44].try_into().unwrap());
-        let expected_frac = u32::from_be_bytes(request[44..48].try_into().unwrap());
+        let expected_secs = u32::from_be_bytes(request[40..44].try_into().unwrap_or([0u8; 4]));
+        let expected_frac = u32::from_be_bytes(request[44..48].try_into().unwrap_or([0u8; 4]));
         
         if origin_secs != expected_secs || origin_frac != expected_frac {
             return Err("NTP origin timestamp mismatch — possible spoofed response".to_string());

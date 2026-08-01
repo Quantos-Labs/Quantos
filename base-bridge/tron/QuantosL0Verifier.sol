@@ -5,7 +5,7 @@
 // Tron uses TVM which is EVM-compatible with slight differences:
 //   - Addresses are Base58 (T-address) instead of hex
 //   - Some opcodes differ, but standard Solidity patterns work.
-//   - We avoid block.basefee and use tx.origin with caution.
+//   - We avoid block.basefee and use msg.sender for authorization.
 
 pragma solidity ^0.8.20;
 
@@ -105,6 +105,7 @@ contract QuantosL0VerifierTron {
     }
 
     function transferAdmin(address newAdmin) external onlyAdmin {
+        require(newAdmin != address(0), "Zero address");
         admin = newAdmin;
     }
 

@@ -12,6 +12,15 @@ interface IERC20Keys {
 ///         5% creator royalty + 5% protocol fee on every trade.
 contract VybssProfileKeys {
 
+    // ── Reentrancy guard ────────────────────────────────────────
+    uint256 private _locked = 1;
+    modifier nonReentrant() {
+        require(_locked == 1, "Reentrant");
+        _locked = 2;
+        _;
+        _locked = 1;
+    }
+
     // ── Solang 0.3.3 workaround ────────────────────────────────
     function _mul(uint256 a, uint256 b) internal pure returns (uint256) { return a * b; }
     function _div(uint256 a, uint256 b) internal pure returns (uint256) { return a / b; }
@@ -84,7 +93,7 @@ contract VybssProfileKeys {
 
     // ── Buy Keys ────────────────────────────────────────────────
     /// @notice Buy `_amount` keys of `_creator`. First buy by creator = registration.
-    function buyKeys(address _creator, uint256 _amount) external returns (uint256) {
+    function buyKeys(address _creator, uint256 _amount) external nonReentrant returns (uint256) {
         require(_amount > 0, "amount must be > 0");
 
         uint256 supply = keySupply[_creator];
@@ -137,7 +146,7 @@ contract VybssProfileKeys {
 
     // ── Sell Keys ───────────────────────────────────────────────
     /// @notice Sell `_amount` keys of `_creator` back to the curve
-    function sellKeys(address _creator, uint256 _amount) external returns (uint256) {
+    function sellKeys(address _creator, uint256 _amount) external nonReentrant returns (uint256) {
         require(_amount > 0, "amount must be > 0");
         require(keyBalance[_creator][msg.sender] >= _amount, "not enough keys");
 
@@ -185,7 +194,7 @@ contract VybssProfileKeys {
 
     // ── Claim Earnings ──────────────────────────────────────────
     /// @notice Creator claims accumulated royalty earnings
-    function claimEarnings() external {
+    function claimEarnings() external nonReentrant {
         uint256 amount = creatorEarnings[msg.sender];
         require(amount > 0, "no earnings");
         creatorEarnings[msg.sender] = 0;

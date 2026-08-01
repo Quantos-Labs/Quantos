@@ -1,0 +1,28 @@
+{
+  "name": "quantos-explorer-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:indexer": "tsx watch src/indexer.ts",
+    "dev:api": "tsx watch src/api.ts",
+    "dev": "concurrently \"npm:dev:indexer\" \"npm:dev:api\"",
+    "start:indexer": "node dist/indexer.js",
+    "start:api": "node dist/api.js",
+    "build": "tsc",
+    "seed": "tsx src/seed.ts",
+    "migrate": "tsx src/migrate.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.0",
+    "dotenv": "^16.4.5",
+    "hono": "^4.6.0",
+    "@hono/node-server": "^1.13.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0",
+    "@types/node": "^22.0.0",
+    "concurrently": "^9.0.0"
+  }
+}

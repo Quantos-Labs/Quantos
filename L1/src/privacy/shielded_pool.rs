@@ -159,7 +159,7 @@ pub fn open_note(shared_secret: &[u8], note: &PrivateNote) -> Result<(u64, Hash)
 pub fn random_blinding() -> Hash {
     use rand::RngCore;
     let mut b = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut b);
+    rand::rngs::OsRng.fill_bytes(&mut b);
     b
 }
 
