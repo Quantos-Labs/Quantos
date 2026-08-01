@@ -606,7 +606,7 @@ impl StateManager {
                 }
             }
             TransactionType::ValidatorExit => {
-                let stake = sender.stake;
+                let stake = sender.stake.clone();
                 if !sender.remove_stake(&stake) {
                     return Err(StateError::InsufficientBalance);
                 }
@@ -1005,7 +1005,7 @@ impl StateManager {
                 }
             }
             TransactionType::ValidatorExit => {
-                let stake = sender.stake;
+                let stake = sender.stake.clone();
                 if !sender.remove_stake(&stake) { return Err(StateError::ExecutionError("No stake to remove".into())); }
                 sender.is_validator = false;
                 if let Some(cm) = self.committee_manager.read().as_ref() {
