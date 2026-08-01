@@ -331,6 +331,7 @@ impl RpcServer {
             exec_semaphore: Arc::new(tokio::sync::Semaphore::new(max_concurrent_executions())),
             start_time: Instant::now(),
             num_shards: self.config.num_shards,
+            p2p_port: self.config.p2p_port,
             subscription_manager: self.subscription_manager.clone(),
         };
 
@@ -622,6 +623,8 @@ pub struct QuantosRpcImpl {
     start_time: Instant,
     /// Number of shards configured
     num_shards: usize,
+    /// P2P listening port
+    p2p_port: u16,
     /// WebSocket subscription manager
     subscription_manager: SubscriptionManager,
 }
@@ -913,6 +916,23 @@ impl QuantosRpcServer for QuantosRpcImpl {
         let finalized_slot = self.consensus.finalized_slot();
         let state_root = self.state_manager.state_root();
 
+        let peer_id = self.network.local_peer_id();
+        let p2p_port = self.p2p_port;
+        let multiaddrs = {
+            let peers = self.network.connected_peers();
+            let mut addrs = vec![
+                format!("/ip4/0.0.0.0/tcp/{}/p2p/{}", p2p_port, peer_id),
+            ];
+            for pid in &peers {
+                if let Some(info) = self.network.get_peer_info(pid) {
+                    if let Some(addr) = &info.addr {
+                        addrs.push(addr.clone());
+                    }
+                }
+            }
+            addrs
+        };
+
         Ok(NodeInfoResponse {
             version: env!("CARGO_PKG_VERSION").to_string(),
             protocol_version: 1,
@@ -923,6 +943,9 @@ impl QuantosRpcServer for QuantosRpcImpl {
             state_root: format!("QTS:{}", hex::encode(state_root)),
             num_shards: self.num_shards,
             uptime_seconds: self.start_time.elapsed().as_secs(),
+            peer_id: peer_id.to_string(),
+            p2p_port,
+            p2p_multiaddrs: multiaddrs,
         })
     }
 
@@ -2240,6 +2263,9 @@ pub struct NodeInfoResponse {
     pub state_root: String,
     pub num_shards: usize,
     pub uptime_seconds: u64,
+    pub peer_id: String,
+    pub p2p_port: u16,
+    pub p2p_multiaddrs: Vec<String>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

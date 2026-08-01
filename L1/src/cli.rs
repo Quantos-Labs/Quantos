@@ -32,6 +32,8 @@ use jsonrpsee::core::client::ClientT;
 use jsonrpsee::core::params::ArrayParams;
 use serde_json::Value;
 
+use hex;
+
 // ============================================================================
 // CLI Structure
 // ============================================================================
@@ -173,6 +175,27 @@ enum TxCmd {
         /// Amount to unstake in hex
         #[arg(long)]
         amount: String,
+    },
+    /// Register as a validator (server-side signing)
+    RegisterValidator {
+        /// Hex-encoded ML-DSA-65 private key (QTS:...)
+        #[arg(long)]
+        privkey: String,
+        /// Amount to stake in hex (QTS:de0b6b3a7640000 = 1 QTS)
+        #[arg(long)]
+        amount: String,
+        /// Hex-encoded VRF public key (QTS:... or 0x...)
+        #[arg(long)]
+        vrf_pubkey: String,
+        /// Commission rate in basis points (default 500 = 5%)
+        #[arg(long, default_value = "500")]
+        commission_bps: u16,
+    },
+    /// Exit as a validator and unstake all tokens
+    ValidatorExit {
+        /// Hex-encoded ML-DSA-65 private key (QTS:...)
+        #[arg(long)]
+        privkey: String,
     },
     /// Get transaction by hash
     Get {
@@ -441,6 +464,32 @@ async fn run_tx(client: &HttpClient, cmd: &TxCmd) -> Result<Value, String> {
                 "to": "QTS:0000000000000000000000000000000000000000000000000000000000000000",
                 "amount": amount,
                 "tx_type": "unstake",
+            });
+            rpc_call(client, "qnt_sendTransaction", one_param(request)).await
+        }
+        TxCmd::RegisterValidator { privkey, amount, vrf_pubkey, commission_bps } => {
+            let vrf_clean = vrf_pubkey
+                .strip_prefix("QTS:").or_else(|| vrf_pubkey.strip_prefix("0x"))
+                .unwrap_or(&vrf_pubkey);
+            let mut data = hex::decode(vrf_clean)
+                .map_err(|e| format!("Invalid VRF public key hex: {}", e))?;
+            data.extend_from_slice(&commission_bps.to_le_bytes());
+            let data_hex = format!("QTS:{}", hex::encode(&data));
+            let request = serde_json::json!({
+                "from_private_key": privkey,
+                "to": "QTS:0000000000000000000000000000000000000000000000000000000000000000",
+                "amount": amount,
+                "tx_type": "validator_register",
+                "data": data_hex,
+            });
+            rpc_call(client, "qnt_sendTransaction", one_param(request)).await
+        }
+        TxCmd::ValidatorExit { privkey } => {
+            let request = serde_json::json!({
+                "from_private_key": privkey,
+                "to": "QTS:0000000000000000000000000000000000000000000000000000000000000000",
+                "amount": "QTS:0",
+                "tx_type": "validator_exit",
             });
             rpc_call(client, "qnt_sendTransaction", one_param(request)).await
         }
