@@ -1866,6 +1866,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer 0.12.1",
+ "const-oid 0.10.2",
  "crypto-common 0.2.2",
 ]
 
@@ -4233,7 +4234,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sha3 0.10.9",
+ "sha3 0.11.0",
  "snap",
  "tempfile",
  "thiserror 1.0.69",
@@ -4269,7 +4270,7 @@ dependencies = [
  "reqwest 0.11.27",
  "serde",
  "serde_json",
- "sha3 0.10.9",
+ "sha3 0.11.0",
  "thiserror 1.0.69",
 ]
 
@@ -4286,7 +4287,7 @@ dependencies = [
  "ml-dsa",
  "serde",
  "serde_json",
- "sha3 0.10.9",
+ "sha3 0.11.0",
  "wasm-bindgen",
 ]
 
@@ -4316,7 +4317,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sha3 0.10.9",
+ "sha3 0.11.0",
  "thiserror 1.0.69",
  "tokio",
  "tower 0.4.13",
