@@ -54,7 +54,7 @@ rocksdb = "0.22"
 
 # Networking — native PQ P2P (TCP); PeerId base58 / multiaddr strings use bs58
 bs58 = "0.5"
-bech32 = "0.9"
+bech32 = "0.12"
 tokio = { version = "1.35", features = ["full"] }
 
 # RPC
