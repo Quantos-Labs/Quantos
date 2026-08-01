@@ -372,25 +372,43 @@ cargo build --release -p quantos
 
 ### Validator Setup
 
-1. Generate a keypair:
+The testnet genesis and bootnodes are included in the repo (`L1/config/testnet-genesis.json` and `L1/config/bootnodes.json`). Anyone can join the testnet by cloning the repo.
+
+1. **Install prerequisites** (macOS):
    ```bash
-   ./target/release/quantos-cli keygen
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   brew install rocksdb
    ```
-2. Get the bootstrap node's peer ID and multiaddr:
+
+2. **Clone and build**:
    ```bash
-   ./target/release/quantos-cli --rpc http://<bootstrap-ip>:8545 node info
+   git clone https://github.com/Quantos-Labs/Quantos.git
+   cd Quantos && cargo build --release
    ```
-3. Start your node with the bootstrap peer:
+
+3. **Generate validator keys** (ML-DSA-65 signing + VRF + finality):
    ```bash
-   QUANTOS_BOOTSTRAP_PEERS="/ip4/<bootstrap-ip>/tcp/30303/p2p/<peer-id>" \
-     cargo run --release -p quantos -- --validator
+   ./target/release/quantos generate-validator-keys -o my_validator_keys.json --name "my-validator"
    ```
-4. Register as a validator:
+
+4. **Start the node** (bootnodes are auto-loaded from `config/bootnodes.json`):
+   ```bash
+   ./target/release/quantos run --validator --validator-key my_validator_keys.json \
+     --genesis L1/config/testnet-genesis.json
+   ```
+
+5. **Register as a validator** (sends a `ValidatorRegister` transaction):
    ```bash
    ./target/release/quantos-cli tx register-validator \
      --privkey QTS:... \
      --amount QTS:de0b6b3a7640000 \
-     --vrf-pubkey QTS:...
+     --vrf-pubkey QTS:... \
+     --commission-bps 500
+   ```
+
+6. **Verify your registration**:
+   ```bash
+   ./target/release/quantos-cli validator list
    ```
 
 ## Docker Deployment
