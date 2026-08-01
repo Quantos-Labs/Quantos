@@ -12,18 +12,8 @@
       "comment": "Testnet bootnodes. Public seed validators.",
       "peers": [
         {
-          "addr": "/ip4/127.0.0.1/tcp/30303/p2p/12D3KooQTestnetBootstrap1Quantos",
-          "region": "local",
-          "operator": "quantos-labs"
-        },
-        {
-          "addr": "/ip4/127.0.0.1/tcp/30304/p2p/12D3KooQTestnetBootstrap2Quantos",
-          "region": "local",
-          "operator": "quantos-labs"
-        },
-        {
-          "addr": "/ip4/127.0.0.1/tcp/30305/p2p/12D3KooQTestnetBootstrap3Quantos",
-          "region": "local",
+          "addr": "/ip4/164.132.99.87/tcp/30303/p2p/QmUywVqReA7EhHzT4mcLUN9hyGw91TpVYXxr5mJveBaL1j",
+          "region": "eu-west",
           "operator": "quantos-labs"
         }
       ]
