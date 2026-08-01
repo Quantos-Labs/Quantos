@@ -598,7 +598,7 @@ impl StateManager {
                     let mut v = Validator::new(
                         tx.transaction.from,
                         tx.transaction.public_key.clone(),
-                        tx.transaction.amount,
+                        tx.transaction.amount.clone(),
                         vrf_pub,
                     ).map_err(StateError::ExecutionError)?;
                     v.commission_rate = comm;
@@ -608,7 +608,7 @@ impl StateManager {
             TransactionType::ValidatorExit => {
                 let stake = sender.stake;
                 if !sender.remove_stake(&stake) {
-                    return Err(StateError::ExecutionError("No stake to remove".into()));
+                    return Err(StateError::InsufficientBalance);
                 }
                 sender.is_validator = false;
                 if let Some(cm) = self.committee_manager.read().as_ref() {
@@ -999,7 +999,7 @@ impl StateManager {
                 if !sender.add_stake(&tx.transaction.amount) { return Err(StateError::InsufficientBalance); }
                 sender.is_validator = true;
                 if let Some(cm) = self.committee_manager.read().as_ref() {
-                    let mut v = Validator::new(tx.transaction.from, tx.transaction.public_key.clone(), tx.transaction.amount, vrf_pub).map_err(StateError::ExecutionError)?;
+                    let mut v = Validator::new(tx.transaction.from, tx.transaction.public_key.clone(), tx.transaction.amount.clone(), vrf_pub).map_err(StateError::ExecutionError)?;
                     v.commission_rate = comm;
                     cm.add_validator(v).map_err(StateError::ExecutionError)?;
                 }
