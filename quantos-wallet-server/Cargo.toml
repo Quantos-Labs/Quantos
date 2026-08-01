@@ -13,7 +13,7 @@ path = "src/main.rs"
 [dependencies]
 # Web framework
 axum = { version = "0.7", features = ["json", "macros"] }
-tower = { version = "0.4" }
+tower = { version = "0.5" }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 http = "1.0"
 tokio = { version = "1.35", features = ["full"] }
